@@ -1,8 +1,8 @@
 [package]
 name = "tree-plus-plus"
 version = "0.1.0"
-edition = "2021"
-authors = ["Your Name <your.email@example.com>"]
+edition = "2025"
+authors = ["WaterRun <linzhangrun49@gmail.com>"]
 description = "A modern, fast tree command for Windows and Linux"
 license = "MIT"
 repository = "https://github.com/yourusername/tree-plus-plus"
@@ -14,14 +14,14 @@ default = []
 parallel = ["rayon"]
 
 [dependencies]
-# 并行处理（可选）
+
 rayon = { version = "1.8", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
-# 如需 Windows API 可取消注释
+
 # windows = { version = "0.52", features = ["Win32_Storage_FileSystem", "Win32_Foundation"] }
 
 [profile.release]
