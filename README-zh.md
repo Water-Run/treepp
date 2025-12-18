@@ -2,19 +2,19 @@
 
 *[English](./README.md)*
 
-Windows平台上的`tree`命令自从近40年前发布以来几乎就没有改动. 在如今LLM的时代, 作为描述项目结构非常常用的工具, 仅有的`/f`和`/a`两个参数的功能显然捉襟见肘. 同时, 它也不怎么快.  
+Windows上的`tree`命令自从近40年前发布以来几乎就没有改动. 在如今LLM的时代, 作为描述项目结构非常常用的工具, 仅有的`/f`和`/a`两个参数的功能显然捉襟见肘. 同时, 它很慢.  
 
-`tree++`是对`tree`的一次全面升级, 开源于[GitHub](https://github.com/Water-Run/treepp). 包括:  
+**`tree++`是对`tree`的一次全面升级**, 开源于[GitHub](https://github.com/Water-Run/treepp). 包括:  
 
-- 在兼容原有的Windows`tree`命令的基础上, 扩展指令集, 支持包括显示文件大小, 递归深度限制, 以及将结果输出至文件等常用功能  
+- 在兼容原有的Windows`tree`命令的基础上, 扩展指令集, 支持包括显示文件大小, 递归深度限制, 将结果输出至文件等等常用功能  
 - 支持传统Windows风格(如`/f`, 不区分大小写), Unix风格(如`-f`和`--files`)以及Powershell风格(如`-Files`)的指令
-- 支持多线程, 在大且复杂的目录中, 轻松获取指数级的性能提升; 在管理员模式下还可以直接进行MFT扫描, 获取极快的速度  
+- 在大且复杂的目录中, 通过多线程的支持轻松获取指数级的性能提升; 在管理员模式下运行时还可扫描NTFS MFT, 提供极快的速度  
 
 `tree++`使用`Rust`实现.  
 
 ## 安装
 
-从[GitHub Release](https://github.com/Water-Run/treepp/releases/tag/1.0.0)下载`tree++.zip`, 解压到合适目录, 并将目录添加至环境变量.  
+从[Release](https://github.com/Water-Run/treepp/releases/tag/0.1.0)下载`tree++.zip`, 解压到合适目录, 并将目录添加至环境变量.  
 
 开启Windows终端, 执行:  
 
@@ -26,6 +26,9 @@ treepp /v
 
 ```powershell
 tree++ version 0.1.0
+
+A Better tree command for Windows.
+
 author: WaterRun
 link: https://github.com/Water-Run/treepp
 ```
