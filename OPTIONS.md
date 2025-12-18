@@ -1,19 +1,17 @@
-# `tree++`: Complete Options Reference and Examples
+# `tree++`: Full Options Reference and Examples
 
-This document briefly describes all options supported by [tree++](https://github.com/Water-Run/treepp) and provides usage examples.
+This document summarizes all options supported by [tree++](https://github.com/Water-Run/treepp) and provides usage examples.
 
 ## Mock Directory
 
-The sample outputs below are based on this mock directory:
+All example outputs below are based on the following mock directory (Windows-style):
 
 ```powershell
-PS D:\数据\zig\tree++> treepp /F
-Volume directory PATH listing
+PS D:\Rust\tree++> treepp /F
+Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
-D:.
-│  .gitignore
-│  build.zig
-│  build.zig.zon
+D:\Rust\tree++
+│  Cargo.toml
 │  LICENSE
 │  OPTIONS-zh.md
 │  OPTIONS.md
@@ -21,15 +19,17 @@ D:.
 │  README.md
 │
 └─src
-        cli.zig
-        conf.zig
-        fmt.zig
-        io.zig
-        main.zig
-        scan.zig
-````
+        cli.rs
+        config.rs
+        main.rs
+        output.rs
+        render.rs
+        scan.rs
 
-> As you can see, `treepp /F` behaves exactly like the native Windows `tree /F`. Running `treepp` alone also preserves the original semantics.
+1 directory, 12 files
+```
+
+> As you can see, `treepp /F` behaves consistently with the native Windows `tree /F`: it prints the volume header, the tree layout, and the final summary line. Running `treepp` without options preserves the original semantics (directories only).
 
 ---
 
@@ -40,32 +40,34 @@ treepp [<PATH>] [<OPTIONS>...]
 ```
 
 * `<PATH>`: Optional. Defaults to the current directory.
-* `<OPTIONS>`: Repeatable. You may freely mix Unix-style, CMD-style, and PowerShell-style equivalent forms.
+* `<OPTIONS>`: Repeatable and mixable. Equivalent forms are supported in Unix style, CMD style, and PowerShell style.
 
 ---
 
-## Option Details
+## Option Reference
 
 ### `/?`: Show Help
 
 **Function:**
-
-Display full help information.
+Show the full help text for all options.
 
 **Syntax:**
 
 ```powershell
-treepp (--help | -h | /? | /H | -Help)
+treepp (--help | -h | /? | -Help) [<PATH>]
 ```
 
 **Example:**
 
 ```powershell
-PS D:\数据\zig\tree++> treepp /?
+PS D:\Rust\tree++> treepp /?
 tree++ - a better tree command for Windows
 Usage:
   treepp [path] [options]
-...
+Options:
+  -h, --help        Show help information
+  -v, --version     Show version information
+  ...
 ```
 
 ---
@@ -73,8 +75,7 @@ Usage:
 ### `/V`: Show Version
 
 **Function:**
-
-Print the current `tree++` version.
+Print the version information for `tree++`.
 
 **Syntax:**
 
@@ -85,33 +86,35 @@ treepp (--version | -v | /V | -Version)
 **Example:**
 
 ```powershell
-PS D:\数据\zig\tree++> treepp /V
+PS D:\Rust\tree++> treepp /V
 tree++ version 1.0.0
+author: WaterRun
 link: https://github.com/Water-Run/treepp
 ```
 
 ---
 
-### `/A`: Draw Using ASCII
+### `/A`: Draw the Tree Using ASCII
 
 **Function:**
-
 Draw the tree using ASCII characters (compatible with the native Windows `tree /A` style).
 
 **Syntax:**
 
 ```powershell
-treepp (--ascii | -A | /A | -Ascii) [<PATH>]
+treepp (--ascii | -a | /A | -Ascii) [<PATH>]
 ```
 
 **Example:**
 
 ```powershell
-PS D:\数据\zig\tree++> treepp /A
-Volume directory PATH listing
+PS D:\Rust\tree++> treepp /A
+Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
-D:.
+D:\Rust\tree++
 \---src
+
+1 directory
 ```
 
 ---
@@ -119,7 +122,6 @@ D:.
 ### `/F`: Show Files
 
 **Function:**
-
 Show files in the directory tree.
 
 **Syntax:**
@@ -128,16 +130,14 @@ Show files in the directory tree.
 treepp (--files | -f | /F | -Files) [<PATH>]
 ```
 
-**Example (mixed option set: `/A` + `/F`):**
+**Example (mixed option styles: `/A` + `/F`):**
 
 ```powershell
-PS D:\数据\zig\tree++> treepp /A /F
-Volume directory PATH listing
+PS D:\Rust\tree++> treepp /A /F
+Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
-D:.
-|   .gitignore
-|   build.zig
-|   build.zig.zon
+D:\Rust\tree++
+|   Cargo.toml
 |   LICENSE
 |   OPTIONS-zh.md
 |   OPTIONS.md
@@ -145,12 +145,14 @@ D:.
 |   README.md
 |
 \---src
-        cli.zig
-        conf.zig
-        fmt.zig
-        io.zig
-        main.zig
-        scan.zig
+        cli.rs
+        config.rs
+        main.rs
+        output.rs
+        render.rs
+        scan.rs
+
+1 directory, 12 files
 ```
 
 ---
@@ -158,8 +160,7 @@ D:.
 ### `/FP`: Show Full Paths
 
 **Function:**
-
-Display files and directories using full paths.
+Print directories and files as full paths.
 
 **Syntax:**
 
@@ -167,29 +168,29 @@ Display files and directories using full paths.
 treepp (--full-path | -p | /FP | -FullPath) [<PATH>]
 ```
 
-**Example (mixed option set: `/F` + `/FP`):**
+**Example (mixed option styles: `/F` + `/FP`):**
 
 ```powershell
-PS D:\数据\zig\tree++> treepp /F /FP
-Volume directory PATH listing
+PS D:\Rust\tree++> treepp /F /FP
+Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
-D:\数据\zig\tree++
-│  D:\数据\zig\tree++\.gitignore
-│  D:\数据\zig\tree++\build.zig
-│  D:\数据\zig\tree++\build.zig.zon
-│  D:\数据\zig\tree++\LICENSE
-│  D:\数据\zig\tree++\OPTIONS-zh.md
-│  D:\数据\zig\tree++\OPTIONS.md
-│  D:\数据\zig\tree++\README-zh.md
-│  D:\数据\zig\tree++\README.md
+D:\Rust\tree++
+│  D:\Rust\tree++\Cargo.toml
+│  D:\Rust\tree++\LICENSE
+│  D:\Rust\tree++\OPTIONS-zh.md
+│  D:\Rust\tree++\OPTIONS.md
+│  D:\Rust\tree++\README-zh.md
+│  D:\Rust\tree++\README.md
 │
-└─D:\数据\zig\tree++\src
-        D:\数据\zig\tree++\src\cli.zig
-        D:\数据\zig\tree++\src\conf.zig
-        D:\数据\zig\tree++\src\fmt.zig
-        D:\数据\zig\tree++\src\io.zig
-        D:\数据\zig\tree++\src\main.zig
-        D:\数据\zig\tree++\src\scan.zig
+└─D:\Rust\tree++\src
+        D:\Rust\tree++\src\cli.rs
+        D:\Rust\tree++\src\config.rs
+        D:\Rust\tree++\src\main.rs
+        D:\Rust\tree++\src\output.rs
+        D:\Rust\tree++\src\render.rs
+        D:\Rust\tree++\src\scan.rs
+
+1 directory, 12 files
 ```
 
 ---
@@ -197,8 +198,7 @@ D:\数据\zig\tree++
 ### `/S`: Show File Sizes (Bytes)
 
 **Function:**
-
-Show file sizes in bytes. Typically used together with `--files` to display sizes for file entries.
+Show file sizes in bytes. Typically used together with `--files` to display file entry sizes.
 
 **Syntax:**
 
@@ -206,45 +206,37 @@ Show file sizes in bytes. Typically used together with `--files` to display size
 treepp (--size | -s | /S | -Size) [<PATH>]
 ```
 
-**Example (mixed option set: `/S` + `/F`):**
+**Example (mixed option styles: `/S` + `/F`):**
 
 ```powershell
-PS D:\数据\zig\tree++> treepp /S /F
-Volume directory PATH listing
+PS D:\Rust\tree++> treepp /S /F
+Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
-D:.
-│  .gitignore        38
-│  build.zig         1024
-│  build.zig.zon     256
+D:\Rust\tree++
+│  Cargo.toml        982
 │  LICENSE           1067
-│  OPTIONS-zh.md     4096
-│  OPTIONS.md        3840
-│  README-zh.md      5120
-│  README.md         4864
+│  OPTIONS-zh.md     8120
+│  OPTIONS.md        7644
+│  README-zh.md      10420
+│  README.md         9288
 │
 └─src
-        cli.zig         2048
-        conf.zig        1536
-        fmt.zig         3072
-        io.zig          4096
-        main.zig        2048
-        scan.zig        2560
-```
+        cli.rs         6120
+        config.rs      2840
+        main.rs        1980
+        output.rs      7440
+        render.rs      5360
+        scan.rs        9020
 
-**Example (mixed option set: `-s` + `/F`):**
-
-```powershell
-PS D:\数据\zig\tree++> treepp -s /F
-...
+1 directory, 12 files
 ```
 
 ---
 
-### `/HR`: Human-Readable File Sizes
+### `/HR`: Human-Readable Sizes
 
 **Function:**
-
-Show file sizes in human-readable units (e.g., B, KB, MB). Commonly used with `--size`/`/S`.
+Display file sizes in human-readable units (e.g., B, KB, MB). Commonly used with `--size`/`/S`.
 
 **Syntax:**
 
@@ -252,38 +244,37 @@ Show file sizes in human-readable units (e.g., B, KB, MB). Commonly used with `-
 treepp (--human-readable | -H | /HR | -HumanReadable) [<PATH>]
 ```
 
-**Example (mixed option set: `/S` + `/HR` + `/F`):**
+**Example (mixed option styles: `/S` + `/HR` + `/F`):**
 
 ```powershell
-PS D:\数据\zig\tree++> treepp /S /HR /F
-Volume directory PATH listing
+PS D:\Rust\tree++> treepp /S /HR /F
+Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
-D:.
-│  .gitignore        38 B
-│  build.zig         1.0 KB
-│  build.zig.zon     256 B
+D:\Rust\tree++
+│  Cargo.toml        982 B
 │  LICENSE           1.0 KB
-│  OPTIONS-zh.md     4.0 KB
-│  OPTIONS.md        3.8 KB
-│  README-zh.md      5.0 KB
-│  README.md         4.8 KB
+│  OPTIONS-zh.md     7.9 KB
+│  OPTIONS.md        7.5 KB
+│  README-zh.md      10.2 KB
+│  README.md         9.1 KB
 │
 └─src
-        cli.zig         2.0 KB
-        conf.zig        1.5 KB
-        fmt.zig         3.0 KB
-        io.zig          4.0 KB
-        main.zig        2.0 KB
-        scan.zig        2.5 KB
+        cli.rs         6.0 KB
+        config.rs      2.8 KB
+        main.rs        1.9 KB
+        output.rs      7.3 KB
+        render.rs      5.2 KB
+        scan.rs        8.8 KB
+
+1 directory, 12 files
 ```
 
 ---
 
-### `/NI`: Hide Tree Connector Lines
+### `/NI`: Disable Tree Connectors
 
 **Function:**
-
-Do not display tree connector lines; output is printed without the connecting glyphs.
+Hide tree connector lines and print results using plain indentation.
 
 **Syntax:**
 
@@ -291,16 +282,14 @@ Do not display tree connector lines; output is printed without the connecting gl
 treepp (--no-indent | -i | /NI | -NoIndent) [<PATH>]
 ```
 
-**Example (mixed option set: `/F` + `/NI`):**
+**Example (mixed option styles: `/F` + `/NI`):**
 
 ```powershell
-PS D:\数据\zig\tree++> treepp /F /NI
-Volume directory PATH listing
+PS D:\Rust\tree++> treepp /F /NI
+Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
-D:.
-  .gitignore
-  build.zig
-  build.zig.zon
+D:\Rust\tree++
+  Cargo.toml
   LICENSE
   OPTIONS-zh.md
   OPTIONS.md
@@ -308,12 +297,14 @@ D:.
   README.md
 
   src
-    cli.zig
-    conf.zig
-    fmt.zig
-    io.zig
-    main.zig
-    scan.zig
+    cli.rs
+    config.rs
+    main.rs
+    output.rs
+    render.rs
+    scan.rs
+
+1 directory, 12 files
 ```
 
 ---
@@ -321,8 +312,7 @@ D:.
 ### `/R`: Reverse Order
 
 **Function:**
-
-Reverse the current ordering. Commonly used together with `--sort`/`/SORT`.
+Reverse the current sort order. Commonly used with `--sort`/`/SO`.
 
 **Syntax:**
 
@@ -330,29 +320,29 @@ Reverse the current ordering. Commonly used together with `--sort`/`/SORT`.
 treepp (--reverse | -r | /R | -Reverse) [<PATH>]
 ```
 
-**Example (mixed option set: `/F` + `/R`):**
+**Example (mixed option styles: `/F` + `/R`):**
 
 ```powershell
-PS D:\数据\zig\tree++> treepp /F /R
-Volume directory PATH listing
+PS D:\Rust\tree++> treepp /F /R
+Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
-D:.
+D:\Rust\tree++
 │  README.md
 │  README-zh.md
 │  OPTIONS.md
 │  OPTIONS-zh.md
 │  LICENSE
-│  build.zig.zon
-│  build.zig
-│  .gitignore
+│  Cargo.toml
 │
 └─src
-        scan.zig
-        main.zig
-        io.zig
-        fmt.zig
-        conf.zig
-        cli.zig
+        scan.rs
+        render.rs
+        output.rs
+        main.rs
+        config.rs
+        cli.rs
+
+1 directory, 12 files
 ```
 
 ---
@@ -360,38 +350,37 @@ D:.
 ### `/DT`: Show Last Modified Time
 
 **Function:**
-
-Show the last modified timestamp for files and directories.
+Show the last modified time for files and directories.
 
 **Syntax:**
 
 ```powershell
-treepp (--date | -D | /DT | -Date) [<PATH>]
+treepp (--date | -d | /DT | -Date) [<PATH>]
 ```
 
-**Example (mixed option set: `/F` + `/DT`):**
+**Example (mixed option styles: `/F` + `/DT`):**
 
 ```powershell
-PS D:\数据\zig\tree++> treepp /F /DT
-Volume directory PATH listing
+PS D:\Rust\tree++> treepp /F /DT
+Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
-D:.
-│  .gitignore        2025-12-01 10:12:17
-│  build.zig         2025-12-15 18:40:00
-│  build.zig.zon     2025-12-15 18:40:00
+D:\Rust\tree++
+│  Cargo.toml        2025-12-16 10:02:11
 │  LICENSE           2024-11-03 09:00:29
-│  OPTIONS-zh.md     2025-12-15 14:20:16
-│  OPTIONS.md        2025-12-15 14:18:05
-│  README-zh.md      2025-12-16 09:30:03
-│  README.md         2025-12-16 09:25:38
+│  OPTIONS-zh.md     2025-12-17 14:20:16
+│  OPTIONS.md        2025-12-17 14:18:05
+│  README-zh.md      2025-12-18 09:12:40
+│  README.md         2025-12-18 09:10:03
 │
 └─src
-        cli.zig        2025-12-10 21:11:11
-        conf.zig       2025-12-10 21:05:09
-        fmt.zig        2025-12-10 20:58:47
-        io.zig         2025-12-10 21:20:58
-        main.zig       2025-12-10 20:58:47
-        scan.zig       2025-12-10 21:20:58
+        cli.rs         2025-12-17 22:41:12
+        config.rs      2025-12-17 22:35:09
+        main.rs        2025-12-17 22:12:47
+        output.rs      2025-12-17 23:01:58
+        render.rs      2025-12-17 22:58:47
+        scan.rs        2025-12-17 23:05:58
+
+1 directory, 12 files
 ```
 
 ---
@@ -399,8 +388,7 @@ D:.
 ### `/X`: Exclude Matches
 
 **Function:**
-
-Exclude files or directories matching a given pattern (commonly used to ignore build artifacts, dependency folders, etc.).
+Exclude files or directories matching a pattern (commonly used to ignore build outputs, dependency folders, etc.).
 
 **Syntax:**
 
@@ -408,25 +396,25 @@ Exclude files or directories matching a given pattern (commonly used to ignore b
 treepp (--exclude | -I | /X | -Exclude) <PATTERN> [<PATH>]
 ```
 
-**Example (mixed option set: `/F` + `/X`):**
+**Example (exclude all Markdown files):**
 
 ```powershell
-PS D:\数据\zig\tree++> treepp /F /X "*.md"
-Volume directory PATH listing
+PS D:\Rust\tree++> treepp /F /X "*.md"
+Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
-D:.
-│  .gitignore
-│  build.zig
-│  build.zig.zon
+D:\Rust\tree++
+│  Cargo.toml
 │  LICENSE
 │
 └─src
-        cli.zig
-        conf.zig
-        fmt.zig
-        io.zig
-        main.zig
-        scan.zig
+        cli.rs
+        config.rs
+        main.rs
+        output.rs
+        render.rs
+        scan.rs
+
+1 directory, 8 files
 ```
 
 ---
@@ -434,7 +422,6 @@ D:.
 ### `/L`: Limit Recursion Depth
 
 **Function:**
-
 Limit the maximum recursion depth.
 
 **Syntax:**
@@ -443,16 +430,14 @@ Limit the maximum recursion depth.
 treepp (--level | -L | /L | -Level) <LEVEL> [<PATH>]
 ```
 
-**Example (mixed option set: `/F` + `/L`):**
+**Example (depth 1 only):**
 
 ```powershell
-PS D:\数据\zig\tree++> treepp /F /L 1
-Volume directory PATH listing
+PS D:\Rust\tree++> treepp /F /L 1
+Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
-D:.
-│  .gitignore
-│  build.zig
-│  build.zig.zon
+D:\Rust\tree++
+│  Cargo.toml
 │  LICENSE
 │  OPTIONS-zh.md
 │  OPTIONS.md
@@ -460,6 +445,8 @@ D:.
 │  README.md
 │
 └─src
+
+1 directory, 6 files
 ```
 
 ---
@@ -467,8 +454,7 @@ D:.
 ### `/M`: Include Only Matches
 
 **Function:**
-
-Show only files or directories matching a given pattern.
+Show only files or directories matching a pattern.
 
 **Syntax:**
 
@@ -476,47 +462,46 @@ Show only files or directories matching a given pattern.
 treepp (--include | -m | /M | -Include) <PATTERN> [<PATH>]
 ```
 
-**Example (mixed option set: `/F` + `/M`):**
+**Example (show only Rust source files):**
 
 ```powershell
-PS D:\数据\zig\tree++> treepp /F /M "*.zig"
-Volume directory PATH listing
+PS D:\Rust\tree++> treepp /F /M "*.rs"
+Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
-D:.
+D:\Rust\tree++
 │
 └─src
-        cli.zig
-        conf.zig
-        fmt.zig
-        io.zig
-        main.zig
-        scan.zig
+        cli.rs
+        config.rs
+        main.rs
+        output.rs
+        render.rs
+        scan.rs
+
+1 directory, 6 files
 ```
 
 ---
 
-### `/Q`: Quote File Names
+### `/Q`: Quote Names
 
 **Function:**
-
-Wrap file names in double quotes (useful for copy/paste or subsequent script processing).
+Wrap names in double quotes (useful for copy/paste or follow-up script processing).
 
 **Syntax:**
 
 ```powershell
-treepp (--quote | -Q | /Q | -Quote) [<PATH>]
+treepp (--quote | -q | /Q | -Quote) [<PATH>]
 ```
 
-**Example (mixed option set: `/F` + `/Q`):**
+**Example (mixed option styles: `/F` + `/Q`):**
 
 ```powershell
-PS D:\数据\zig\tree++> treepp /F /Q
-Volume directory PATH listing
+PS D:\Rust\tree++> treepp /F /Q
+Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
-D:.
-│  ".gitignore"
-│  "build.zig"
-│  "build.zig.zon"
+D:\Rust\tree++
+│  "Cargo.toml"
 │  "LICENSE"
 │  "OPTIONS-zh.md"
 │  "OPTIONS.md"
@@ -524,51 +509,52 @@ D:.
 │  "README.md"
 │
 └─"src"
-        "cli.zig"
-        "conf.zig"
-        "fmt.zig"
-        "io.zig"
-        "main.zig"
-        "scan.zig"
+        "cli.rs"
+        "config.rs"
+        "main.rs"
+        "output.rs"
+        "render.rs"
+        "scan.rs"
+
+1 directory, 12 files
 ```
 
 ---
 
-### `/O`: Directories First
+### `/DF`: Directories First
 
 **Function:**
-
-List directories before files (affects sorting and display order).
+Display directories before files during sorting and rendering.
 
 **Syntax:**
 
 ```powershell
-treepp (--dirs-first | -O | /O | -DirsFirst) [<PATH>]
+treepp (--dirs-first | -D | /DF | -DirsFirst) [<PATH>]
 ```
 
-**Example (mixed option set: `/F` + `/O`):**
+**Example (mixed option styles: `/F` + `/DF`):**
 
 ```powershell
-PS D:\数据\zig\tree++> treepp /F /O
-Volume directory PATH listing
+PS D:\Rust\tree++> treepp /F /DF
+Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
-D:.
+D:\Rust\tree++
 └─src
-│       cli.zig
-│       conf.zig
-│       fmt.zig
-│       io.zig
-│       main.zig
-│       scan.zig
+        cli.rs
+        config.rs
+        main.rs
+        output.rs
+        render.rs
+        scan.rs
 │
-│  .gitignore
-│  build.zig
-│  build.zig.zon
+│  Cargo.toml
 │  LICENSE
 │  OPTIONS-zh.md
 │  OPTIONS.md
 │  README-zh.md
 │  README.md
+
+1 directory, 12 files
 ```
 
 ---
@@ -576,23 +562,22 @@ D:.
 ### `/DU`: Show Directory Disk Usage
 
 **Function:**
-
-Show cumulative disk usage for directories (usually more readable when paired with `--human-readable`/`/HR`).
+Show the cumulative disk usage for directories (typically paired with `--human-readable`/`/HR` for readability).
 
 **Syntax:**
 
 ```powershell
-treepp (--disk-usage | --du | -u | /DU | -DiskUsage) [<PATH>]
+treepp (--disk-usage | -u | /DU | -DiskUsage) [<PATH>]
 ```
 
-**Example (mixed option set: `/DU` + `/HR`):**
+**Example (mixed option styles: `/DU` + `/HR`):**
 
 ```powershell
-PS D:\数据\zig\tree++> treepp /DU /HR
-Volume directory PATH listing
+PS D:\Rust\tree++> treepp /DU /HR
+Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
-D:.
-src             18.5 KB
+D:\Rust\tree++
+src             31.5 KB
 ```
 
 ---
@@ -600,52 +585,50 @@ src             18.5 KB
 ### `/IC`: Case-Insensitive Matching
 
 **Function:**
-
-Perform case-insensitive matching (affects `--include`/`--exclude`).
+Ignore case when matching patterns (affects `--include`/`--exclude`).
 
 **Syntax:**
 
 ```powershell
-treepp (--ignore-case | -iC | /IC | -IgnoreCase) [<PATH>]
+treepp (--ignore-case | -c | /IC | -IgnoreCase) [<PATH>]
 ```
 
-**Example (mixed option set: `/F` + `/M` + `/IC`):**
+**Example (mixed option styles: `/F` + `/M` + `/IC`, matching `*.MD`):**
 
 ```powershell
-PS D:\数据\zig\tree++> treepp /F /M "*.MD" /IC
-Volume directory PATH listing
+PS D:\Rust\tree++> treepp /F /M "*.MD" /IC
+Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
-D:.
+D:\Rust\tree++
 │  OPTIONS-zh.md
 │  OPTIONS.md
 │  README-zh.md
 │  README.md
+
+0 directories, 4 files
 ```
 
 ---
 
-### `/NR`: Hide the Summary Report
+### `/NR`: Disable the Summary Line
 
 **Function:**
-
-Do not display the summary report at the end (if the current output includes one).
+Do not print the final summary line (directories/files counts).
 
 **Syntax:**
 
 ```powershell
-treepp (--no-report | -N | /NR | -NoReport) [<PATH>]
+treepp (--no-report | -n | /NR | -NoReport) [<PATH>]
 ```
 
-**Example (mixed option set: `/F` + `/NR`):**
+**Example (mixed option styles: `/F` + `/NR`):**
 
 ```powershell
-PS D:\数据\zig\tree++> treepp /F /NR
-Volume directory PATH listing
+PS D:\Rust\tree++> treepp /F /NR
+Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
-D:.
-│  .gitignore
-│  build.zig
-│  build.zig.zon
+D:\Rust\tree++
+│  Cargo.toml
 │  LICENSE
 │  OPTIONS-zh.md
 │  OPTIONS.md
@@ -653,12 +636,12 @@ D:.
 │  README.md
 │
 └─src
-        cli.zig
-        conf.zig
-        fmt.zig
-        io.zig
-        main.zig
-        scan.zig
+        cli.rs
+        config.rs
+        main.rs
+        output.rs
+        render.rs
+        scan.rs
 ```
 
 ---
@@ -666,8 +649,7 @@ D:.
 ### `/P`: Prune Empty Directories
 
 **Function:**
-
-Prune empty directories; do not display directories that contain no entries.
+Prune empty directories (do not show directories that contain nothing).
 
 **Syntax:**
 
@@ -675,46 +657,14 @@ Prune empty directories; do not display directories that contain no entries.
 treepp (--prune | -P | /P | -Prune) [<PATH>]
 ```
 
-**Example (mixed option set: `/P` + `/F`):**
+**Example (mixed option styles: `/P` + `/F`):**
 
 ```powershell
-PS D:\数据\zig\tree++> treepp /P /F
-Volume directory PATH listing
+PS D:\Rust\tree++> treepp /P /F
+Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
-D:.
-└─src
-        cli.zig
-        conf.zig
-        fmt.zig
-        io.zig
-        main.zig
-        scan.zig
-```
-
----
-
-### `/SORT`: Choose Sorting Key
-
-**Function:**
-
-Choose a sorting key (e.g. `name`, `size`, `mtime`). Can be combined with `--reverse`/`/R` to reverse the order.
-
-**Syntax:**
-
-```powershell
-treepp (--sort | -S | /SORT | -Sort) <KEY> [<PATH>]
-```
-
-**Example (mixed option set: `/SORT` + `/F`):**
-
-```powershell
-PS D:\数据\zig\tree++> treepp /F /SORT name
-Volume directory PATH listing
-Volume serial number is 26E9-52C1
-D:.
-│  .gitignore
-│  build.zig
-│  build.zig.zon
+D:\Rust\tree++
+│  Cargo.toml
 │  LICENSE
 │  OPTIONS-zh.md
 │  OPTIONS.md
@@ -722,43 +672,80 @@ D:.
 │  README.md
 │
 └─src
-        cli.zig
-        conf.zig
-        fmt.zig
-        io.zig
-        main.zig
-        scan.zig
+        cli.rs
+        config.rs
+        main.rs
+        output.rs
+        render.rs
+        scan.rs
+
+1 directory, 12 files
 ```
 
-**Example (mixed option set: `-S` + `/R` + `/F`):**
+---
+
+### `/SO`: Choose Sort Key
+
+**Function:**
+Choose a sort key (e.g., `name`, `size`, `mtime`). Can be combined with `--reverse`/`/R` to invert order.
+
+**Syntax:**
 
 ```powershell
-PS D:\数据\zig\tree++> treepp -S mtime /R /F
+treepp (--sort | -S | /SO | -Sort) <KEY> [<PATH>]
+```
+
+**Example (sort by name; often the default):**
+
+```powershell
+PS D:\Rust\tree++> treepp /F /SO name
+Folder PATH listing for volume Storage
+Volume serial number is 26E9-52C1
+D:\Rust\tree++
+│  Cargo.toml
+│  LICENSE
+│  OPTIONS-zh.md
+│  OPTIONS.md
+│  README-zh.md
+│  README.md
+│
+└─src
+        cli.rs
+        config.rs
+        main.rs
+        output.rs
+        render.rs
+        scan.rs
+
+1 directory, 12 files
+```
+
+**Example (mixed option styles: `-S mtime` + `/R` + `/F`):**
+
+```powershell
+PS D:\Rust\tree++> treepp -S mtime /R /F
 ...
 ```
 
 ---
 
-### `/NH`: Hide Volume Header and Report Header
+### `/NH`: Hide Volume Header
 
 **Function:**
-
-Hide volume info and header report lines (e.g., `Volume ... PATH listing` and the volume serial number). Useful for scripts or when you need clean output.
+Hide the volume header lines (e.g., “Folder PATH listing for volume …” and “Volume serial number is …”). Useful for scripts or when you want clean output.
 
 **Syntax:**
 
 ```powershell
-treepp (--no-header | -NH | /NH | -NoHeader) [<PATH>]
+treepp (--no-header | -N | /NH | -NoHeader) [<PATH>]
 ```
 
-**Example (mixed option set: `/F` + `/NH`):**
+**Example (mixed option styles: `/F` + `/NH`):**
 
 ```powershell
-PS D:\数据\zig\tree++> treepp /F /NH
-D:.
-│  .gitignore
-│  build.zig
-│  build.zig.zon
+PS D:\Rust\tree++> treepp /F /NH
+D:\Rust\tree++
+│  Cargo.toml
 │  LICENSE
 │  OPTIONS-zh.md
 │  OPTIONS.md
@@ -766,12 +753,14 @@ D:.
 │  README.md
 │
 └─src
-        cli.zig
-        conf.zig
-        fmt.zig
-        io.zig
-        main.zig
-        scan.zig
+        cli.rs
+        config.rs
+        main.rs
+        output.rs
+        render.rs
+        scan.rs
+
+1 directory, 12 files
 ```
 
 ---
@@ -779,47 +768,42 @@ D:.
 ### `/SI`: Silent Mode
 
 **Function:**
-
-Do not print anything to stdout. Typically used with `--save` to write results to a file without producing console output.
+Suppress output to stdout. Typically used with `--output` to write results to a file without printing to the console.
 
 **Syntax:**
 
 ```powershell
-treepp (--silent | -SI | /SI | -Silent) [<PATH>]
+treepp (--silent | -l | /SI | -Silent) [<PATH>]
 ```
 
-**Example (with saving: `/SV` + `/SI`):**
+**Example (combined with output: `/O` + `/SI`):**
 
 ```powershell
-PS D:\数据\zig\tree++> treepp /F /SV tree.json /SI
-PS D:\数据\zig\tree++>
+PS D:\Rust\tree++> treepp /F /O tree.json /SI
+PS D:\Rust\tree++>
 ```
 
 ---
 
-### `/SV`: Save Output to a File
+### `/O`: Output to File
 
 **Function:**
-
-Save the result to the specified file (supported: `.txt`, `.json`, `.yml`, `.toml`).
-By default, output is still printed to the console; to write only to the file, combine with `--silent`.
+Write output to a file (supports `.txt`, `.json`, `.yml`, `.toml`). By default, output is still printed to the console; use `--silent` to write only to the file.
 
 **Syntax:**
 
 ```powershell
-treepp (--save | -sv | /SV | -Save) <FILE.{txt|json|yml|toml}> [<PATH>]
+treepp (--output | -o | /O | -Output) <FILE.{txt|json|yml|toml}> [<PATH>]
 ```
 
-**Example (mixed option set: `/F` + `/SV`):**
+**Example (mixed option styles: `/F` + `/O` to JSON):**
 
 ```powershell
-PS D:\数据\zig\tree++> treepp /F /SV tree.json
-Volume directory PATH listing
+PS D:\Rust\tree++> treepp /F /O tree.json
+Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
-D:.
-│  .gitignore
-│  build.zig
-│  build.zig.zon
+D:\Rust\tree++
+│  Cargo.toml
 │  LICENSE
 │  OPTIONS-zh.md
 │  OPTIONS.md
@@ -827,19 +811,52 @@ D:.
 │  README.md
 │
 └─src
-        cli.zig
-        conf.zig
-        fmt.zig
-        io.zig
-        main.zig
-        scan.zig
+        cli.rs
+        config.rs
+        main.rs
+        output.rs
+        render.rs
+        scan.rs
 
-save: D:\数据\zig\tree++\tree.json
+1 directory, 12 files
+
+output: D:\Rust\tree++\tree.json
 ```
 
-**Example (write only, no console output: `/SV` + `/SI`):**
+---
+
+### `/T`: Scan Thread Count
+
+**Function:**
+Set the scan thread count (default: 24). This affects scanning concurrency and performance for large directories; it typically does not change the output format.
+
+**Syntax:**
 
 ```powershell
-PS D:\数据\zig\tree++> treepp /F /SV tree.json /SI
-PS D:\数据\zig\tree++>
+treepp (--thread | -t | /T | -Thread) <N> [<PATH>]
+```
+
+**Example (use 32 scan threads):**
+
+```powershell
+PS D:\Rust\tree++> treepp /F /T 32
+Folder PATH listing for volume Storage
+Volume serial number is 26E9-52C1
+D:\Rust\tree++
+│  Cargo.toml
+│  LICENSE
+│  OPTIONS-zh.md
+│  OPTIONS.md
+│  README-zh.md
+│  README.md
+│
+└─src
+        cli.rs
+        config.rs
+        main.rs
+        output.rs
+        render.rs
+        scan.rs
+
+1 directory, 12 files
 ```

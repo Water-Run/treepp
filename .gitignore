@@ -1,47 +1,37 @@
 # ------------------------------------------------------------
-# Zig
+# Rust / Cargo
 # ------------------------------------------------------------
-# Zig build output directory (default)
-zig-out/
-# Zig local cache (project-local)
-.zig-cache/
-# Zig global cache (if accidentally created inside repo)
-zig-cache/
+# Cargo build output
+/target/
 
-# Common build artifacts (if you output elsewhere)
-build/
-dist/
-out/
+# Rustfmt backup files (rare, but possible)
+**/*.rs.bk
 
-# Optional: if you generate docs locally
-docs/_build/
-docgen/
+# Cargo local config (if you use it per-machine)
+.cargo/config.toml
 
 # ------------------------------------------------------------
-# VS Code
+# Rust tooling caches
 # ------------------------------------------------------------
-.vscode/*
-!.vscode/extensions.json
-!.vscode/settings.json
-!.vscode/tasks.json
-!.vscode/launch.json
-
-# If you prefer NOT to commit any workspace settings, comment the 4 lines above
-# and just keep:
-# .vscode/
+# rust-analyzer / RLS / IDE caches
+.rustc_info.json
+rust-analyzer*.log
+# If you use Bacon
+.bacon-locations
+# If you use sccache (only if created inside repo)
+.sccache/
 
 # ------------------------------------------------------------
-# OS / Editor noise
+# Coverage / profiling / reports (optional)
 # ------------------------------------------------------------
-.DS_Store
-Thumbs.db
-ehthumbs.db
-Desktop.ini
-
-# Windows / macOS metadata
-$RECYCLE.BIN/
-.AppleDouble
-.LSOverride
+coverage/
+target/coverage/
+lcov.info
+*.profraw
+*.profdata
+*.gcda
+*.gcno
+*.gcov
 
 # ------------------------------------------------------------
 # Logs / temp
@@ -51,38 +41,25 @@ $RECYCLE.BIN/
 *.temp
 *.swp
 *.swo
-*.bak
-*.old
 
 # ------------------------------------------------------------
-# Tooling caches
+# Editor / IDE
 # ------------------------------------------------------------
-# clangd / ccls (sometimes used when Zig emits compile_commands.json)
-.cache/
-compile_commands.json
+# VS Code (keep workspace config if you want; otherwise ignore whole folder)
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+
+# JetBrains IDEs
+.idea/
+*.iml
 
 # ------------------------------------------------------------
-# Optional: Coverage / profiling
+# OS noise
 # ------------------------------------------------------------
-*.profraw
-*.profdata
-*.gcda
-*.gcno
-*.gcov
-
-# ------------------------------------------------------------
-# Optional: Packaging artifacts
-# ------------------------------------------------------------
-*.zip
-*.tar
-*.tar.gz
-*.tgz
-*.7z
-
-# Windows debug/link artifacts
-*.pdb
-*.ilk
-*.obj
-
-# Zig language server cache
-.zls/
+.DS_Store
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
