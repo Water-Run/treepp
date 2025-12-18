@@ -860,3 +860,22 @@ D:\Rust\tree++
 
 1 directory, 12 files
 ```
+
+---
+
+### `/NM`: Force Disable MFT  
+
+**Description:**  
+Forces normal scanning instead of using the MFT, even when running in administrator mode.
+
+**Syntax:**
+
+```powershell
+treepp (--no-mft -nm /NM -NoMFT)
+```
+
+**Example (run with administrator privileges using Sudo for Windows, without using MFT):**
+
+```powershell
+PS D:\Rust\tree++> sudo treepp /F /NM
+```

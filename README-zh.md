@@ -8,7 +8,7 @@ Windows平台上的`tree`命令自从近40年前发布以来几乎就没有改�
 
 - 在兼容原有的Windows`tree`命令的基础上, 扩展指令集, 支持包括显示文件大小, 递归深度限制, 以及将结果输出至文件等常用功能  
 - 支持传统Windows风格(如`/f`, 不区分大小写), Unix风格(如`-f`和`--files`)以及Powershell风格(如`-Files`)的指令
-- 支持多线程, 在大且复杂的目录中, 轻松获取指数级的性能提升  
+- 支持多线程, 在大且复杂的目录中, 轻松获取指数级的性能提升; 在管理员模式下还可以直接进行MFT扫描, 获取极快的速度  
 
 `tree++`使用`Rust`实现.  
 
@@ -36,6 +36,12 @@ link: https://github.com/Water-Run/treepp
 
 ```powershell
 treepp /f
+```
+
+对于大目录, 你可以使用MFT: 直接扫描NTFS目录索引将非常快. 这需要你以管理员权限运行`treepp`, 建议使用`Sudo for windows`. `treepp`将自动识别当前的运行状态:  
+
+```powershell
+sudo treepp /f
 ```
 
 ## 速览
@@ -66,5 +72,6 @@ treepp /f
 | `--silent` `-l` `/SI` `-Silent`                             | 终端静默(结合`output`指令使用)                |
 | `--output` `-o` `/O` `-Output`                              | 将结果输出至文件(`.txt`, `.json`, `.yml`, `.toml`) |
 | `--thread` `-t` `/T` `-Thread`                              | 扫描线程数(默认为24)                        |
+| `--no-mft` `-nm` `/NM` `-NoMFT`                              | 强制不使用MFT(而不是在管理员模式下的自动切换)                        |
 
 > 完整参数集参阅: [tree++参数集文档](./OPTIONS-zh.md)

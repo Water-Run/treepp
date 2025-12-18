@@ -8,7 +8,7 @@ The Windows `tree` command has barely changed since it was released nearly 40 ye
 
 * Fully compatible with the original Windows `tree` command, while extending the option set with commonly needed features such as showing file sizes, limiting recursion depth, and exporting results to a file
 * Supports traditional Windows-style options (e.g., `/f`, case-insensitive), Unix-style options (e.g., `-f` and `--files`), and PowerShell-style options (e.g., `-Files`)
-* Supports multithreading, delivering exponential performance improvements in large and complex directories
+* Supports multithreading, making it easy to achieve exponential performance improvements in large and complex directories; when running in administrator mode, it can also scan the MFT directly to achieve extremely fast speeds.
 
 `tree++` is implemented in `Rust`.
 
@@ -36,6 +36,12 @@ After that, you can use it just like the standard Windows `tree` command:
 
 ```powershell
 treepp /f
+```
+
+For large directories, you can use MFT: directly scanning the NTFS directory index is extremely fast. This requires running `treepp` with administrator privileges; using `Sudo for Windows` is recommended. `treepp` will automatically detect the current execution state:
+
+```powershell
+sudo treepp /f
 ```
 
 ## Quick Reference
@@ -66,5 +72,6 @@ treepp /f
 | `--silent` `-l` `/SI` `-Silent`                | Silent terminal output (used with the `output` option)      |
 | `--output` `-o` `/O` `-Output`                 | Export results to a file (`.txt`, `.json`, `.yml`, `.toml`) |
 | `--thread` `-t` `/T` `-Thread`                 | Number of scanning threads (default: 24)                    |
+| `--no-mft` `-nm` `/NM` `-NoMFT`                              | Force disabling MFT usage (instead of automatic switching in administrator mode) |
 
 > For the full option list, see: [tree++ Options Documentation](./OPTIONS.md)

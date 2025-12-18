@@ -860,3 +860,39 @@ D:\Rust\tree++
 
 1 个目录, 12 个文件
 ```
+
+### `/NM`: 强制不使用MFT  
+
+**功能：**
+强制不使用MFT而是正常扫描，即使在管理员模式下。
+
+**语法：**
+
+```powershell
+treepp (--no-mft -nm /NM -NoMFT)
+```
+
+**示例（使用Sudo For Windows以管理员权限运行且不使用MFT）：**
+
+```powershell
+PS D:\Rust\tree++> sudo treepp /F /NM
+卷 存储 的文件夹 PATH 列表
+卷序列号为 26E9-52C1
+D:\Rust\tree++
+│  Cargo.toml
+│  LICENSE
+│  OPTIONS-zh.md
+│  OPTIONS.md
+│  README-zh.md
+│  README.md
+│
+└─src
+        cli.rs
+        config.rs
+        main.rs
+        output.rs
+        render.rs
+        scan.rs
+
+1 个目录, 12 个文件
+```
