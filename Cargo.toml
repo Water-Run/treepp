@@ -3,6 +3,11 @@ name = "treepp"
 version = "0.1.0"
 edition = "2024"
 
+authors = ["WaterRun"]
+repository = "https://github.com/Water-Run/treepp"
+homepage = "https://github.com/Water-Run/treepp"
+license = "GPL-3.0"
+
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
