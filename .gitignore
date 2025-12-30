@@ -64,3 +64,6 @@ Thumbs.db
 Desktop.ini
 $RECYCLE.BIN/
 
+# Rust / Cargo build outputs
+target/
+**/target/

@@ -1,0 +1,23 @@
+PROTOTYPES.txt
+
+此目录存储用于验证的小型子程序, 作为原型, 用于之后合并功能至主程序中.
+
+包括:
+
+01_cli_compat:
+  参数解析与等价映射. 验证 /,-,-- 三种风格混用、大小写不敏感与冲突校验; 输出解析后的Config用于对拍.
+
+02_scan_engines:
+  扫描引擎原型(统一入口). 在同一程序内提供 walk/parallel 两种扫描模式; 验证两者结果一致、并发下不重不漏、线程数生效与确定性排序.
+
+03_mft_engine:
+  NTFS MFT扫描原型(管理员). 验证权限/文件系统检测、记录枚举与root过滤; 明确MFT模式限制与降级策略.
+
+04_match_rules:
+  过滤与规则引擎. 验证 include/exclude 通配匹配、ignore-case, 以及分层.gitignore规则叠加与剪枝行为.
+
+05_render_output:
+  渲染与输出层. 验证树形文本渲染(ASCII/Unicode/no-indent/quote等)与多格式输出(txt/json/yml/toml)及silent写文件逻辑.
+
+06_regression_harness:
+  回归对拍与基准夹具. 统一fixtures与golden输出, 提供一键对拍(结构/文本)与差异摘要, 用于保证proto合并至src后语义不回退.

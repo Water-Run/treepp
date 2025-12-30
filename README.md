@@ -25,7 +25,7 @@ treepp /v
 
 You should see:
 
-```powershell
+```plaintext
 tree++ version 0.1.0
 
 A Better tree command for Windows.
