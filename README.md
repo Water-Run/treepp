@@ -77,7 +77,7 @@ sudo treepp /f --mft
 | `--no-header` `-N` `/NH`      | Hide volume information and header report                |
 | `--silent` `-l` `/SI`         | Silent mode (used with the `output` option)              |
 | `--output` `-o` `/O`          | Save output to a file (`.txt`, `.json`, `.yml`, `.toml`) |
-| `--thread` `-t` `/T`          | Number of scan threads (default: 24)                     |
+| `--thread` `-t` `/T`          | Number of scan threads (default: 4)                      |
 | `--mft` `-M` `/MFT`           | Use MFT (requires admin privileges, limited features)    |
 | `--gitignore` `-g` `/G`       | Follow `.gitignore`                                      |
 

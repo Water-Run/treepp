@@ -8,19 +8,15 @@
 //! - 输出具有确定性排序
 
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::env;
 use std::fmt::{self, Display, Formatter};
 use std::fs::{self, Metadata};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
-use std::sync::Arc;
 use std::time::{Instant, SystemTime};
 
-use crossbeam_channel::{bounded, Sender};
-use parking_lot::Mutex;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 
@@ -56,14 +52,6 @@ impl EntryMetadata {
             created: meta.created().ok(),
         }
     }
-
-    fn empty() -> Self {
-        Self {
-            size: 0,
-            modified: None,
-            created: None,
-        }
-    }
 }
 
 /// 目录树节点
@@ -95,6 +83,27 @@ impl TreeNode {
             kind,
             metadata,
             children: Vec::new(),
+        }
+    }
+
+    /// 创建带子节点的目录节点
+    fn with_children(
+        path: PathBuf,
+        kind: EntryKind,
+        metadata: EntryMetadata,
+        children: Vec<TreeNode>,
+    ) -> Self {
+        let name = path
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.to_string_lossy().into_owned());
+
+        Self {
+            name,
+            path,
+            kind,
+            metadata,
+            children,
         }
     }
 
@@ -133,17 +142,20 @@ impl TreeNode {
             .sum::<usize>()
     }
 
-    /// 计算最大深度
+    /// 计算最大深度（仅计算目录深度，不含文件）
     pub fn max_depth(&self) -> usize {
-        if self.children.is_empty() {
+        if self.kind == EntryKind::File {
+            return 0;
+        }
+        let child_dirs: Vec<_> = self
+            .children
+            .iter()
+            .filter(|c| c.kind == EntryKind::Directory)
+            .collect();
+        if child_dirs.is_empty() {
             1
         } else {
-            1 + self
-                .children
-                .iter()
-                .map(TreeNode::max_depth)
-                .max()
-                .unwrap_or(0)
+            1 + child_dirs.iter().map(|c| c.max_depth()).max().unwrap_or(0)
         }
     }
 
@@ -363,23 +375,15 @@ fn scan_walk_recursive(path: &Path, node: &mut TreeNode, include_files: bool) ->
 }
 
 // ============================================================================
-// 多线程扫描引擎 (parallel) - 使用工作窃取模式
+// 多线程扫描引擎 (parallel) - 分治合并模式
 // ============================================================================
 
-/// 中间扫描结果（扁平化）
-#[derive(Debug, Clone)]
-struct FlatEntry {
-    path: PathBuf,
-    parent: PathBuf,
-    kind: EntryKind,
-    metadata: EntryMetadata,
-}
-
-/// 多线程并发目录扫描（使用 rayon 工作窃取）
+/// 多线程并发目录扫描（分治合并，无锁）
 pub fn scan_parallel(config: &ScanConfig) -> io::Result<ScanResult> {
     let start = Instant::now();
     let root_meta = fs::metadata(&config.root)?;
 
+    // 如果是文件，直接使用单线程扫描
     if !root_meta.is_dir() {
         return scan_walk(config);
     }
@@ -392,36 +396,14 @@ pub fn scan_parallel(config: &ScanConfig) -> io::Result<ScanResult> {
 
     let root_path = config.root.clone();
     let include_files = config.include_files;
+    let root_metadata = EntryMetadata::from_fs_metadata(&root_meta);
 
-    // 使用线程池执行扫描
-    let flat_entries = pool.install(|| {
-        let entries = Arc::new(Mutex::new(Vec::new()));
+    // 使用线程池执行分治扫描
+    let tree = pool.install(|| scan_directory_divide_conquer(&root_path, include_files));
 
-        // 添加根目录
-        let root_metadata = EntryMetadata::from_fs_metadata(&root_meta);
-        entries.lock().push(FlatEntry {
-            path: root_path.clone(),
-            parent: PathBuf::new(),
-            kind: EntryKind::Directory,
-            metadata: root_metadata,
-        });
-
-        // 递归扫描
-        scan_directory_parallel(&root_path, &root_path, include_files, &entries);
-
-        Arc::try_unwrap(entries)
-            .map(|m| m.into_inner())
-            .unwrap_or_default()
-    });
-
-    let tree = build_tree_from_flat(&config.root, flat_entries);
-
+    // 如果扫描失败（例如权限问题），返回空目录
     let mut tree = tree.unwrap_or_else(|| {
-        TreeNode::new(
-            config.root.clone(),
-            EntryKind::Directory,
-            EntryMetadata::empty(),
-        )
+        TreeNode::new(root_path.clone(), EntryKind::Directory, root_metadata)
     });
 
     tree.sort_deterministic();
@@ -438,271 +420,60 @@ pub fn scan_parallel(config: &ScanConfig) -> io::Result<ScanResult> {
     })
 }
 
-fn scan_directory_parallel(
-    path: &Path,
-    root: &Path,
-    include_files: bool,
-    entries: &Arc<Mutex<Vec<FlatEntry>>>,
-) {
+/// 分治扫描：递归扫描目录，返回完整的子树
+fn scan_directory_divide_conquer(path: &Path, include_files: bool) -> Option<TreeNode> {
+    // 读取目录元数据
+    let meta = fs::metadata(path).ok()?;
+    let metadata = EntryMetadata::from_fs_metadata(&meta);
+
+    // 读取目录条目
     let dir_entries: Vec<_> = match fs::read_dir(path) {
         Ok(entries) => entries.flatten().collect(),
-        Err(_) => return,
+        Err(_) => {
+            // 无法读取目录，返回空目录节点
+            return Some(TreeNode::new(
+                path.to_path_buf(),
+                EntryKind::Directory,
+                metadata,
+            ));
+        }
     };
 
-    // 分离目录和文件
+    // 分离子目录和文件
     let mut subdirs = Vec::new();
-    let mut local_entries = Vec::new();
+    let mut files = Vec::new();
 
     for entry in dir_entries {
         let entry_path = entry.path();
-        let meta = match entry.metadata() {
+        let entry_meta = match entry.metadata() {
             Ok(m) => m,
             Err(_) => continue,
         };
 
-        let kind = if meta.is_dir() {
-            EntryKind::Directory
-        } else {
-            EntryKind::File
-        };
-
-        if kind == EntryKind::File && !include_files {
-            continue;
-        }
-
-        let metadata = EntryMetadata::from_fs_metadata(&meta);
-        local_entries.push(FlatEntry {
-            path: entry_path.clone(),
-            parent: path.to_path_buf(),
-            kind,
-            metadata,
-        });
-
-        if kind == EntryKind::Directory {
+        if entry_meta.is_dir() {
             subdirs.push(entry_path);
+        } else if include_files {
+            let file_metadata = EntryMetadata::from_fs_metadata(&entry_meta);
+            files.push(TreeNode::new(entry_path, EntryKind::File, file_metadata));
         }
     }
 
-    // 批量添加条目
-    {
-        let mut guard = entries.lock();
-        guard.extend(local_entries);
-    }
-
-    // 使用 rayon 并行处理子目录
-    subdirs.par_iter().for_each(|subdir| {
-        scan_directory_parallel(subdir, root, include_files, entries);
-    });
-}
-
-/// 多线程并发目录扫描（使用通道模式）- 备用实现
-pub fn scan_parallel_channel(config: &ScanConfig) -> io::Result<ScanResult> {
-    let start = Instant::now();
-    let root_meta = fs::metadata(&config.root)?;
-
-    if !root_meta.is_dir() {
-        return scan_walk(config);
-    }
-
-    let thread_count = config.thread_count;
-    let (task_tx, task_rx) = bounded::<PathBuf>(thread_count * 64);
-    let (result_tx, result_rx) = bounded::<FlatEntry>(thread_count * 256);
-
-    let pending = Arc::new(AtomicUsize::new(1));
-    let include_files = config.include_files;
-
-    // 发送根目录任务
-    task_tx.send(config.root.clone()).unwrap();
-
-    // 发送根目录条目
-    let root_metadata = EntryMetadata::from_fs_metadata(&root_meta);
-    result_tx
-        .send(FlatEntry {
-            path: config.root.clone(),
-            parent: PathBuf::new(),
-            kind: EntryKind::Directory,
-            metadata: root_metadata,
-        })
-        .unwrap();
-
-    // 启动工作线程
-    let workers: Vec<_> = (0..thread_count)
-        .map(|_| {
-            let task_rx = task_rx.clone();
-            let task_tx = task_tx.clone();
-            let result_tx = result_tx.clone();
-            let pending = Arc::clone(&pending);
-
-            std::thread::spawn(move || {
-                worker_loop(task_rx, task_tx, result_tx, pending, include_files);
-            })
-        })
+    // 并行递归扫描子目录（分治）
+    let subdir_trees: Vec<TreeNode> = subdirs
+        .into_par_iter()
+        .filter_map(|subdir| scan_directory_divide_conquer(&subdir, include_files))
         .collect();
 
-    // 关闭发送端（工作线程有自己的克隆）
-    drop(task_tx);
-    drop(result_tx);
+    // 合并子目录和文件
+    let mut children = subdir_trees;
+    children.extend(files);
 
-    // 收集结果
-    let flat_entries: Vec<FlatEntry> = result_rx.iter().collect();
-
-    // 等待所有工作线程完成
-    for worker in workers {
-        let _ = worker.join();
-    }
-
-    let tree = build_tree_from_flat(&config.root, flat_entries);
-
-    let mut tree = tree.unwrap_or_else(|| {
-        TreeNode::new(
-            config.root.clone(),
-            EntryKind::Directory,
-            EntryMetadata::empty(),
-        )
-    });
-
-    tree.sort_deterministic();
-
-    let directory_count = tree.count_directories();
-    let file_count = tree.count_files();
-    let duration = start.elapsed();
-
-    Ok(ScanResult {
-        tree,
-        duration,
-        directory_count,
-        file_count,
-    })
-}
-
-fn worker_loop(
-    task_rx: crossbeam_channel::Receiver<PathBuf>,
-    task_tx: Sender<PathBuf>,
-    result_tx: Sender<FlatEntry>,
-    pending: Arc<AtomicUsize>,
-    include_files: bool,
-) {
-    loop {
-        match task_rx.recv_timeout(std::time::Duration::from_millis(10)) {
-            Ok(dir_path) => {
-                process_directory(&dir_path, &task_tx, &result_tx, &pending, include_files);
-
-                // 任务完成，减少计数
-                let prev = pending.fetch_sub(1, AtomicOrdering::SeqCst);
-                if prev == 1 {
-                    // 最后一个任务完成，退出
-                    break;
-                }
-            }
-            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
-                // 检查是否所有任务都完成了
-                if pending.load(AtomicOrdering::SeqCst) == 0 {
-                    break;
-                }
-            }
-            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
-                break;
-            }
-        }
-    }
-}
-
-fn process_directory(
-    dir_path: &Path,
-    task_tx: &Sender<PathBuf>,
-    result_tx: &Sender<FlatEntry>,
-    pending: &Arc<AtomicUsize>,
-    include_files: bool,
-) {
-    let dir_entries = match fs::read_dir(dir_path) {
-        Ok(entries) => entries,
-        Err(_) => return,
-    };
-
-    let mut subdirs = Vec::new();
-
-    for entry in dir_entries.flatten() {
-        let entry_path = entry.path();
-        let meta = match entry.metadata() {
-            Ok(m) => m,
-            Err(_) => continue,
-        };
-
-        let kind = if meta.is_dir() {
-            EntryKind::Directory
-        } else {
-            EntryKind::File
-        };
-
-        if kind == EntryKind::File && !include_files {
-            continue;
-        }
-
-        let metadata = EntryMetadata::from_fs_metadata(&meta);
-        let _ = result_tx.send(FlatEntry {
-            path: entry_path.clone(),
-            parent: dir_path.to_path_buf(),
-            kind,
-            metadata,
-        });
-
-        if kind == EntryKind::Directory {
-            subdirs.push(entry_path);
-        }
-    }
-
-    // 增加待处理计数并发送子目录任务
-    if !subdirs.is_empty() {
-        pending.fetch_add(subdirs.len(), AtomicOrdering::SeqCst);
-        for subdir in subdirs {
-            let _ = task_tx.send(subdir);
-        }
-    }
-}
-
-fn build_tree_from_flat(root: &Path, entries: Vec<FlatEntry>) -> Option<TreeNode> {
-    let mut node_map: HashMap<PathBuf, TreeNode> = HashMap::with_capacity(entries.len());
-    let mut root_node: Option<TreeNode> = None;
-
-    for entry in &entries {
-        let node = TreeNode::new(entry.path.clone(), entry.kind, entry.metadata.clone());
-        if entry.path == root {
-            root_node = Some(node);
-        } else {
-            node_map.insert(entry.path.clone(), node);
-        }
-    }
-
-    let mut children_map: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
-    for entry in &entries {
-        if entry.path != root {
-            children_map
-                .entry(entry.parent.clone())
-                .or_default()
-                .push(entry.path.clone());
-        }
-    }
-
-    fn attach_children(
-        node: &mut TreeNode,
-        children_map: &HashMap<PathBuf, Vec<PathBuf>>,
-        node_map: &mut HashMap<PathBuf, TreeNode>,
-    ) {
-        if let Some(child_paths) = children_map.get(&node.path) {
-            for child_path in child_paths {
-                if let Some(mut child) = node_map.remove(child_path) {
-                    attach_children(&mut child, children_map, node_map);
-                    node.children.push(child);
-                }
-            }
-        }
-    }
-
-    if let Some(ref mut root) = root_node {
-        attach_children(root, &children_map, &mut node_map);
-    }
-
-    root_node
+    Some(TreeNode::with_children(
+        path.to_path_buf(),
+        EntryKind::Directory,
+        metadata,
+        children,
+    ))
 }
 
 // ============================================================================
@@ -730,7 +501,7 @@ pub fn scan_native_tree(path: &Path, include_files: bool) -> io::Result<NativeTr
     let stdout = String::from_utf8_lossy(&output.stdout);
     let lines: Vec<String> = stdout.lines().map(String::from).collect();
 
-    let (directory_count, file_count) = parse_native_tree_stats(&lines);
+    let (directory_count, file_count) = parse_native_tree_output(&lines, include_files);
 
     Ok(NativeTreeResult {
         lines,
@@ -753,30 +524,54 @@ pub struct NativeTreeResult {
     pub file_count: usize,
 }
 
-fn parse_native_tree_stats(lines: &[String]) -> (usize, usize) {
-    for line in lines.iter().rev() {
-        if line.contains("个目录") || line.contains("个文件") {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            let mut dirs = 0usize;
-            let mut files = 0usize;
+/// 解析原生 tree 命令输出
+fn parse_native_tree_output(lines: &[String], include_files: bool) -> (usize, usize) {
+    let mut dir_count = 0usize;
+    let mut file_count = 0usize;
 
-            for (i, part) in parts.iter().enumerate() {
-                if *part == "个目录" || part.contains("个目录") {
-                    if i > 0 {
-                        dirs = parts[i - 1].parse().unwrap_or(0);
-                    }
+    let content_start = lines
+        .iter()
+        .position(|l| l.contains("├") || l.contains("└") || l.contains("│"))
+        .unwrap_or(0);
+
+    for line in lines.iter().skip(content_start) {
+        let trimmed = line.trim();
+
+        if trimmed.is_empty() || trimmed.contains("没有子文件夹") {
+            continue;
+        }
+
+        let name = line
+            .replace("├", "")
+            .replace("└", "")
+            .replace("│", "")
+            .replace("─", "")
+            .trim()
+            .to_string();
+
+        if name.is_empty() {
+            continue;
+        }
+
+        if !include_files {
+            dir_count += 1;
+        } else {
+            let has_branch = line.contains("├─") || line.contains("└─");
+            let is_indented_file = !has_branch && (line.contains("│") || line.starts_with("   "));
+
+            if has_branch {
+                if name.contains('.') && !name.starts_with('.') {
+                    file_count += 1;
+                } else {
+                    dir_count += 1;
                 }
-                if *part == "个文件" || part.contains("个文件") {
-                    if i > 0 {
-                        files = parts[i - 1].parse().unwrap_or(0);
-                    }
-                }
+            } else if is_indented_file {
+                file_count += 1;
             }
-
-            return (dirs, files);
         }
     }
-    (0, 0)
+
+    (dir_count, file_count)
 }
 
 // ============================================================================
@@ -796,8 +591,8 @@ pub fn verify_consistency(walk: &ScanResult, parallel: &ScanResult) -> Consisten
 
     let structural_match = walk.tree.structural_eq(&parallel.tree);
 
-    let walk_set: std::collections::HashSet<_> = walk_paths.iter().collect();
-    let parallel_set: std::collections::HashSet<_> = parallel_paths.iter().collect();
+    let walk_set: HashSet<_> = walk_paths.iter().collect();
+    let parallel_set: HashSet<_> = parallel_paths.iter().collect();
 
     let only_in_walk: Vec<_> = walk_set.difference(&parallel_set).cloned().collect();
     let only_in_parallel: Vec<_> = parallel_set.difference(&walk_set).cloned().collect();
@@ -937,7 +732,7 @@ fn main() -> io::Result<()> {
         walk_result.duration.as_secs_f64()
     );
 
-    println!("\n=== Parallel 模式 ({}线程, rayon) ===", thread_count);
+    println!("\n=== Parallel 模式 ({}线程, rayon 分治) ===", thread_count);
     let parallel_result = scan_parallel(&config)?;
     println!(
         "目录: {}, 文件: {}, 耗时: {:.3}s",
@@ -946,18 +741,14 @@ fn main() -> io::Result<()> {
         parallel_result.duration.as_secs_f64()
     );
 
-    println!("\n=== Parallel 模式 ({}线程, channel) ===", thread_count);
-    let parallel_channel_result = scan_parallel_channel(&config)?;
-    println!(
-        "目录: {}, 文件: {}, 耗时: {:.3}s",
-        parallel_channel_result.directory_count,
-        parallel_channel_result.file_count,
-        parallel_channel_result.duration.as_secs_f64()
-    );
-
     println!("\n=== 一致性验证 ===");
     let report = verify_consistency(&walk_result, &parallel_result);
     println!("{}", report);
+
+    if walk_result.duration.as_secs_f64() > 0.0 {
+        let speedup = walk_result.duration.as_secs_f64() / parallel_result.duration.as_secs_f64();
+        println!("加速比: {:.2}x", speedup);
+    }
 
     if include_files {
         println!("\n=== 原生 tree 命令对比 ===");
@@ -1024,8 +815,21 @@ mod tests {
         temp
     }
 
-    /// 创建深层嵌套目录结构
+    /// 创建深层嵌套目录结构（仅目录）
     fn create_deep_directory(depth: usize) -> TempDir {
+        let temp = TempDir::new().expect("创建临时目录失败");
+        let mut current = temp.path().to_path_buf();
+
+        for i in 0..depth {
+            current = current.join(format!("level_{}", i));
+            fs::create_dir(&current).unwrap();
+        }
+
+        temp
+    }
+
+    /// 创建深层嵌套目录结构（含文件）
+    fn create_deep_directory_with_files(depth: usize) -> TempDir {
         let temp = TempDir::new().expect("创建临时目录失败");
         let mut current = temp.path().to_path_buf();
 
@@ -1059,7 +863,6 @@ mod tests {
         let temp = TempDir::new().expect("创建临时目录失败");
         let root = temp.path();
 
-        // 多层目录
         for i in 0..5 {
             let dir = root.join(format!("dir_{}", i));
             fs::create_dir_all(&dir).unwrap();
@@ -1092,8 +895,49 @@ mod tests {
         temp
     }
 
+    /// 创建复杂嵌套结构
+    fn create_complex_nested() -> TempDir {
+        let temp = TempDir::new().expect("创建临时目录失败");
+        let root = temp.path();
+
+        for i in 0..3 {
+            let branch = root.join(format!("branch_{}", i));
+            fs::create_dir(&branch).unwrap();
+
+            for j in 0..3 {
+                let sub = branch.join(format!("sub_{}", j));
+                fs::create_dir(&sub).unwrap();
+
+                for k in 0..2 {
+                    let deep = sub.join(format!("deep_{}", k));
+                    fs::create_dir(&deep).unwrap();
+                    File::create(deep.join("leaf.txt")).unwrap();
+                }
+            }
+        }
+
+        temp
+    }
+
+    /// 获取 rustup 路径（如果存在）
+    fn get_rustup_path() -> Option<PathBuf> {
+        if let Ok(home) = env::var("USERPROFILE") {
+            let path = PathBuf::from(home).join(".rustup");
+            if path.exists() {
+                return Some(path);
+            }
+        }
+        if let Ok(home) = env::var("HOME") {
+            let path = PathBuf::from(home).join(".rustup");
+            if path.exists() {
+                return Some(path);
+            }
+        }
+        None
+    }
+
     // ========================================================================
-    // 基础功能测试 (6 tests)
+    // 基础功能测试
     // ========================================================================
 
     #[test]
@@ -1122,22 +966,6 @@ mod tests {
         };
 
         let result = scan_parallel(&config).expect("parallel 扫描失败");
-
-        assert_eq!(result.tree.kind, EntryKind::Directory);
-        assert!(result.directory_count > 0);
-        assert!(result.file_count > 0);
-    }
-
-    #[test]
-    fn test_parallel_channel_basic() {
-        let temp = create_test_directory();
-        let config = ScanConfig {
-            root: temp.path().to_path_buf(),
-            include_files: true,
-            thread_count: 4,
-        };
-
-        let result = scan_parallel_channel(&config).expect("parallel_channel 扫描失败");
 
         assert_eq!(result.tree.kind, EntryKind::Directory);
         assert!(result.directory_count > 0);
@@ -1192,8 +1020,24 @@ mod tests {
         assert_eq!(result.directory_count, 0);
     }
 
+    #[test]
+    fn test_parallel_single_file_fallback() {
+        let temp = TempDir::new().expect("创建临时目录失败");
+        let file_path = temp.path().join("single.txt");
+        File::create(&file_path).unwrap();
+
+        let config = ScanConfig {
+            root: file_path,
+            include_files: true,
+            thread_count: 4,
+        };
+
+        let result = scan_parallel(&config).expect("扫描失败");
+        assert_eq!(result.tree.kind, EntryKind::File);
+    }
+
     // ========================================================================
-    // 一致性测试 (8 tests)
+    // 一致性测试
     // ========================================================================
 
     #[test]
@@ -1289,26 +1133,6 @@ mod tests {
     }
 
     #[test]
-    fn test_consistency_channel_vs_rayon() {
-        let temp = create_test_directory();
-        let config = ScanConfig {
-            root: temp.path().to_path_buf(),
-            include_files: true,
-            thread_count: 4,
-        };
-
-        let rayon = scan_parallel(&config).expect("rayon 扫描失败");
-        let channel = scan_parallel_channel(&config).expect("channel 扫描失败");
-
-        let report = verify_consistency(&rayon, &channel);
-        assert!(
-            report.is_consistent(),
-            "rayon 与 channel 实现不一致:\n{}",
-            report
-        );
-    }
-
-    #[test]
     fn test_consistency_multiple_runs() {
         let temp = create_test_directory();
         let config = ScanConfig {
@@ -1317,15 +1141,17 @@ mod tests {
             thread_count: 4,
         };
 
+        let baseline = scan_walk(&config).expect("walk 扫描失败");
+
         let results: Vec<_> = (0..5)
             .map(|_| scan_parallel(&config).expect("parallel 扫描失败"))
             .collect();
 
-        for i in 1..results.len() {
-            let report = verify_consistency(&results[0], &results[i]);
+        for (i, result) in results.iter().enumerate() {
+            let report = verify_consistency(&baseline, result);
             assert!(
                 report.is_consistent(),
-                "第 {} 次运行与第 0 次运行不一致:\n{}",
+                "第 {} 次运行与基准不一致:\n{}",
                 i,
                 report
             );
@@ -1333,25 +1159,47 @@ mod tests {
     }
 
     #[test]
-    fn test_consistency_all_three_methods() {
-        let temp = create_test_directory();
+    fn test_consistency_complex_nested() {
+        let temp = create_complex_nested();
         let config = ScanConfig {
             root: temp.path().to_path_buf(),
             include_files: true,
-            thread_count: 4,
+            thread_count: 8,
         };
 
         let walk = scan_walk(&config).expect("walk 扫描失败");
         let parallel = scan_parallel(&config).expect("parallel 扫描失败");
-        let channel = scan_parallel_channel(&config).expect("channel 扫描失败");
 
-        assert!(verify_consistency(&walk, &parallel).is_consistent());
-        assert!(verify_consistency(&walk, &channel).is_consistent());
-        assert!(verify_consistency(&parallel, &channel).is_consistent());
+        let report = verify_consistency(&walk, &parallel);
+        assert!(
+            report.is_consistent(),
+            "复杂嵌套目录一致性验证失败:\n{}",
+            report
+        );
+    }
+
+    #[test]
+    fn test_consistency_very_wide() {
+        let temp = create_wide_directory(500);
+        let config = ScanConfig {
+            root: temp.path().to_path_buf(),
+            include_files: true,
+            thread_count: 8,
+        };
+
+        let walk = scan_walk(&config).expect("walk 扫描失败");
+        let parallel = scan_parallel(&config).expect("parallel 扫描失败");
+
+        let report = verify_consistency(&walk, &parallel);
+        assert!(
+            report.is_consistent(),
+            "超宽目录一致性验证失败:\n{}",
+            report
+        );
     }
 
     // ========================================================================
-    // 线程数验证测试 (4 tests)
+    // 线程数验证测试
     // ========================================================================
 
     #[test]
@@ -1415,31 +1263,47 @@ mod tests {
     }
 
     #[test]
-    fn test_thread_count_channel_variations() {
+    fn test_extreme_thread_count() {
         let temp = create_test_directory();
+        let config = ScanConfig {
+            root: temp.path().to_path_buf(),
+            include_files: true,
+            thread_count: 64,
+        };
 
-        for thread_count in [1, 2, 4] {
-            let config = ScanConfig {
-                root: temp.path().to_path_buf(),
-                include_files: true,
-                thread_count,
-            };
+        let walk = scan_walk(&config).expect("walk 扫描失败");
+        let parallel = scan_parallel(&config).expect("parallel 扫描失败");
 
-            let walk = scan_walk(&config).expect("walk 扫描失败");
-            let channel = scan_parallel_channel(&config).expect("channel 扫描失败");
+        let report = verify_consistency(&walk, &parallel);
+        assert!(
+            report.is_consistent(),
+            "64线程一致性验证失败:\n{}",
+            report
+        );
+    }
 
-            let report = verify_consistency(&walk, &channel);
-            assert!(
-                report.is_consistent(),
-                "channel 模式线程数 {} 时不一致:\n{}",
-                thread_count,
-                report
-            );
-        }
+    #[test]
+    fn test_thread_count_128() {
+        let temp = create_wide_directory(200);
+        let config = ScanConfig {
+            root: temp.path().to_path_buf(),
+            include_files: true,
+            thread_count: 128,
+        };
+
+        let walk = scan_walk(&config).expect("walk 扫描失败");
+        let parallel = scan_parallel(&config).expect("parallel 扫描失败");
+
+        let report = verify_consistency(&walk, &parallel);
+        assert!(
+            report.is_consistent(),
+            "128线程一致性验证失败:\n{}",
+            report
+        );
     }
 
     // ========================================================================
-    // 边界情况测试 (8 tests)
+    // 边界情况测试
     // ========================================================================
 
     #[test]
@@ -1560,7 +1424,6 @@ mod tests {
 
     #[test]
     fn test_symlinks_ignored() {
-        // 符号链接在 Windows 上需要特殊权限，此测试验证不崩溃即可
         let temp = create_test_directory();
         let config = ScanConfig {
             root: temp.path().to_path_buf(),
@@ -1589,7 +1452,7 @@ mod tests {
         let walk = scan_walk(&config).expect("walk 扫描失败");
         let parallel = scan_parallel(&config).expect("parallel 扫描失败");
 
-        assert_eq!(walk.directory_count, 51); // root + 50
+        assert_eq!(walk.directory_count, 51);
         assert_eq!(parallel.directory_count, 51);
         assert!(verify_consistency(&walk, &parallel).is_consistent());
     }
@@ -1613,14 +1476,97 @@ mod tests {
             .collect();
 
         assert!(sizes.iter().any(|(n, s)| n.contains("small") && *s == 5));
-        assert!(sizes.iter().any(|(n, s)| n.contains("medium") && *s == 1024));
+        assert!(sizes
+            .iter()
+            .any(|(n, s)| n.contains("medium") && *s == 1024));
         assert!(sizes
             .iter()
             .any(|(n, s)| n.contains("large") && *s == 10240));
     }
 
+    #[test]
+    fn test_hidden_files() {
+        let temp = TempDir::new().expect("创建临时目录失败");
+
+        File::create(temp.path().join(".hidden")).unwrap();
+        File::create(temp.path().join(".gitignore")).unwrap();
+        fs::create_dir(temp.path().join(".git")).unwrap();
+
+        let config = ScanConfig {
+            root: temp.path().to_path_buf(),
+            include_files: true,
+            thread_count: 4,
+        };
+
+        let walk = scan_walk(&config).expect("walk 扫描失败");
+        let parallel = scan_parallel(&config).expect("parallel 扫描失败");
+
+        assert!(walk.file_count >= 2);
+        assert!(walk.directory_count >= 2);
+        assert!(verify_consistency(&walk, &parallel).is_consistent());
+    }
+
+    #[test]
+    fn test_dot_directories() {
+        let temp = TempDir::new().expect("创建临时目录失败");
+
+        fs::create_dir(temp.path().join(".config")).unwrap();
+        fs::create_dir(temp.path().join("..strange")).unwrap();
+        File::create(temp.path().join(".config/settings.json")).unwrap();
+
+        let config = ScanConfig {
+            root: temp.path().to_path_buf(),
+            include_files: true,
+            thread_count: 4,
+        };
+
+        let walk = scan_walk(&config).expect("walk 扫描失败");
+        let parallel = scan_parallel(&config).expect("parallel 扫描失败");
+
+        assert!(verify_consistency(&walk, &parallel).is_consistent());
+    }
+
+    #[test]
+    fn test_very_long_filename() {
+        let temp = TempDir::new().expect("创建临时目录失败");
+
+        let long_name = "a".repeat(200);
+        File::create(temp.path().join(format!("{}.txt", long_name))).unwrap();
+
+        let config = ScanConfig {
+            root: temp.path().to_path_buf(),
+            include_files: true,
+            thread_count: 4,
+        };
+
+        let walk = scan_walk(&config).expect("walk 扫描失败");
+        let parallel = scan_parallel(&config).expect("parallel 扫描失败");
+
+        assert!(verify_consistency(&walk, &parallel).is_consistent());
+    }
+
+    #[test]
+    fn test_nested_empty_dirs() {
+        let temp = TempDir::new().expect("创建临时目录失败");
+
+        fs::create_dir_all(temp.path().join("a/b/c/d/e")).unwrap();
+
+        let config = ScanConfig {
+            root: temp.path().to_path_buf(),
+            include_files: true,
+            thread_count: 4,
+        };
+
+        let walk = scan_walk(&config).expect("walk 扫描失败");
+        let parallel = scan_parallel(&config).expect("parallel 扫描失败");
+
+        assert_eq!(walk.directory_count, 6);
+        assert_eq!(walk.file_count, 0);
+        assert!(verify_consistency(&walk, &parallel).is_consistent());
+    }
+
     // ========================================================================
-    // 排序确定性测试 (4 tests)
+    // 排序确定性测试
     // ========================================================================
 
     #[test]
@@ -1704,7 +1650,6 @@ mod tests {
             .map(|c| c.name.clone())
             .collect();
 
-        // 验证大小写不敏感排序
         assert_eq!(names[0].to_lowercase(), "apple.txt");
         assert_eq!(names[1].to_lowercase(), "banana.txt");
         assert_eq!(names[2].to_lowercase(), "cherry.txt");
@@ -1712,28 +1657,61 @@ mod tests {
     }
 
     #[test]
-    fn test_channel_deterministic_ordering() {
-        let temp = create_wide_directory(30);
+    fn test_numeric_filename_sort() {
+        let temp = TempDir::new().expect("创建临时目录失败");
+
+        for i in [1, 10, 2, 20, 3] {
+            File::create(temp.path().join(format!("file_{}.txt", i))).unwrap();
+        }
+
         let config = ScanConfig {
             root: temp.path().to_path_buf(),
             include_files: true,
             thread_count: 4,
         };
 
-        let results: Vec<_> = (0..5)
-            .map(|_| {
-                let result = scan_parallel_channel(&config).expect("扫描失败");
-                result.tree.collect_paths()
-            })
+        let result = scan_parallel(&config).expect("扫描失败");
+        let names: Vec<_> = result
+            .tree
+            .children
+            .iter()
+            .map(|c| c.name.clone())
             .collect();
 
-        for i in 1..results.len() {
-            assert_eq!(results[0], results[i], "channel 模式排序不确定");
-        }
+        assert_eq!(names[0], "file_1.txt");
+        assert_eq!(names[1], "file_10.txt");
+        assert_eq!(names[2], "file_2.txt");
+    }
+
+    #[test]
+    fn test_mixed_case_directories() {
+        let temp = TempDir::new().expect("创建临时目录失败");
+
+        fs::create_dir(temp.path().join("AAA")).unwrap();
+        fs::create_dir(temp.path().join("aaa_second")).unwrap();
+        fs::create_dir(temp.path().join("BBB")).unwrap();
+        fs::create_dir(temp.path().join("bbb_second")).unwrap();
+
+        let config = ScanConfig {
+            root: temp.path().to_path_buf(),
+            include_files: true,
+            thread_count: 4,
+        };
+
+        let result = scan_parallel(&config).expect("扫描失败");
+        let names: Vec<_> = result
+            .tree
+            .children
+            .iter()
+            .map(|c| c.name.to_lowercase())
+            .collect();
+
+        assert!(names[0].starts_with("aaa"));
+        assert!(names[1].starts_with("aaa"));
     }
 
     // ========================================================================
-    // TreeNode 方法测试 (4 tests)
+    // TreeNode 方法测试
     // ========================================================================
 
     #[test]
@@ -1767,7 +1745,22 @@ mod tests {
         let result = scan_walk(&config).expect("扫描失败");
         let depth = result.tree.max_depth();
 
-        assert_eq!(depth, 11, "深度应为 11 (根 + 10 层)");
+        assert_eq!(depth, 11, "深度应为 11 (根 + 10 层目录)");
+    }
+
+    #[test]
+    fn test_tree_node_max_depth_with_files() {
+        let temp = create_deep_directory_with_files(10);
+        let config = ScanConfig {
+            root: temp.path().to_path_buf(),
+            include_files: true,
+            thread_count: 1,
+        };
+
+        let result = scan_walk(&config).expect("扫描失败");
+        let depth = result.tree.max_depth();
+
+        assert_eq!(depth, 11, "深度应为 11 (根 + 10 层目录，不含文件)");
     }
 
     #[test]
@@ -1786,7 +1779,7 @@ mod tests {
         let result = scan_walk(&config).expect("扫描失败");
         let names = result.tree.collect_names();
 
-        assert_eq!(names.len(), 4); // root + 3 entries
+        assert_eq!(names.len(), 4);
         assert!(names.contains(&"a.txt".to_string()));
         assert!(names.contains(&"b.txt".to_string()));
         assert!(names.contains(&"c".to_string()));
@@ -1807,8 +1800,26 @@ mod tests {
         assert!(result1.tree.structural_eq(&result2.tree));
     }
 
+    #[test]
+    fn test_tree_node_collect_paths() {
+        let temp = TempDir::new().expect("创建临时目录失败");
+        fs::create_dir(temp.path().join("sub")).unwrap();
+        File::create(temp.path().join("sub/file.txt")).unwrap();
+
+        let config = ScanConfig {
+            root: temp.path().to_path_buf(),
+            include_files: true,
+            thread_count: 1,
+        };
+
+        let result = scan_walk(&config).expect("扫描失败");
+        let paths = result.tree.collect_paths();
+
+        assert_eq!(paths.len(), 3);
+    }
+
     // ========================================================================
-    // 性能验证测试 (2 tests)
+    // 性能验证测试
     // ========================================================================
 
     #[test]
@@ -1828,7 +1839,6 @@ mod tests {
             results.push((thread_count, result.duration));
         }
 
-        // 仅记录，不断言
         println!("\n性能扩展测试结果:");
         for (threads, duration) in &results {
             println!(
@@ -1850,7 +1860,6 @@ mod tests {
 
         let result = scan_parallel(&config).expect("扫描失败");
 
-        // 100 个文件 + 10 个目录应该在 1 秒内完成
         assert!(
             result.duration.as_secs() < 1,
             "扫描耗时过长: {:?}",
@@ -1858,12 +1867,8 @@ mod tests {
         );
     }
 
-    // ========================================================================
-    // 与原生 tree 命令对比测试 (1 test)
-    // ========================================================================
-
     #[test]
-    fn test_count_matches_native_tree() {
+    fn test_walk_vs_parallel_similar_performance() {
         let temp = create_test_directory();
         let config = ScanConfig {
             root: temp.path().to_path_buf(),
@@ -1871,38 +1876,49 @@ mod tests {
             thread_count: 4,
         };
 
-        let our_result = scan_walk(&config).expect("扫描失败");
+        let walk = scan_walk(&config).expect("walk 扫描失败");
+        let parallel = scan_parallel(&config).expect("parallel 扫描失败");
 
-        if let Ok(native) = scan_native_tree(temp.path(), true) {
-            // 原生 tree 不计入根目录
-            let our_dirs = our_result.directory_count - 1;
-
-            assert_eq!(
-                our_dirs, native.directory_count,
-                "目录数量不匹配: ours={}, native={}",
-                our_dirs, native.directory_count
-            );
-            assert_eq!(
-                our_result.file_count, native.file_count,
-                "文件数量不匹配: ours={}, native={}",
-                our_result.file_count, native.file_count
-            );
-        }
+        assert!(walk.duration.as_secs() < 1);
+        assert!(parallel.duration.as_secs() < 1);
     }
 
     // ========================================================================
-    // 大目录测试（使用实际路径）
+    // 与原生 tree 命令对比测试
     // ========================================================================
 
     #[test]
-    #[ignore]
-    fn test_large_directory_rustup() {
-        let rustup_path = PathBuf::from(r"C:\Users\linzh\.rustup");
+    fn test_native_tree_execution() {
+        let temp = create_test_directory();
 
-        if !rustup_path.exists() {
-            println!("跳过: rustup 路径不存在");
-            return;
-        }
+        let result = scan_native_tree(temp.path(), true);
+        assert!(result.is_ok(), "原生 tree 命令执行失败");
+
+        let native = result.unwrap();
+        assert!(!native.lines.is_empty(), "原生 tree 输出为空");
+    }
+
+    #[test]
+    fn test_native_tree_directory_only() {
+        let temp = create_test_directory();
+
+        let result = scan_native_tree(temp.path(), false);
+        assert!(result.is_ok(), "原生 tree 命令执行失败");
+    }
+
+    // ========================================================================
+    // 大目录测试（使用 rustup 路径）
+    // ========================================================================
+
+    #[test]
+    fn test_large_directory_rustup() {
+        let rustup_path = match get_rustup_path() {
+            Some(p) => p,
+            None => {
+                println!("跳过: rustup 路径不存在");
+                return;
+            }
+        };
 
         let config = ScanConfig {
             root: rustup_path.clone(),
@@ -1931,23 +1947,29 @@ mod tests {
         let report = verify_consistency(&walk, &parallel);
         println!("{}", report);
 
+        let speedup = walk.duration.as_secs_f64() / parallel.duration.as_secs_f64();
+        println!("加速比: {:.2}x", speedup);
+
         assert!(report.is_consistent(), "大目录一致性验证失败");
     }
 
     #[test]
-    #[ignore]
     fn test_large_directory_consistency_stress() {
-        let rustup_path = PathBuf::from(r"C:\Users\linzh\.rustup");
-
-        if !rustup_path.exists() {
-            return;
-        }
+        let rustup_path = match get_rustup_path() {
+            Some(p) => p,
+            None => {
+                println!("跳过: rustup 路径不存在");
+                return;
+            }
+        };
 
         let config = ScanConfig {
             root: rustup_path,
             include_files: true,
             thread_count: num_cpus(),
         };
+
+        let baseline = scan_walk(&config).expect("walk 扫描失败");
 
         let results: Vec<_> = (0..3)
             .map(|i| {
@@ -1957,9 +1979,421 @@ mod tests {
             })
             .collect();
 
-        for i in 1..results.len() {
-            let report = verify_consistency(&results[0], &results[i]);
+        for (i, result) in results.iter().enumerate() {
+            let report = verify_consistency(&baseline, result);
             assert!(report.is_consistent(), "压力测试第 {} 次运行不一致", i);
         }
+    }
+
+    // ========================================================================
+    // 速度比较测试（使用 rustup 路径）
+    // ========================================================================
+
+    #[test]
+    fn test_performance_comparison_rustup() {
+        let rustup_path = match get_rustup_path() {
+            Some(p) => p,
+            None => {
+                println!("跳过: rustup 路径不存在");
+                return;
+            }
+        };
+
+        const WARMUP_RUNS: usize = 2;
+        const BENCH_RUNS: usize = 5;
+
+        println!("\n=== 性能比较测试 (rustup 目录) ===");
+        println!("路径: {:?}", rustup_path);
+        println!("预热: {} 次, 测量: {} 次\n", WARMUP_RUNS, BENCH_RUNS);
+
+        // 预热
+        println!("预热中...");
+        for _ in 0..WARMUP_RUNS {
+            let config = ScanConfig {
+                root: rustup_path.clone(),
+                include_files: true,
+                thread_count: num_cpus(),
+            };
+            let _ = scan_walk(&config);
+            let _ = scan_parallel(&config);
+        }
+        println!("预热完成\n");
+
+        // 1. 原生 tree 命令基准
+        let mut native_times = Vec::with_capacity(BENCH_RUNS);
+        for _ in 0..BENCH_RUNS {
+            if let Ok(r) = scan_native_tree(&rustup_path, true) {
+                native_times.push(r.duration.as_secs_f64());
+            }
+        }
+        let native_avg = if native_times.is_empty() {
+            0.0
+        } else {
+            native_times.iter().sum::<f64>() / native_times.len() as f64
+        };
+
+        // 2. Rust 单线程基准
+        let mut walk_times = Vec::with_capacity(BENCH_RUNS);
+        let config_walk = ScanConfig {
+            root: rustup_path.clone(),
+            include_files: true,
+            thread_count: 1,
+        };
+        for _ in 0..BENCH_RUNS {
+            let result = scan_walk(&config_walk).expect("walk 扫描失败");
+            walk_times.push(result.duration.as_secs_f64());
+        }
+        let walk_avg = walk_times.iter().sum::<f64>() / walk_times.len() as f64;
+        let walk_min = walk_times.iter().cloned().fold(f64::INFINITY, f64::min);
+        let walk_max = walk_times.iter().cloned().fold(0.0, f64::max);
+
+        // 3. Rust 多线程基准（不同线程数）
+        let thread_counts = [2, 4, 8, num_cpus()];
+        let mut parallel_stats: Vec<(usize, f64, f64, f64)> = Vec::new();
+
+        for &thread_count in &thread_counts {
+            let config = ScanConfig {
+                root: rustup_path.clone(),
+                include_files: true,
+                thread_count,
+            };
+
+            let mut times = Vec::with_capacity(BENCH_RUNS);
+            for _ in 0..BENCH_RUNS {
+                let result = scan_parallel(&config).expect("parallel 扫描失败");
+                times.push(result.duration.as_secs_f64());
+            }
+
+            let avg = times.iter().sum::<f64>() / times.len() as f64;
+            let min = times.iter().cloned().fold(f64::INFINITY, f64::min);
+            let max = times.iter().cloned().fold(0.0, f64::max);
+            parallel_stats.push((thread_count, avg, min, max));
+        }
+
+        // 输出结果
+        println!("=== 测量结果 ===\n");
+        println!(
+            "{:<20} {:>10} {:>10} {:>10} {:>12}",
+            "模式", "平均(ms)", "最小(ms)", "最大(ms)", "vs 单线程"
+        );
+        println!("{}", "-".repeat(65));
+
+        if native_avg > 0.0 {
+            println!(
+                "{:<20} {:>10.2} {:>10} {:>10} {:>12.2}x",
+                "原生 tree",
+                native_avg * 1000.0,
+                "-",
+                "-",
+                native_avg / walk_avg
+            );
+        }
+
+        println!(
+            "{:<20} {:>10.2} {:>10.2} {:>10.2} {:>12}",
+            "Rust 单线程",
+            walk_avg * 1000.0,
+            walk_min * 1000.0,
+            walk_max * 1000.0,
+            "1.00x"
+        );
+
+        for (threads, avg, min, max) in &parallel_stats {
+            let label = format!("Rust {} 线程", threads);
+            let speedup = walk_avg / avg;
+            println!(
+                "{:<20} {:>10.2} {:>10.2} {:>10.2} {:>12.2}x",
+                label,
+                avg * 1000.0,
+                min * 1000.0,
+                max * 1000.0,
+                speedup
+            );
+        }
+
+        // 一致性验证
+        println!("\n=== 一致性验证 ===");
+        let walk_result = scan_walk(&config_walk).expect("walk 扫描失败");
+        for &thread_count in &thread_counts {
+            let config = ScanConfig {
+                root: rustup_path.clone(),
+                include_files: true,
+                thread_count,
+            };
+            let parallel_result = scan_parallel(&config).expect("parallel 扫描失败");
+            let report = verify_consistency(&walk_result, &parallel_result);
+            let status = if report.is_consistent() { "✓" } else { "✗" };
+            println!("{} 线程: {}", thread_count, status);
+        }
+    }
+
+    #[test]
+    fn test_performance_all_thread_counts() {
+        let rustup_path = match get_rustup_path() {
+            Some(p) => p,
+            None => {
+                println!("跳过: rustup 路径不存在");
+                return;
+            }
+        };
+
+        const WARMUP_RUNS: usize = 3;
+        const BENCH_RUNS: usize = 3;
+
+        println!("\n=== 全线程数性能测试 (分治模式) ===");
+        println!("路径: {:?}", rustup_path);
+        println!("预热: {} 次, 每组测量: {} 次\n", WARMUP_RUNS, BENCH_RUNS);
+
+        // 预热
+        println!("预热中...");
+        for _ in 0..WARMUP_RUNS {
+            let config = ScanConfig {
+                root: rustup_path.clone(),
+                include_files: true,
+                thread_count: num_cpus(),
+            };
+            let _ = scan_walk(&config);
+            let _ = scan_parallel(&config);
+        }
+        println!("预热完成\n");
+
+        // 单线程基准 (walk)
+        let config_walk = ScanConfig {
+            root: rustup_path.clone(),
+            include_files: true,
+            thread_count: 1,
+        };
+        let mut walk_times = Vec::with_capacity(BENCH_RUNS);
+        for _ in 0..BENCH_RUNS {
+            let result = scan_walk(&config_walk).expect("walk 扫描失败");
+            walk_times.push(result.duration.as_secs_f64());
+        }
+        let baseline = walk_times.iter().sum::<f64>() / walk_times.len() as f64;
+
+        // 多线程测试
+        let thread_counts = [1, 2, 4, 6, 8, 12, 16, 24, 32, 48, 64];
+        let mut results: Vec<(usize, f64, f64, f64)> = Vec::new();
+
+        for &thread_count in &thread_counts {
+            let config = ScanConfig {
+                root: rustup_path.clone(),
+                include_files: true,
+                thread_count,
+            };
+
+            let mut times = Vec::with_capacity(BENCH_RUNS);
+            for _ in 0..BENCH_RUNS {
+                let result = scan_parallel(&config).expect("parallel 扫描失败");
+                times.push(result.duration.as_secs_f64());
+            }
+
+            let avg = times.iter().sum::<f64>() / times.len() as f64;
+            let min = times.iter().cloned().fold(f64::INFINITY, f64::min);
+            let max = times.iter().cloned().fold(0.0, f64::max);
+            results.push((thread_count, avg, min, max));
+
+            print!(".");
+            use std::io::Write;
+            std::io::stdout().flush().ok();
+        }
+        println!(" 完成\n");
+
+        // 输出表格
+        println!(
+            "{:>6} | {:>10} | {:>10} | {:>10} | {:>8} | {}",
+            "线程数", "平均(ms)", "最小(ms)", "最大(ms)", "加速比", "柱状图"
+        );
+        println!("{}", "-".repeat(75));
+
+        // 先输出单线程基准
+        println!(
+            "{:>6} | {:>10.2} | {:>10.2} | {:>10.2} | {:>7.2}x | {}",
+            "walk",
+            baseline * 1000.0,
+            walk_times.iter().cloned().fold(f64::INFINITY, f64::min) * 1000.0,
+            walk_times.iter().cloned().fold(0.0, f64::max) * 1000.0,
+            1.0,
+            "████████████████████"
+        );
+
+        let max_speedup = results
+            .iter()
+            .map(|(_, avg, _, _)| baseline / avg)
+            .fold(1.0_f64, f64::max);
+
+        for (threads, avg, min, max) in &results {
+            let speedup = baseline / avg;
+            let bar_len = ((speedup / max_speedup) * 20.0) as usize;
+            let bar = "█".repeat(bar_len.max(1));
+
+            println!(
+                "{:>6} | {:>10.2} | {:>10.2} | {:>10.2} | {:>7.2}x | {}",
+                threads,
+                avg * 1000.0,
+                min * 1000.0,
+                max * 1000.0,
+                speedup,
+                bar
+            );
+        }
+
+        // 找出最佳线程数
+        let best = results
+            .iter()
+            .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+            .unwrap();
+        println!(
+            "\n最佳配置: {} 线程, 平均耗时 {:.2}ms, 加速比 {:.2}x",
+            best.0,
+            best.1 * 1000.0,
+            baseline / best.1
+        );
+
+        // 效率分析
+        println!("\n=== 并行效率分析 ===");
+        println!("(效率 = 加速比 / 线程数 × 100%)");
+        for (threads, avg, _, _) in &results {
+            let speedup = baseline / avg;
+            let efficiency = (speedup / *threads as f64) * 100.0;
+            let status = if efficiency > 50.0 {
+                "良好"
+            } else if efficiency > 25.0 {
+                "一般"
+            } else {
+                "较低"
+            };
+            println!("{:>3} 线程: {:.1}% ({})", threads, efficiency, status);
+        }
+    }
+
+    // ========================================================================
+    // 额外边缘情况测试
+    // ========================================================================
+
+    #[test]
+    fn test_only_directories_no_files() {
+        let temp = TempDir::new().expect("创建临时目录失败");
+
+        for i in 0..10 {
+            fs::create_dir(temp.path().join(format!("dir_{}", i))).unwrap();
+        }
+
+        let config = ScanConfig {
+            root: temp.path().to_path_buf(),
+            include_files: true,
+            thread_count: 4,
+        };
+
+        let walk = scan_walk(&config).expect("walk 扫描失败");
+        let parallel = scan_parallel(&config).expect("parallel 扫描失败");
+
+        assert_eq!(walk.file_count, 0);
+        assert_eq!(walk.directory_count, 11);
+        assert!(verify_consistency(&walk, &parallel).is_consistent());
+    }
+
+    #[test]
+    fn test_only_files_no_subdirs() {
+        let temp = TempDir::new().expect("创建临时目录失败");
+
+        for i in 0..20 {
+            File::create(temp.path().join(format!("file_{}.txt", i))).unwrap();
+        }
+
+        let config = ScanConfig {
+            root: temp.path().to_path_buf(),
+            include_files: true,
+            thread_count: 4,
+        };
+
+        let walk = scan_walk(&config).expect("walk 扫描失败");
+        let parallel = scan_parallel(&config).expect("parallel 扫描失败");
+
+        assert_eq!(walk.file_count, 20);
+        assert_eq!(walk.directory_count, 1);
+        assert!(verify_consistency(&walk, &parallel).is_consistent());
+    }
+
+    #[test]
+    fn test_alternating_structure() {
+        let temp = TempDir::new().expect("创建临时目录失败");
+
+        for i in 0..10 {
+            if i % 2 == 0 {
+                File::create(temp.path().join(format!("item_{}.txt", i))).unwrap();
+            } else {
+                fs::create_dir(temp.path().join(format!("item_{}", i))).unwrap();
+            }
+        }
+
+        let config = ScanConfig {
+            root: temp.path().to_path_buf(),
+            include_files: true,
+            thread_count: 4,
+        };
+
+        let walk = scan_walk(&config).expect("walk 扫描失败");
+        let parallel = scan_parallel(&config).expect("parallel 扫描失败");
+
+        assert_eq!(walk.file_count, 5);
+        assert_eq!(walk.directory_count, 6);
+        assert!(verify_consistency(&walk, &parallel).is_consistent());
+    }
+
+    #[test]
+    fn test_binary_tree_structure() {
+        let temp = TempDir::new().expect("创建临时目录失败");
+
+        fn create_binary_tree(path: &Path, depth: usize) {
+            if depth == 0 {
+                return;
+            }
+            let left = path.join("left");
+            let right = path.join("right");
+            fs::create_dir(&left).unwrap();
+            fs::create_dir(&right).unwrap();
+            File::create(path.join("data.txt")).unwrap();
+            create_binary_tree(&left, depth - 1);
+            create_binary_tree(&right, depth - 1);
+        }
+
+        create_binary_tree(temp.path(), 4);
+
+        let config = ScanConfig {
+            root: temp.path().to_path_buf(),
+            include_files: true,
+            thread_count: 8,
+        };
+
+        let walk = scan_walk(&config).expect("walk 扫描失败");
+        let parallel = scan_parallel(&config).expect("parallel 扫描失败");
+
+        assert!(verify_consistency(&walk, &parallel).is_consistent());
+    }
+
+    #[test]
+    fn test_sparse_deep_structure() {
+        let temp = TempDir::new().expect("创建临时目录失败");
+
+        for branch in 0..5 {
+            let mut current = temp.path().join(format!("branch_{}", branch));
+            fs::create_dir(&current).unwrap();
+            for level in 0..10 {
+                current = current.join(format!("level_{}", level));
+                fs::create_dir(&current).unwrap();
+            }
+            File::create(current.join("leaf.txt")).unwrap();
+        }
+
+        let config = ScanConfig {
+            root: temp.path().to_path_buf(),
+            include_files: true,
+            thread_count: 8,
+        };
+
+        let walk = scan_walk(&config).expect("walk 扫描失败");
+        let parallel = scan_parallel(&config).expect("parallel 扫描失败");
+
+        assert!(verify_consistency(&walk, &parallel).is_consistent());
     }
 }

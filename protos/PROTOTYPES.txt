@@ -18,6 +18,3 @@ PROTOTYPES.txt
 
 05_render_output:
   渲染与输出层. 验证树形文本渲染(ASCII/Unicode/no-indent/quote等)与多格式输出(txt/json/yml/toml)及silent写文件逻辑.
-
-06_regression_harness:
-  回归对拍与基准夹具. 统一fixtures与golden输出, 提供一键对拍(结构/文本)与差异摘要, 用于保证proto合并至src后语义不回退.

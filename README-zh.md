@@ -13,6 +13,16 @@ Windows上的`tree`命令自从近40年前发布以来几乎就没有改动. 在
 
 **`tree++`使用`Rust`实现**, 开源于[GitHub](https://github.com/Water-Run/treepp).  
 
+*性能对比示例(以`C:\Windows`目录):*  
+
+| 类型                |耗时|倍率|  
+|-------------------|---|---|  
+| 原生`tree`          |||
+| `treepp`(默认, 4线程) |||
+| `treepp`(1线程)     |||
+| `treepp`(12线程)    |||
+| `treepp`(MFT)     |||
+
 ## 安装
 
 从[Release](https://github.com/Water-Run/treepp/releases/tag/0.1.0)下载`tree++.zip`, 解压到合适目录, 并将目录添加至环境变量.  
@@ -77,7 +87,7 @@ sudo treepp /f --mft
 | `--no-header` `-N` `/NH`      | 不显示卷信息与头部报告信息                              |
 | `--silent` `-l` `/SI`         | 终端静默(结合`output`指令使用)                       |
 | `--output` `-o` `/O`          | 将结果输出至文件(`.txt`, `.json`, `.yml`, `.toml`) |
-| `--thread` `-t` `/T`          | 扫描线程数(默认为24)                               |
+| `--thread` `-t` `/T`          | 扫描线程数(默认为4)                                |
 | `--mft` `-M` `/MFT`           | 使用MFT(管理员权限, 功能有限制)                        |
 | `--gitignore` `-g` `/G`       | 遵循`.gitignore`                             |
 
