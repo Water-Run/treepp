@@ -756,7 +756,7 @@ output: D:\Rust\tree++\tree.json
 
 ### `/T`: Scan Thread Count
 
-**Function:** Specify number of scanning threads, default is 4.
+**Function:** Specify number of scanning threads, default is 8.
 
 **Syntax:**
 
