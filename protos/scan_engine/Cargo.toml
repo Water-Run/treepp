@@ -1,0 +1,19 @@
+[package]
+name = "scan_engine"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "scan_engine"
+path = "src/lib.rs"
+
+[[bin]]
+name = "scan_engine"
+path = "src/engine.rs"
+
+[dependencies]
+rayon = "1.10"
+num_cpus = "1.16"
+
+[dev-dependencies]
+tempfile = "3"
