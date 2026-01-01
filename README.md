@@ -2,20 +2,27 @@
 
 *[中文](./README-zh.md)*
 
-The `tree` command on Windows has barely changed since its release nearly 40 years ago. In today's LLM era, it is frequently used to describe project structures, yet the built-in options (`/f` and `/a`) are clearly insufficient. At the same time, it is slow.
+The Windows `tree` command has barely changed since it was released nearly 40 years ago. In the LLM era, it is a very commonly used tool for describing project structures, but with only `/f` and `/a`, its capabilities are clearly insufficient. It is also slow.
 
-**`tree++` is a comprehensive upgrade to `tree`**, introducing the following improvements for the Windows platform:
+**`tree++` is a comprehensive upgrade to `tree`**, bringing the following to the Windows `tree` command:
 
-- ***Full compatibility with the original Windows `tree` command parameters and output, while extending the instruction set to include features such as file size display, recursion depth limits, output style modifications, result export to files, and exclusion of specified directories (including `.gitignore` support)***
-- ***Multithreading support for exponential performance improvements in large and complex directories; when run with administrator privileges, MFT mode is available for extremely high speed***
+- ***An extended option set, covering commonly used features such as showing file sizes, limiting recursion depth, changing output styles, exporting results to a file, and excluding specific directories (including honoring `.gitignore`).***
+- ***Multi-threading support, delivering significant performance improvements on large and complex directories.***
+- ***Fully compatible with the original Windows `tree` command’s options and output, and also compatible with Unix-style options (such as `-f` and `--files`).***
 
-Supports traditional Windows-style options (e.g., `/f`, case-insensitive) and Unix-style options (e.g., `-f` and `--files`).
+**`tree++` is implemented in `Rust`**, and is open-sourced on [GitHub](https://github.com/Water-Run/treepp).
 
-**`tree++` is implemented in `Rust`**, open-sourced on [GitHub](https://github.com/Water-Run/treepp).
+*Performance comparison (using `C:\Windows` as an example):*
+
+| Type                          | Time (`ms`) | Multiplier |
+| ----------------------------- | ----------- | ---------- |
+| Native `tree`                 | `34055.50`  | 1.0x       |
+| `treepp` (default, 8 threads) | `3480.12`   | 9.79x      |
+| `treepp` (1 thread)           | `6687.58`   | 5.09x      |
 
 ## Installation
 
-Download `tree++.zip` from [Release](https://github.com/Water-Run/treepp/releases/tag/0.1.0), extract it to a suitable directory, and add that directory to your PATH environment variable.
+Download `tree++.zip` from [Release](https://github.com/Water-Run/treepp/releases/tag/0.1.0), extract it to a suitable directory, and add that directory to your environment variables.
 
 Open Windows Terminal and run:
 
@@ -23,7 +30,7 @@ Open Windows Terminal and run:
 treepp /v
 ```
 
-You should see:
+You should see output like:
 
 ```plaintext
 tree++ version 0.1.0
@@ -34,51 +41,42 @@ author: WaterRun
 link: https://github.com/Water-Run/treepp
 ```
 
-Installation is complete.
+Installation is now complete.
 
-After that, you can use it just like the standard Windows `tree` command:
+After that, you can use it the same way as the normal Windows `tree` command:
 
 ```powershell
 treepp /f
 ```
 
-For large directories, you can use MFT: directly scanning the NTFS directory index is extremely fast. This requires running `treepp` with administrator privileges; using `Sudo for Windows` is recommended. `treepp` will automatically detect the current execution mode:
+## Quick Reference
 
-```powershell
-sudo treepp /f --mft
-```
+| Option Set (Equivalent Forms) | Description                                                 |
+| ----------------------------- | ----------------------------------------------------------- |
+| `--help` `-h` `/?`            | Show help information                                       |
+| `--version` `-v` `/V`         | Show version information                                    |
+| `--ascii` `-a` `/A`           | Draw the tree using ASCII characters                        |
+| `--files` `-f` `/F`           | Show files                                                  |
+| `--full-path` `-p` `/FP`      | Show full paths                                             |
+| `--human-readable` `-H` `/HR` | Show file sizes in human-readable form                      |
+| `--no-indent` `-i` `/NI`      | Do not show tree connector lines                            |
+| `--reverse` `-r` `/R`         | Sort in reverse order                                       |
+| `--size` `-s` `/S`            | Show file size (bytes)                                      |
+| `--date` `-d` `/DT`           | Show last modified date                                     |
+| `--exclude` `-I` `/X`         | Exclude matching files                                      |
+| `--level` `-L` `/L`           | Limit recursion depth                                       |
+| `--include` `-m` `/M`         | Show only matching files                                    |
+| `--quote` `-q` `/Q`           | Wrap file names in double quotes                            |
+| `--dirs-first` `-D` `/DF`     | Show directories first                                      |
+| `--disk-usage` `-u` `/DU`     | Show cumulative directory size                              |
+| `--ignore-case` `-c` `/IC`    | Ignore case when matching                                   |
+| `--no-report` `-n` `/NR`      | Do not show trailing summary statistics                     |
+| `--prune` `-P` `/P`           | Prune empty directories                                     |
+| `--sort` `-S` `/SO`           | Specify sort method (`name`, `size`, `mtime`, etc.)         |
+| `--no-header` `-N` `/NH`      | Do not show volume info and header report                   |
+| `--silent` `-l` `/SI`         | Silent terminal output (use with `output`)                  |
+| `--output` `-o` `/O`          | Output results to a file (`.txt`, `.json`, `.yml`, `.toml`) |
+| `--thread` `-t` `/T`          | Number of scan threads (default is 8)                       |
+| `--gitignore` `-g` `/G`       | Honor `.gitignore`                                          |
 
-> Note: In `mft` mode, some features will be limited
-
-## Quick Overview
-
-| Option Set (Equivalent Forms) | Description                                              |
-|-------------------------------|----------------------------------------------------------|
-| `--help` `-h` `/?`            | Show help information                                    |
-| `--version` `-v` `/V`         | Show version information                                 |
-| `--ascii` `-a` `/A`           | Draw the tree using ASCII characters                     |
-| `--files` `-f` `/F`           | Show files                                               |
-| `--full-path` `-p` `/FP`      | Show full paths                                          |
-| `--human-readable` `-H` `/HR` | Show file sizes in human-readable units                  |
-| `--no-indent` `-i` `/NI`      | Hide tree connector lines                                |
-| `--reverse` `-r` `/R`         | Reverse sort order                                       |
-| `--size` `-s` `/S`            | Show file sizes (bytes)                                  |
-| `--date` `-d` `/DT`           | Show last modified date                                  |
-| `--exclude` `-I` `/X`         | Exclude matched files                                    |
-| `--level` `-L` `/L`           | Limit recursion depth                                    |
-| `--include` `-m` `/M`         | Show only matched files                                  |
-| `--quote` `-q` `/Q`           | Wrap file names in double quotes                         |
-| `--dirs-first` `-D` `/DF`     | List directories before files                            |
-| `--disk-usage` `-u` `/DU`     | Show cumulative directory size                           |
-| `--ignore-case` `-c` `/IC`    | Case-insensitive matching                                |
-| `--no-report` `-n` `/NR`      | Hide the summary report at the end                       |
-| `--prune` `-P` `/P`           | Prune empty directories                                  |
-| `--sort` `-S` `/SO`           | Specify sorting (`name`, `size`, `mtime`, etc.)          |
-| `--no-header` `-N` `/NH`      | Hide volume information and header report                |
-| `--silent` `-l` `/SI`         | Silent mode (used with the `output` option)              |
-| `--output` `-o` `/O`          | Save output to a file (`.txt`, `.json`, `.yml`, `.toml`) |
-| `--thread` `-t` `/T`          | Number of scan threads (default: 8)                      |
-| `--mft` `-M` `/MFT`           | Use MFT (requires admin privileges, limited features)    |
-| `--gitignore` `-g` `/G`       | Follow `.gitignore`                                      |
-
-> For the complete option set, see: [tree++ Options Documentation](./OPTIONS.md)
+> For the full option set, see: [tree++ Options Documentation](./OPTIONS.md)

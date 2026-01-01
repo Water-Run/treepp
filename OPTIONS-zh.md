@@ -787,57 +787,6 @@ D:\Rust\tree++
 1 个目录, 12 个文件
 ```
 
-### `/MFT`: 使用 MFT（管理员模式）
-
-**功能：** 在管理员权限下显式启用 NTFS MFT 扫描，绕过常规目录遍历，显著提升大目录性能。需要以管理员权限运行。  
-
-> 建议结合[Sudo For Windows](https://learn.microsoft.com/zh-cn/windows/advanced-settings/sudo/)  
-
-**语法：**
-
-```powershell
-sudo treepp [<PATH>] (--mft | -M | /MFT) [<OPTIONS>...]
-```
-
-**示例：**
-
-```powershell
-PS D:\Rust\tree++> sudo treepp /F /MFT
-[MFT] enabled: scanning via NTFS Master File Table
-卷 存储 的文件夹 PATH 列表
-卷序列号为 26E9-52C1
-D:\Rust\tree++
-│  Cargo.toml
-│  LICENSE
-│  OPTIONS-zh.md
-│  OPTIONS.md
-│  README-zh.md
-│  README.md
-│
-└─src
-        cli.rs
-        config.rs
-        main.rs
-        output.rs
-        render.rs
-        scan.rs
-
-1 个目录, 12 个文件
-```
-
-*需要注意的是，在 MFT 模式下，不可使用以下命令，否则将抛出异常：*
-
-| 命令名称                          |
-|-------------------------------|
-| `--prune` / `-P` / `/P`       |
-| `--level` / `-L` / `/L`       |
-| `--gitignore` / `-g` / `/G`   |
-| `--include` / `-m` / `/M`     |
-| `--exclude` / `-I` / `/X`     |
-| `--disk-usage` / `-u` / `/DU` |
-| `--sort` / `-S` / `/SO`       |
-| `--reverse` / `-r` / `/R`     |
-
 ### `/G`: 遵循 `.gitignore`
 
 **功能：** 解析每级目录中的 `.gitignore` 文件，自动忽略匹配条目。  

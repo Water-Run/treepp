@@ -10,11 +10,8 @@ PROTOTYPES.txt
 02_scan_engine:
   扫描引擎原型(统一入口). 在同一程序内提供 walk/parallel 两种扫描模式; 验证两者结果一致、并发下不重不漏、线程数生效与确定性排序.
 
-03_mft_engine:
-  NTFS MFT扫描原型(管理员). 验证权限/文件系统检测、记录枚举与root过滤; 明确MFT模式限制与降级策略.
-
-04_match_rules:
+03_match_rules:
   过滤与规则引擎. 验证 include/exclude 通配匹配、ignore-case, 以及分层.gitignore规则叠加与剪枝行为.
 
-05_render_output:
+04_render_output:
   渲染与输出层. 验证树形文本渲染(ASCII/Unicode/no-indent/quote等)与多格式输出(txt/json/yml/toml)及silent写文件逻辑.

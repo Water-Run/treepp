@@ -6,10 +6,9 @@ Windows上的`tree`命令自从近40年前发布以来几乎就没有改动. 在
 
 **`tree++`是对`tree`的一次全面升级**, 为Windows平台下的`tree`命令引入了:  
 
-- ***在兼容原有的Windows`tree`命令参数和输出的基础上, 扩展参数集, 涵盖包括显示文件大小, 递归深度限制, 修改输出风格, 将结果输出至文件, 及排除指定目录(包括遵循`.gitignore`)等等常用功能***
-- ***支持多线程, 在大且复杂的目录中提供显著的性能提升; 在管理员模式下运行时还可选MFT模式, 能提供极快的速度***  
-
-参数支持传统Windows风格(如`/f`, 不区分大小写)及Unix风格(如`-f`和`--files`).  
+- ***扩展参数集, 支持功能涵盖包括显示文件大小, 递归深度限制, 修改输出风格, 将结果输出至文件, 及排除指定目录(包括遵循`.gitignore`)等常用功能***  
+- ***支持多线程, 在大且复杂的目录中提供显著的性能提升***
+- ***与原有的Windows`tree`命令参数和输出完全兼容, 并兼容使用Unix风格的参数(如`-f`和`--files`)***
 
 **`tree++`使用`Rust`实现**, 开源于[GitHub](https://github.com/Water-Run/treepp).  
 
@@ -20,7 +19,6 @@ Windows上的`tree`命令自从近40年前发布以来几乎就没有改动. 在
 | 原生`tree`          | `34055.50` | 1.0x  |
 | `treepp`(默认, 8线程) | `3480.12`  | 9.79x |
 | `treepp`(1线程)     | `6687.58`  | 5.09x |
-| `treepp`(MFT)     |            |       |
 
 ## 安装
 
@@ -45,19 +43,11 @@ link: https://github.com/Water-Run/treepp
 
 即完成安装.  
 
-随后, 你可以和普通的Windows `tree`命令一样的使用:  
+随后, 你可以以和普通的Windows `tree`命令一样的方式使用:  
 
 ```powershell
 treepp /f
 ```
-
-对于大目录, 你可以使用`/MFT`: 直接扫描NTFS目录索引将非常快. 这需要你以管理员权限运行`treepp`, 推荐使用`sudo for windows`:    
-
-```powershell
-sudo treepp /f /MFT
-```
-
-> 在`mft`下, 功能将会有所限制  
 
 ## 速览
 
@@ -87,7 +77,6 @@ sudo treepp /f /MFT
 | `--silent` `-l` `/SI`         | 终端静默(结合`output`指令使用)                       |
 | `--output` `-o` `/O`          | 将结果输出至文件(`.txt`, `.json`, `.yml`, `.toml`) |
 | `--thread` `-t` `/T`          | 扫描线程数(默认为8)                                |
-| `--mft` `-M` `/MFT`           | 使用MFT(管理员权限, 功能有限制)                        |
 | `--gitignore` `-g` `/G`       | 遵循`.gitignore`                             |
 
 

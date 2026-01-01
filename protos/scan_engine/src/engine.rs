@@ -9,7 +9,6 @@
 
 use std::cmp::Ordering;
 use std::collections::HashSet;
-use std::env;
 use std::fmt::{self, Display, Formatter};
 use std::fs::{self, Metadata};
 use std::io;
@@ -696,6 +695,7 @@ impl Display for ConsistencyReport {
 mod tests {
     use super::*;
     use std::fs::{self, File};
+    use std::env;
     use std::io::Write;
     use tempfile::TempDir;
 

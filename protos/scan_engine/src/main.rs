@@ -1,5 +1,6 @@
 use std::io;
 use std::path::PathBuf;
+use std::env;
 
 use scan_engine::{
     num_cpus, scan_native_tree, scan_parallel, scan_walk, verify_consistency, ScanConfig,

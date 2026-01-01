@@ -9,7 +9,7 @@ path = "src/lib.rs"
 
 [[bin]]
 name = "scan_engine"
-path = "src/engine.rs"
+path = "src/main.rs"
 
 [dependencies]
 rayon = "1.10"

@@ -789,57 +789,6 @@ D:\Rust\tree++
 1 directories, 12 files
 ```
 
-### `/MFT`: Use MFT (Administrator Mode)
-
-**Function:** Explicitly enable NTFS MFT scanning under administrator privileges, bypassing regular directory traversal for significantly improved performance on large directories. Requires administrator privileges.
-
-> Recommend using with [Sudo For Windows](https://learn.microsoft.com/en-us/windows/advanced-settings/sudo/)
-
-**Syntax:**
-
-```powershell
-sudo treepp [<PATH>] (--mft | -M | /MFT) [<OPTIONS>...]
-```
-
-**Example:**
-
-```powershell
-PS D:\Rust\tree++> sudo treepp /F /MFT
-[MFT] enabled: scanning via NTFS Master File Table
-Folder PATH listing for volume Storage
-Volume serial number is 26E9-52C1
-D:\Rust\tree++
-│  Cargo.toml
-│  LICENSE
-│  OPTIONS-zh.md
-│  OPTIONS.md
-│  README-zh.md
-│  README.md
-│
-└─src
-        cli.rs
-        config.rs
-        main.rs
-        output.rs
-        render.rs
-        scan.rs
-
-1 directories, 12 files
-```
-
-*Note that in MFT mode, the following commands cannot be used, otherwise an exception will be thrown:*
-
-| Command Name                  |
-|-------------------------------|
-| `--prune` / `-P` / `/P`       |
-| `--level` / `-L` / `/L`       |
-| `--gitignore` / `-g` / `/G`   |
-| `--include` / `-m` / `/M`     |
-| `--exclude` / `-I` / `/X`     |
-| `--disk-usage` / `-u` / `/DU` |
-| `--sort` / `-S` / `/SO`       |
-| `--reverse` / `-r` / `/R`     |
-
 ### `/G`: Follow `.gitignore`
 
 **Function:** Parse `.gitignore` files in each directory level and automatically ignore matching entries.
