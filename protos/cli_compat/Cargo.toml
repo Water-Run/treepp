@@ -6,4 +6,10 @@ edition = "2024"
 [dependencies]
 thiserror = "2.0"
 
-[dev-dependencies]
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
+nursery = "warn"
