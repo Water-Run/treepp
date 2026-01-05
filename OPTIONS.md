@@ -22,6 +22,7 @@ D:\Rust\tree++
         cli.rs
         config.rs
         main.rs
+        error.rs
         output.rs
         render.rs
         scan.rs
@@ -130,6 +131,7 @@ D:\Rust\tree++
         cli.rs
         config.rs
         main.rs
+        error.rs
         output.rs
         render.rs
         scan.rs
@@ -195,7 +197,8 @@ D:\Rust\tree++
 └─src
         cli.rs         6.0 KB
         config.rs      2.8 KB
-        main.rs        1.9 KB
+        main.rs
+        error.rs        1.9 KB
         output.rs      7.3 KB
         render.rs      5.2 KB
         scan.rs        8.8 KB
@@ -228,7 +231,8 @@ D:\Rust\tree++
 └─src
         cli.rs         6120
         config.rs      2840
-        main.rs        1980
+        main.rs
+        error.rs        1980
         output.rs      7440
         render.rs      5360
         scan.rs        9020
@@ -296,6 +300,7 @@ D:\Rust\tree++
         render.rs
         output.rs
         main.rs
+        error.rs
         config.rs
         cli.rs
 ```
@@ -327,7 +332,8 @@ D:\Rust\tree++
 └─src
         cli.rs         2025-12-17 22:41:12
         config.rs      2025-12-17 22:35:09
-        main.rs        2025-12-17 22:12:47
+        main.rs
+        error.rs        2025-12-17 22:12:47
         output.rs      2025-12-17 23:01:58
         render.rs      2025-12-17 22:58:47
         scan.rs        2025-12-17 23:05:58
@@ -357,6 +363,7 @@ D:\Rust\tree++
         cli.rs
         config.rs
         main.rs
+        error.rs
         output.rs
         render.rs
         scan.rs
@@ -411,6 +418,7 @@ D:\Rust\tree++
         cli.rs
         config.rs
         main.rs
+        error.rs
         output.rs
         render.rs
         scan.rs
@@ -487,6 +495,7 @@ D:\Rust\tree++
         cli.rs
         config.rs
         main.rs
+        error.rs
         output.rs
         render.rs
         scan.rs
@@ -522,6 +531,7 @@ D:\Rust\tree++
         cli.rs
         config.rs
         main.rs
+        error.rs
         output.rs
         render.rs
         scan.rs
@@ -555,6 +565,7 @@ D:\Rust\tree++
         cli.rs
         config.rs
         main.rs
+        error.rs
         output.rs
         render.rs
         scan.rs
@@ -596,6 +607,7 @@ D:\Rust\tree++
         cli.rs
         config.rs
         main.rs
+        error.rs
         output.rs
         render.rs
         scan.rs
@@ -649,6 +661,7 @@ D:\Rust\tree++
         cli.rs
         config.rs
         main.rs
+        error.rs
         output.rs
         render.rs
         scan.rs
@@ -684,6 +697,7 @@ D:\Rust\tree++
         cli.rs
         config.rs
         main.rs
+        error.rs
         output.rs
         render.rs
         scan.rs
@@ -717,6 +731,7 @@ D:\Rust\tree++
         cli.rs
         config.rs
         main.rs
+        error.rs
         output.rs
         render.rs
         scan.rs

@@ -2,12 +2,49 @@
 name = "treepp"
 version = "0.1.0"
 edition = "2024"
-
 authors = ["WaterRun"]
+description = "A better tree command for Windows"
 repository = "https://github.com/Water-Run/treepp"
-homepage = "https://github.com/Water-Run/treepp"
-license = "GPL-3.0"
+license = "MIT"
+readme = "README.md"
+keywords = ["tree", "directory", "cli", "windows"]
+categories = ["command-line-utilities", "filesystem"]
 
 [dependencies]
-anyhow = "1"
-clap = { version = "4", features = ["derive"] }
+
+# 并行遍历
+rayon = "1.10"
+
+# 目录遍历
+walkdir = "2.5"
+
+# gitignore 规则解析
+ignore = "0.4"
+
+# 通配符匹配
+glob = "0.3"
+
+# 序列化支持 (json/yaml/toml 输出)
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+toml = "0.8"
+
+# 错误处理
+thiserror = "2.0"
+
+# 跨平台路径处理
+dunce = "1.0"
+
+[dev-dependencies]
+tempfile = "3.14"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+
+[[bin]]
+name = "treepp"
+path = "src/main.rs"
