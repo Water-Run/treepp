@@ -1,6 +1,6 @@
 # `tree++`: 完整参数说明和示例文档
 
-本文档简述 [tree++](https://github.com/Water-Run/treepp) 所支持的全部参数与使用示例。  
+本文档简述 [tree++](https://github.com/Water-Run/treepp) 所支持的全部参数与使用示例。
 
 ## 模拟目录
 
@@ -25,11 +25,9 @@ D:\Rust\tree++
         output.rs
         render.rs
         scan.rs
-
-1 个目录, 12 个文件
 ```
 
-> `treepp /F` 与 Windows 原生 `tree /F` 行为完全一致：显示卷头信息、树形结构以及末尾统计信息。直接执行 `treepp` 时亦保持原始语义仅展示目录结构。
+> `treepp /F` 与 Windows 原生 `tree /F` 行为完全一致：显示卷头信息和树形结构。直接执行 `treepp` 时亦保持原始语义仅展示目录结构。
 
 ## 全局用法
 
@@ -44,7 +42,7 @@ treepp [<PATH>] [<OPTIONS>...]
 
 ### `/?`: 显示帮助
 
-**功能：** 显示完整的参数帮助信息。  
+**功能：** 显示完整的参数帮助信息。
 
 **语法：**
 
@@ -60,14 +58,14 @@ tree++ - a better tree command for Windows
 Usage:
   treepp [path] [options]
 Options:
-  -h, --help        Show help information
-  -v, --version     Show version information
+  /H, /?, -h, --help        Show help information
+  /V, -v, --version     Show version information
   ...
 ```
 
 ### `/V`: 显示版本
 
-**功能：** 输出当前版本信息。  
+**功能：** 输出当前版本信息。
 
 **语法：**
 
@@ -86,7 +84,7 @@ link: https://github.com/Water-Run/treepp
 
 ### `/A`: 使用 ASCII 字符绘制树
 
-**功能：** 以 ASCII 树形字符输出，兼容 `tree /A`。  
+**功能：** 以 ASCII 树形字符输出，兼容 `tree /A`。
 
 **语法：**
 
@@ -102,13 +100,11 @@ PS D:\Rust\tree++> treepp /A
 卷序列号为 26E9-52C1
 D:\Rust\tree++
 \---src
-
-1 个目录
 ```
 
 ### `/F`: 显示文件
 
-**功能：** 在目录树中列出文件条目。  
+**功能：** 在目录树中列出文件条目。
 
 **语法：**
 
@@ -137,13 +133,11 @@ D:\Rust\tree++
         output.rs
         render.rs
         scan.rs
-
-1 个目录, 12 个文件
 ```
 
 ### `/FP`: 显示完整路径
 
-**功能：** 以绝对路径展示所有条目。  
+**功能：** 以绝对路径展示所有条目。
 
 **语法：**
 
@@ -172,13 +166,11 @@ D:\Rust\tree++
         D:\Rust\tree++\src\output.rs
         D:\Rust\tree++\src\render.rs
         D:\Rust\tree++\src\scan.rs
-
-1 个目录, 12 个文件
 ```
 
 ### `/HR`: 人类可读文件大小
 
-**功能：** 将文件大小转换为 B/KB/MB 等易读单位，常与 `/S` 搭配。  
+**功能：** 将文件大小转换为 B/KB/MB 等易读单位，常与 `/S` 搭配。
 
 **语法：**
 
@@ -207,13 +199,11 @@ D:\Rust\tree++
         output.rs      7.3 KB
         render.rs      5.2 KB
         scan.rs        8.8 KB
-
-1 个目录, 12 个文件
 ```
 
 ### `/S`: 显示文件大小（字节）
 
-**功能：** 显示文件字节数，可与 `/HR` 联用。  
+**功能：** 显示文件字节数，可与 `/HR` 联用。
 
 **语法：**
 
@@ -242,13 +232,11 @@ D:\Rust\tree++
         output.rs      7440
         render.rs      5360
         scan.rs        9020
-
-1 个目录, 12 个文件
 ```
 
 ### `/NI`: 不显示树形连接线
 
-**功能：** 用缩进取代树形符号。  
+**功能：** 用缩进取代树形符号。
 
 **语法：**
 
@@ -277,13 +265,11 @@ D:\Rust\tree++
     output.rs
     render.rs
     scan.rs
-
-1 个目录, 12 个文件
 ```
 
 ### `/R`: 逆序排序
 
-**功能：** 将当前排序结果倒序输出，可与 `/SO` 组合。  
+**功能：** 将当前排序结果倒序输出，可与 `/SO` 组合。
 
 **语法：**
 
@@ -312,13 +298,11 @@ D:\Rust\tree++
         main.rs
         config.rs
         cli.rs
-
-1 个目录, 12 个文件
 ```
 
 ### `/DT`: 显示最后修改日期
 
-**功能：** 在条目后追加文件/目录的最后修改时间。  
+**功能：** 在条目后追加文件/目录的最后修改时间。
 
 **语法：**
 
@@ -347,13 +331,11 @@ D:\Rust\tree++
         output.rs      2025-12-17 23:01:58
         render.rs      2025-12-17 22:58:47
         scan.rs        2025-12-17 23:05:58
-
-1 个目录, 12 个文件
 ```
 
 ### `/X`: 排除匹配项
 
-**功能：** 忽略与模式匹配的文件或目录。  
+**功能：** 忽略与模式匹配的文件或目录。
 
 **语法：**
 
@@ -378,13 +360,11 @@ D:\Rust\tree++
         output.rs
         render.rs
         scan.rs
-
-1 个目录, 8 个文件
 ```
 
 ### `/L`: 限制递归深度
 
-**功能：** 指定最大递归层级。  
+**功能：** 指定最大递归层级。
 
 **语法：**
 
@@ -407,13 +387,11 @@ D:\Rust\tree++
 │  README.md
 │
 └─src
-
-1 个目录, 6 个文件
 ```
 
 ### `/M`: 仅显示匹配项
 
-**功能：** 只保留符合模式的条目。  
+**功能：** 只保留符合模式的条目。
 
 **语法：**
 
@@ -436,83 +414,11 @@ D:\Rust\tree++
         output.rs
         render.rs
         scan.rs
-
-1 个目录, 6 个文件
-```
-
-### `/Q`: 引号包裹文件名
-
-**功能：** 以双引号包裹路径，方便复制或脚本处理。  
-
-**语法：**
-
-```powershell
-treepp (--quote | -q | /Q) [<PATH>]
-```
-
-**示例：**
-
-```powershell
-PS D:\Rust\tree++> treepp /F /Q
-卷 存储 的文件夹 PATH 列表
-卷序列号为 26E9-52C1
-D:\Rust\tree++
-│  "Cargo.toml"
-│  "LICENSE"
-│  "OPTIONS-zh.md"
-│  "OPTIONS.md"
-│  "README-zh.md"
-│  "README.md"
-│
-└─"src"
-        "cli.rs"
-        "config.rs"
-        "main.rs"
-        "output.rs"
-        "render.rs"
-        "scan.rs"
-
-1 个目录, 12 个文件
-```
-
-### `/DF`: 目录优先显示
-
-**功能：** 输出时先列目录，再列文件。  
-
-**语法：**
-
-```powershell
-treepp (--dirs-first | -D | /DF) [<PATH>]
-```
-
-**示例：**
-
-```powershell
-PS D:\Rust\tree++> treepp /F /DF
-卷 存储 的文件夹 PATH 列表
-卷序列号为 26E9-52C1
-D:\Rust\tree++
-└─src
-        cli.rs
-        config.rs
-        main.rs
-        output.rs
-        render.rs
-        scan.rs
-│
-│  Cargo.toml
-│  LICENSE
-│  OPTIONS-zh.md
-│  OPTIONS.md
-│  README-zh.md
-│  README.md
-
-1 个目录, 12 个文件
 ```
 
 ### `/DU`: 显示目录累计大小
 
-**功能：** 统计每个目录的累计磁盘用量，可与 `/HR` 配合。  
+**功能：** 统计每个目录的累计磁盘用量，与 `/HR` 配合。
 
 **语法：**
 
@@ -532,14 +438,16 @@ src             31.5 KB
 
 ### `/IC`: 匹配时忽略大小写
 
-**功能：** 使 `/M`、`/X` 等匹配指令忽略大小写。  
+**功能：** 使 `/M`、`/X` 等匹配指令忽略大小写。
 
 **语法：**
 
 ```powershell
 treepp (--ignore-case | -c | /IC) [<PATH>]
 ```
+
 **示例（`/F /M *.MD /IC`）：**
+
 ```powershell
 PS D:\Rust\tree++> treepp /F /M *.MD /IC
 卷 存储 的文件夹 PATH 列表
@@ -549,24 +457,22 @@ D:\Rust\tree++
 │  OPTIONS.md
 │  README-zh.md
 │  README.md
-
-0 个目录, 4 个文件
 ```
 
-### `/NR`: 不显示末尾统计信息
+### `/RP`: 显示末尾统计信息
 
-**功能：** 省略“X 个目录, Y 个文件”汇总。  
+**功能：** 在输出末尾统计信息汇总。
 
 **语法：**
 
 ```powershell
-treepp (--no-report | -n | /NR) [<PATH>]
+treepp (--report | -e | /RP) [<PATH>]
 ```
 
 **示例：**
 
 ```powershell
-PS D:\Rust\tree++> treepp /F /NR
+PS D:\Rust\tree++> treepp /F /RP
 卷 存储 的文件夹 PATH 列表
 卷序列号为 26E9-52C1
 D:\Rust\tree++
@@ -584,11 +490,13 @@ D:\Rust\tree++
         output.rs
         render.rs
         scan.rs
+
+1 directory, 12 files in 0.123s
 ```
 
 ### `/P`: 修剪空目录
 
-**功能：** 隐藏不包含内容的目录节点。  
+**功能：** 隐藏不包含内容的目录节点。
 
 **语法：**
 
@@ -617,8 +525,6 @@ D:\Rust\tree++
         output.rs
         render.rs
         scan.rs
-
-1 个目录, 12 个文件
 ```
 
 ### `/SO`: 指定排序方式
@@ -652,11 +558,9 @@ D:\Rust\tree++
         output.rs
         render.rs
         scan.rs
-
-1 个目录, 12 个文件
 ```
 
-*可选的排序字段及说明:*  
+*可选的排序字段及说明:*
 
 | 字段      | 说明        |  
 |---------|-----------|  
@@ -665,20 +569,21 @@ D:\Rust\tree++
 | `mtime` | 按修改时间升序   |
 | `ctime` | 按创建时间升序   |
 
-### `/NH`: 不显示卷信息与头部报告
+### `/NB`: 不显示 Windows 原生样板信息
 
-**功能：** 省略卷名、卷序列号等头部内容。  
+**功能：**
+省略 Windows 原生 `tree` 的样板输出。  
 
 **语法：**
 
 ```powershell
-treepp (--no-header | -N | /NH) [<PATH>]
+treepp (--no-win-banner | -N | /NB) [<PATH>]
 ```
 
 **示例：**
 
 ```powershell
-PS D:\Rust\tree++> treepp /F /NH
+PS D:\Rust\tree++> treepp /F /NB
 D:\Rust\tree++
 │  Cargo.toml
 │  LICENSE
@@ -694,13 +599,13 @@ D:\Rust\tree++
         output.rs
         render.rs
         scan.rs
-
-1 个目录, 12 个文件
 ```
+
+> 建议在性能敏感时开启: `tree++`的对应样板输出是调用原生`tree`对指定的`C:\__treepp__`执行获取的  
 
 ### `/SI`: 终端静默
 
-**功能：** 禁止向标准输出写入结果，一般与 `/O` 搭配，静默写入文件。  
+**功能：** 禁止向标准输出写入结果，一般与 `/O` 搭配，静默写入文件。
 
 **语法：**
 
@@ -717,7 +622,7 @@ PS D:\Rust\tree++>
 
 ### `/O`: 输出到文件
 
-**功能：** 将结果持久化到 `.txt` / `.json` / `.yml` / `.toml` 文件。默认仍在控制台输出，可配合 `/SI` 静默。  
+**功能：** 将结果持久化到 `.txt` / `.json` / `.yml` / `.toml` 文件。默认仍在控制台输出，可配合 `/SI` 静默。
 
 **语法：**
 
@@ -747,14 +652,12 @@ D:\Rust\tree++
         render.rs
         scan.rs
 
-1 个目录, 12 个文件
-
 output: D:\Rust\tree++\tree.json
 ```
 
 ### `/T`: 扫描线程数
 
-**功能：** 指定扫描线程数量，默认为 8。  
+**功能：** 指定扫描线程数量，默认为 8。
 
 **语法：**
 
@@ -783,13 +686,11 @@ D:\Rust\tree++
         output.rs
         render.rs
         scan.rs
-
-1 个目录, 12 个文件
 ```
 
 ### `/G`: 遵循 `.gitignore`
 
-**功能：** 解析每级目录中的 `.gitignore` 文件，自动忽略匹配条目。  
+**功能：** 解析每级目录中的 `.gitignore` 文件，自动忽略匹配条目。
 
 **语法：**
 
@@ -820,5 +721,4 @@ D:\Rust\tree++
         scan.rs
 
 .gitignore rules applied
-1 个目录, 12 个文件
 ```

@@ -1,10 +1,10 @@
 # `tree++`: Complete Parameter Documentation and Examples
 
-This document provides a comprehensive overview of all parameters supported by [tree++](https://github.com/Water-Run/treepp) with usage examples.
+This document briefly describes all parameters and usage examples supported by [tree++](https://github.com/Water-Run/treepp).
 
 ## Mock Directory
 
-The example outputs are based on this mock directory structure:
+Command example outputs are based on this mock directory:
 
 ```powershell
 PS D:\Rust\tree++> treepp /F
@@ -25,11 +25,9 @@ D:\Rust\tree++
         output.rs
         render.rs
         scan.rs
-
-1 directories, 12 files
 ```
 
-> `treepp /F` behaves identically to the native Windows `tree /F` command: displaying volume header information, tree structure, and summary statistics. Running `treepp` alone maintains the original behavior of showing only the directory structure.
+> `treepp /F` behaves exactly like Windows native `tree /F`: displays volume header and tree structure. Running `treepp` directly maintains the original semantics of showing only directory structure.
 
 ## Global Usage
 
@@ -38,11 +36,11 @@ treepp [<PATH>] [<OPTIONS>...]
 ```
 
 - `<PATH>`: Optional, defaults to current directory.
-- `<OPTIONS>`: Can be repeated and mixed. Supports three formats listed in the table below: `--` (GNU style), `-` (short form), and `/` (CMD style, case-insensitive).
+- `<OPTIONS>`: Repeatable and mixable. Supports `--` (GNU), `-` (short), and `/` (CMD, case-insensitive) forms listed in the table below.
 
-## Detailed Parameter Documentation
+## Detailed Command Descriptions
 
-### `/?`: Display Help
+### `/?`: Show Help
 
 **Function:** Display complete parameter help information.
 
@@ -60,12 +58,12 @@ tree++ - a better tree command for Windows
 Usage:
   treepp [path] [options]
 Options:
-  -h, --help        Show help information
-  -v, --version     Show version information
+  /H, /?, -h, --help        Show help information
+  /V, -v, --version         Show version information
   ...
 ```
 
-### `/V`: Display Version
+### `/V`: Show Version
 
 **Function:** Output current version information.
 
@@ -102,11 +100,9 @@ Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
 D:\Rust\tree++
 \---src
-
-1 directories
 ```
 
-### `/F`: Display Files
+### `/F`: Show Files
 
 **Function:** List file entries in the directory tree.
 
@@ -137,11 +133,9 @@ D:\Rust\tree++
         output.rs
         render.rs
         scan.rs
-
-1 directories, 12 files
 ```
 
-### `/FP`: Display Full Paths
+### `/FP`: Show Full Paths
 
 **Function:** Display all entries with absolute paths.
 
@@ -172,13 +166,11 @@ D:\Rust\tree++
         D:\Rust\tree++\src\output.rs
         D:\Rust\tree++\src\render.rs
         D:\Rust\tree++\src\scan.rs
-
-1 directories, 12 files
 ```
 
 ### `/HR`: Human-Readable File Sizes
 
-**Function:** Convert file sizes to readable units like B/KB/MB, commonly used with `/S`.
+**Function:** Convert file sizes to readable units like B/KB/MB, often used with `/S`.
 
 **Syntax:**
 
@@ -207,11 +199,9 @@ D:\Rust\tree++
         output.rs      7.3 KB
         render.rs      5.2 KB
         scan.rs        8.8 KB
-
-1 directories, 12 files
 ```
 
-### `/S`: Display File Sizes (Bytes)
+### `/S`: Show File Sizes (Bytes)
 
 **Function:** Display file sizes in bytes, can be used with `/HR`.
 
@@ -242,13 +232,11 @@ D:\Rust\tree++
         output.rs      7440
         render.rs      5360
         scan.rs        9020
-
-1 directories, 12 files
 ```
 
 ### `/NI`: No Tree Connector Lines
 
-**Function:** Replace tree symbols with indentation.
+**Function:** Use indentation instead of tree symbols.
 
 **Syntax:**
 
@@ -277,11 +265,9 @@ D:\Rust\tree++
     output.rs
     render.rs
     scan.rs
-
-1 directories, 12 files
 ```
 
-### `/R`: Reverse Sort Order
+### `/R`: Reverse Sort
 
 **Function:** Reverse the current sort order, can be combined with `/SO`.
 
@@ -312,13 +298,11 @@ D:\Rust\tree++
         main.rs
         config.rs
         cli.rs
-
-1 directories, 12 files
 ```
 
-### `/DT`: Display Last Modified Date
+### `/DT`: Show Last Modified Date
 
-**Function:** Append the last modified time after each file/directory entry.
+**Function:** Append the last modified time of files/directories.
 
 **Syntax:**
 
@@ -347,8 +331,6 @@ D:\Rust\tree++
         output.rs      2025-12-17 23:01:58
         render.rs      2025-12-17 22:58:47
         scan.rs        2025-12-17 23:05:58
-
-1 directories, 12 files
 ```
 
 ### `/X`: Exclude Matching Items
@@ -361,7 +343,7 @@ D:\Rust\tree++
 treepp (--exclude | -I | /X) <PATTERN> [<PATH>]
 ```
 
-**Example (excluding `*.md`):**
+**Example (exclude `*.md`):**
 
 ```powershell
 PS D:\Rust\tree++> treepp /F /X *.md
@@ -378,13 +360,11 @@ D:\Rust\tree++
         output.rs
         render.rs
         scan.rs
-
-1 directories, 8 files
 ```
 
 ### `/L`: Limit Recursion Depth
 
-**Function:** Specify maximum recursion levels.
+**Function:** Specify maximum recursion level.
 
 **Syntax:**
 
@@ -392,7 +372,7 @@ D:\Rust\tree++
 treepp (--level | -L | /L) <LEVEL> [<PATH>]
 ```
 
-**Example (showing only 1 level):**
+**Example (show only 1 level):**
 
 ```powershell
 PS D:\Rust\tree++> treepp /F /L 1
@@ -407,8 +387,6 @@ D:\Rust\tree++
 │  README.md
 │
 └─src
-
-1 directories, 6 files
 ```
 
 ### `/M`: Show Only Matching Items
@@ -421,7 +399,7 @@ D:\Rust\tree++
 treepp (--include | -m | /M) <PATTERN> [<PATH>]
 ```
 
-**Example (showing only `*.rs`):**
+**Example (show only `*.rs`):**
 
 ```powershell
 PS D:\Rust\tree++> treepp /F /M *.rs
@@ -436,83 +414,11 @@ D:\Rust\tree++
         output.rs
         render.rs
         scan.rs
-
-1 directories, 6 files
 ```
 
-### `/Q`: Quote File Names
+### `/DU`: Show Cumulative Directory Size
 
-**Function:** Wrap paths in double quotes for easier copying or script processing.
-
-**Syntax:**
-
-```powershell
-treepp (--quote | -q | /Q) [<PATH>]
-```
-
-**Example:**
-
-```powershell
-PS D:\Rust\tree++> treepp /F /Q
-Folder PATH listing for volume Storage
-Volume serial number is 26E9-52C1
-D:\Rust\tree++
-│  "Cargo.toml"
-│  "LICENSE"
-│  "OPTIONS-zh.md"
-│  "OPTIONS.md"
-│  "README-zh.md"
-│  "README.md"
-│
-└─"src"
-        "cli.rs"
-        "config.rs"
-        "main.rs"
-        "output.rs"
-        "render.rs"
-        "scan.rs"
-
-1 directories, 12 files
-```
-
-### `/DF`: Directories First
-
-**Function:** List directories before files in output.
-
-**Syntax:**
-
-```powershell
-treepp (--dirs-first | -D | /DF) [<PATH>]
-```
-
-**Example:**
-
-```powershell
-PS D:\Rust\tree++> treepp /F /DF
-Folder PATH listing for volume Storage
-Volume serial number is 26E9-52C1
-D:\Rust\tree++
-└─src
-        cli.rs
-        config.rs
-        main.rs
-        output.rs
-        render.rs
-        scan.rs
-│
-│  Cargo.toml
-│  LICENSE
-│  OPTIONS-zh.md
-│  OPTIONS.md
-│  README-zh.md
-│  README.md
-
-1 directories, 12 files
-```
-
-### `/DU`: Display Cumulative Directory Size
-
-**Function:** Calculate cumulative disk usage for each directory, can be combined with `/HR`.
+**Function:** Calculate cumulative disk usage for each directory, works with `/HR`.
 
 **Syntax:**
 
@@ -530,9 +436,9 @@ D:\Rust\tree++
 src             31.5 KB
 ```
 
-### `/IC`: Case-Insensitive Matching
+### `/IC`: Ignore Case When Matching
 
-**Function:** Make `/M`, `/X` and other matching commands ignore case.
+**Function:** Make `/M`, `/X` and other matching commands case-insensitive.
 
 **Syntax:**
 
@@ -551,24 +457,22 @@ D:\Rust\tree++
 │  OPTIONS.md
 │  README-zh.md
 │  README.md
-
-0 directories, 4 files
 ```
 
-### `/NR`: No Summary Report
+### `/RP`: Show Trailing Statistics
 
-**Function:** Omit the "X directories, Y files" summary.
+**Function:** Display summary statistics at the end.
 
 **Syntax:**
 
 ```powershell
-treepp (--no-report | -n | /NR) [<PATH>]
+treepp (--report | -e | /RP) [<PATH>]
 ```
 
 **Example:**
 
 ```powershell
-PS D:\Rust\tree++> treepp /F /NR
+PS D:\Rust\tree++> treepp /F /RP
 Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
 D:\Rust\tree++
@@ -586,6 +490,8 @@ D:\Rust\tree++
         output.rs
         render.rs
         scan.rs
+
+1 directory, 12 files in 0.123s
 ```
 
 ### `/P`: Prune Empty Directories
@@ -619,13 +525,11 @@ D:\Rust\tree++
         output.rs
         render.rs
         scan.rs
-
-1 directories, 12 files
 ```
 
 ### `/SO`: Specify Sort Method
 
-**Function:** Sort by fields like `name`, `size`, `mtime`, can be combined with `/R`.
+**Function:** Sort by fields like `name`, `size`, `mtime`, etc., can be combined with `/R`.
 
 **Syntax:**
 
@@ -654,33 +558,32 @@ D:\Rust\tree++
         output.rs
         render.rs
         scan.rs
-
-1 directories, 12 files
 ```
 
-*Available sort fields:*
+*Available sort fields and descriptions:*
 
-| Field   | Description                       |
-|---------|-----------------------------------|
-| `name`  | Sort by filename alphabetically   |
-| `size`  | Sort by file size ascending       |
-| `mtime` | Sort by modification time ascending |
-| `ctime` | Sort by creation time ascending   |
+| Field   | Description                      |
+|---------|----------------------------------|
+| `name`  | Sort alphabetically by filename  |
+| `size`  | Sort by file size ascending      |
+| `mtime` | Sort by modification time        |
+| `ctime` | Sort by creation time            |
 
-### `/NH`: No Volume Information and Header
+### `/NB`: Hide Windows-native banner output
 
-**Function:** Omit volume name, serial number, and other header content.
+**Purpose:**
+Omit the Windows-native `tree` banner output.
 
 **Syntax:**
 
 ```powershell
-treepp (--no-header | -N | /NH) [<PATH>]
+treepp (--no-win-banner | -N | /NB) [<PATH>]
 ```
 
 **Example:**
 
 ```powershell
-PS D:\Rust\tree++> treepp /F /NH
+PS D:\Rust\tree++> treepp /F /NB
 D:\Rust\tree++
 │  Cargo.toml
 │  LICENSE
@@ -696,13 +599,14 @@ D:\Rust\tree++
         output.rs
         render.rs
         scan.rs
-
-1 directories, 12 files
 ```
+
+> Recommended for performance-sensitive scenarios: in `tree++`, this banner output is obtained by invoking the native `tree` against the target `C:\__treepp__`.
+
 
 ### `/SI`: Silent Terminal Output
 
-**Function:** Suppress output to stdout, typically used with `/O` to silently write to file.
+**Function:** Suppress standard output, typically used with `/O` to silently write to file.
 
 **Syntax:**
 
@@ -719,7 +623,7 @@ PS D:\Rust\tree++>
 
 ### `/O`: Output to File
 
-**Function:** Persist results to `.txt` / `.json` / `.yml` / `.toml` files. Default still outputs to console, can be combined with `/SI` for silent operation.
+**Function:** Persist results to `.txt` / `.json` / `.yml` / `.toml` files. Console output remains by default, can be silenced with `/SI`.
 
 **Syntax:**
 
@@ -749,14 +653,12 @@ D:\Rust\tree++
         render.rs
         scan.rs
 
-1 directories, 12 files
-
 output: D:\Rust\tree++\tree.json
 ```
 
 ### `/T`: Scan Thread Count
 
-**Function:** Specify number of scanning threads, default is 8.
+**Function:** Specify number of scan threads, default is 8.
 
 **Syntax:**
 
@@ -785,11 +687,9 @@ D:\Rust\tree++
         output.rs
         render.rs
         scan.rs
-
-1 directories, 12 files
 ```
 
-### `/G`: Follow `.gitignore`
+### `/G`: Honor `.gitignore`
 
 **Function:** Parse `.gitignore` files in each directory level and automatically ignore matching entries.
 
@@ -822,5 +722,4 @@ D:\Rust\tree++
         scan.rs
 
 .gitignore rules applied
-1 directories, 12 files
 ```

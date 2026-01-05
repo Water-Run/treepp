@@ -52,7 +52,7 @@ treepp /f
 ## Quick Reference
 
 | Option Set (Equivalent Forms) | Description                                                 |
-| ----------------------------- | ----------------------------------------------------------- |
+|-------------------------------|-------------------------------------------------------------|
 | `--help` `-h` `/?`            | Show help information                                       |
 | `--version` `-v` `/V`         | Show version information                                    |
 | `--ascii` `-a` `/A`           | Draw the tree using ASCII characters                        |
@@ -66,14 +66,12 @@ treepp /f
 | `--exclude` `-I` `/X`         | Exclude matching files                                      |
 | `--level` `-L` `/L`           | Limit recursion depth                                       |
 | `--include` `-m` `/M`         | Show only matching files                                    |
-| `--quote` `-q` `/Q`           | Wrap file names in double quotes                            |
-| `--dirs-first` `-D` `/DF`     | Show directories first                                      |
 | `--disk-usage` `-u` `/DU`     | Show cumulative directory size                              |
 | `--ignore-case` `-c` `/IC`    | Ignore case when matching                                   |
-| `--no-report` `-n` `/NR`      | Do not show trailing summary statistics                     |
+| `--report` `-e` `/RP`         | Show trailing summary statistics                            |
 | `--prune` `-P` `/P`           | Prune empty directories                                     |
 | `--sort` `-S` `/SO`           | Specify sort method (`name`, `size`, `mtime`, etc.)         |
-| `--no-header` `-N` `/NH`      | Do not show volume info and header report                   |
+| `--no-win-banner` `-N` `/NB`  | Hide the Windows-native tree banner output                  |
 | `--silent` `-l` `/SI`         | Silent terminal output (use with `output`)                  |
 | `--output` `-o` `/O`          | Output results to a file (`.txt`, `.json`, `.yml`, `.toml`) |
 | `--thread` `-t` `/T`          | Number of scan threads (default is 8)                       |
