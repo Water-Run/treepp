@@ -392,7 +392,17 @@ pub enum RenderError {
         /// 失败原因
         reason: String,
     },
+
+    /// 无效路径（无法提取盘符）
+    #[error("无效路径 '{path}': {reason}")]
+    InvalidPath {
+        /// 路径
+        path: PathBuf,
+        /// 原因
+        reason: String,
+    },
 }
+
 
 // ============================================================================
 // 输出错误

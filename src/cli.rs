@@ -670,9 +670,14 @@ impl CliParser {
     /// 验证路径参数
     fn validate_paths(&self, paths: &[String], config: &mut Config) -> Result<(), CliError> {
         match paths.len() {
-            0 => Ok(()),
+            0 => {
+                // 未指定路径，使用默认值，标记为未显式指定
+                config.path_explicitly_set = false;
+                Ok(())
+            }
             1 => {
                 config.root_path = PathBuf::from(&paths[0]);
+                config.path_explicitly_set = true;
                 Ok(())
             }
             _ => Err(CliError::MultiplePaths {
@@ -694,45 +699,46 @@ impl CliParser {
 /// use treepp::cli::help_text;
 ///
 /// let help = help_text();
-/// assert!(help.contains("tree++"));
+/// assert!(help.contFains("tree++"));
 /// assert!(help.contains("--help"));
 /// ```
 #[must_use]
 pub fn help_text() -> &'static str {
-    r#"tree++ - 更好的 Windows tree 命令
+    r#"tree++ - A better Windows tree command
 
-用法:
+Usage:
   treepp [<PATH>] [<OPTIONS>...]
 
-选项:
-  --help, -h, /?              显示帮助信息
-  --version, -v, /V           显示版本信息
-  --ascii, -a, /A             使用 ASCII 字符绘制树
-  --files, -f, /F             显示文件
-  --full-path, -p, /FP        显示完整路径
-  --human-readable, -H, /HR   以人类可读方式显示文件大小
-  --no-indent, -i, /NI        不显示树形连接线
-  --reverse, -r, /R           逆序排序
-  --size, -s, /S              显示文件大小（字节）
-  --date, -d, /DT             显示最后修改日期
-  --exclude, -I, /X <PATTERN> 排除匹配的文件
-  --level, -L, /L <N>         限制递归深度
-  --include, -m, /M <PATTERN> 仅显示匹配的文件
-  --disk-usage, -u, /DU       显示目录累计大小
-  --ignore-case, -c, /IC      匹配时忽略大小写
-  --report, -e, /RP           显示末尾统计信息
-  --prune, -P, /P             修剪空目录
-  --sort, -S, /SO <KEY>       指定排序方式（name, size, mtime, ctime）
-  --no-win-banner, -N, /NB    不显示 Windows 原生 tree 的样板信息
-  --silent, -l, /SI           终端静默（结合 --output 使用）
-  --output, -o, /O <FILE>     将结果输出至文件（.txt, .json, .yml, .toml）
-  --thread, -t, /T <N>        扫描线程数（默认 8）
-  --gitignore, -g, /G         遵循 .gitignore
-  --quote, -q, /Q             用双引号包裹文件名
-  --dirs-first, -D, /DF       目录优先显示
+Options:
+  --help, -h, /?              Show help information
+  --version, -v, /V           Show version information
+  --ascii, -a, /A             Draw the tree using ASCII characters
+  --files, -f, /F             Show files
+  --full-path, -p, /FP        Show full paths
+  --human-readable, -H, /HR   Show file sizes in human-readable format
+  --no-indent, -i, /NI        Do not display tree connector lines
+  --reverse, -r, /R           Sort in reverse order
+  --size, -s, /S              Show file size (bytes)
+  --date, -d, /DT             Show last modified date
+  --exclude, -I, /X <PATTERN> Exclude files matching the pattern
+  --level, -L, /L <N>         Limit recursion depth
+  --include, -m, /M <PATTERN> Show only files matching the pattern
+  --disk-usage, -u, /DU       Show cumulative directory sizes
+  --ignore-case, -c, /IC      Case-insensitive matching
+  --report, -e, /RP           Show summary statistics at the end
+  --prune, -P, /P             Prune empty directories
+  --sort, -S, /SO <KEY>       Set sort mode (name, size, mtime, ctime)
+  --no-win-banner, -N, /NB    Do not show the Windows native tree banner/header
+  --silent, -l, /SI           Silent mode (use with --output)
+  --output, -o, /O <FILE>     Write output to a file (.txt, .json, .yml, .toml)
+  --thread, -t, /T <N>        Number of scanning threads (default: 8)
+  --gitignore, -g, /G         Respect .gitignore
+  --quote, -q, /Q             Wrap file names in double quotes
+  --dirs-first, -D, /DF       List directories first
 
-更多信息: https://github.com/Water-Run/treepp"#
+More info: https://github.com/Water-Run/treepp"#
 }
+
 
 /// 获取版本信息字符串
 ///
@@ -748,7 +754,7 @@ pub fn help_text() -> &'static str {
 pub fn version_text() -> &'static str {
     r#"tree++ version 0.1.0
 
-A Better tree command for Windows.
+A much better Windows tree command.
 
 author: WaterRun
 link: https://github.com/Water-Run/treepp"#
@@ -1739,7 +1745,7 @@ mod tests {
     #[test]
     fn should_contain_usage_in_help() {
         let help = help_text();
-        assert!(help.contains("用法"));
+        assert!(help.contains("Usage"));
         assert!(help.contains("treepp"));
         assert!(help.contains("PATH"));
         assert!(help.contains("OPTIONS"));
@@ -2008,5 +2014,44 @@ mod tests {
         // 这个测试主要验证 from_env 不会 panic
         let _parser = CliParser::from_env();
         // 不调用 parse()，因为实际的命令行参数可能导致各种结果
+    }
+
+    #[test]
+    fn test_path_explicitly_set_when_specified() {
+        let temp_dir = create_temp_dir();
+        let path_str = temp_dir.path().to_string_lossy().to_string();
+
+        let parser = CliParser::new(vec![path_str]);
+        let result = parser.parse();
+
+        if let Ok(ParseResult::Config(config)) = result {
+            assert!(config.path_explicitly_set);
+        } else {
+            panic!("解析应成功");
+        }
+    }
+
+    #[test]
+    fn test_path_not_explicitly_set_when_omitted() {
+        let parser = CliParser::new(vec![]);
+        let result = parser.parse();
+
+        if let Ok(ParseResult::Config(config)) = result {
+            assert!(!config.path_explicitly_set);
+        } else {
+            panic!("解析应成功");
+        }
+    }
+
+    #[test]
+    fn test_path_explicitly_set_with_dot() {
+        let parser = CliParser::new(vec![".".to_string()]);
+        let result = parser.parse();
+
+        if let Ok(ParseResult::Config(config)) = result {
+            assert!(config.path_explicitly_set);
+        } else {
+            panic!("解析应成功");
+        }
     }
 }

@@ -453,6 +453,8 @@ pub struct OutputOptions {
 pub struct Config {
     /// 根路径（起始目录）
     pub root_path: PathBuf,
+    /// 用户是否显式指定了路径（用于决定根路径显示格式）
+    pub path_explicitly_set: bool,
     /// 是否显示帮助信息
     pub show_help: bool,
     /// 是否显示版本信息
@@ -471,6 +473,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             root_path: PathBuf::from("."),
+            path_explicitly_set: false,
             show_help: false,
             show_version: false,
             scan: ScanOptions::default(),
@@ -497,6 +500,7 @@ impl Config {
     pub fn with_root(root_path: PathBuf) -> Self {
         Self {
             root_path,
+            path_explicitly_set: true,
             ..Self::default()
         }
     }
