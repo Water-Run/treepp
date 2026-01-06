@@ -1,4 +1,3 @@
-
 //! 输出模块：多格式输出与文件写入
 //!
 //! 本模块负责将渲染结果输出到不同目标，支持：
@@ -6,6 +5,7 @@
 //! - **输出策略**：stdout、写文件、silent（仅写文件不写 stdout）
 //! - **多格式输出**：txt/json/yml/toml（序列化 schema 固定）
 //! - **文件写入策略**：覆盖写入，确保原子性
+//! - **流式输出**：`StreamWriter` 支持即时 flush 的流式写入
 //!
 //! 作者: WaterRun
 //! 更新于: 2025-01-06
@@ -13,7 +13,7 @@
 #![forbid(unsafe_code)]
 
 use std::fs::{self, File};
-use std::io::{self, BufWriter, Write};
+use std::io::{self, BufWriter, Stdout, StdoutLock, Write};
 use std::path::Path;
 
 use serde::Serialize;
@@ -231,6 +231,91 @@ pub fn serialize_toml(node: &TreeNode, config: &Config) -> Result<String, Output
     let serializable = to_serializable(node, config);
     let root = TomlRoot { tree: serializable };
     toml::to_string_pretty(&root).map_err(|e| OutputError::toml_error(e.to_string()))
+}
+
+// ============================================================================
+// 流式输出写入器
+// ============================================================================
+
+/// 流式输出写入器
+///
+/// 封装 stdout 输出，每次写入后立即 flush，实现实时滚动效果。
+///
+/// # Examples
+///
+/// ```no_run
+/// use treepp::output::StreamWriter;
+///
+/// let stdout = std::io::stdout();
+/// let mut writer = StreamWriter::new(&stdout);
+/// writer.write_line("Hello, World!").unwrap();
+/// ```
+pub struct StreamWriter<'a> {
+    /// stdout 锁定句柄
+    handle: StdoutLock<'a>,
+}
+
+impl<'a> StreamWriter<'a> {
+    /// 创建新的流式写入器
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use treepp::output::StreamWriter;
+    ///
+    /// let stdout = std::io::stdout();
+    /// let writer = StreamWriter::new(&stdout);
+    /// ```
+    #[must_use]
+    pub fn new(stdout: &'a Stdout) -> Self {
+        Self {
+            handle: stdout.lock(),
+        }
+    }
+
+    /// 写入一行并立即 flush
+    ///
+    /// 自动追加换行符。
+    ///
+    /// # Errors
+    ///
+    /// 返回 `OutputError::StdoutFailed` 如果写入失败。
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use treepp::output::StreamWriter;
+    ///
+    /// let stdout = std::io::stdout();
+    /// let mut writer = StreamWriter::new(&stdout);
+    /// writer.write_line("├─src").unwrap();
+    /// ```
+    pub fn write_line(&mut self, line: &str) -> Result<(), OutputError> {
+        writeln!(self.handle, "{}", line)?;
+        self.handle.flush()?;
+        Ok(())
+    }
+
+    /// 写入字符串（不换行）并 flush
+    ///
+    /// # Errors
+    ///
+    /// 返回 `OutputError::StdoutFailed` 如果写入失败。
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use treepp::output::StreamWriter;
+    ///
+    /// let stdout = std::io::stdout();
+    /// let mut writer = StreamWriter::new(&stdout);
+    /// writer.write("Header content\n").unwrap();
+    /// ```
+    pub fn write(&mut self, content: &str) -> Result<(), OutputError> {
+        write!(self.handle, "{}", content)?;
+        self.handle.flush()?;
+        Ok(())
+    }
 }
 
 // ============================================================================

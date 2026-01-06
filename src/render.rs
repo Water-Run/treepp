@@ -8,6 +8,7 @@
 //! - **元信息显示**：文件大小 (`/S`)、人类可读大小 (`/HR`)、修改日期 (`/DT`)、目录累计大小 (`/DU`)
 //! - **统计报告**：末尾统计信息 (`/RP`)
 //! - **Windows 样板**：默认显示系统卷信息，`/NB` 禁止
+//! - **流式渲染**：`StreamRenderer` 支持边扫描边渲染
 //!
 //! 作者: WaterRun
 //! 更新于: 2025-01-06
@@ -19,11 +20,11 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 use std::sync::OnceLock;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use crate::config::{CharsetMode, Config, PathMode};
 use crate::error::RenderError;
-use crate::scan::{EntryKind, ScanStats, TreeNode};
+use crate::scan::{EntryKind, EntryMetadata, ScanStats, StreamEntry, TreeNode};
 
 // ============================================================================
 // 常量
@@ -218,20 +219,22 @@ pub struct RenderResult {
 // ============================================================================
 
 /// 树形连接符集合
-struct TreeChars {
+#[derive(Debug, Clone, Copy)]
+pub struct TreeChars {
     /// 分支连接符 (├─ 或 +--)
-    branch: &'static str,
+    pub branch: &'static str,
     /// 最后分支连接符 (└─ 或 \--)
-    last_branch: &'static str,
+    pub last_branch: &'static str,
     /// 垂直连接符 (│   或 |   )
-    vertical: &'static str,
+    pub vertical: &'static str,
     /// 空白占位符
-    space: &'static str,
+    pub space: &'static str,
 }
 
 impl TreeChars {
     /// 根据字符集模式创建连接符集合
-    fn from_charset(charset: CharsetMode) -> Self {
+    #[must_use]
+    pub fn from_charset(charset: CharsetMode) -> Self {
         match charset {
             CharsetMode::Unicode => Self {
                 branch: "├─",
@@ -349,6 +352,411 @@ fn format_entry_meta(node: &TreeNode, config: &Config) -> String {
         String::new()
     } else {
         format!("        {}", parts.join("  "))
+    }
+}
+
+// ============================================================================
+// 流式渲染器
+// ============================================================================
+
+/// 流式渲染配置（从 Config 提取渲染相关配置）
+#[derive(Debug, Clone)]
+pub struct StreamRenderConfig {
+    /// 字符集模式
+    pub charset: CharsetMode,
+    /// 路径显示模式
+    pub path_mode: PathMode,
+    /// 是否显示文件大小
+    pub show_size: bool,
+    /// 是否以人类可读格式显示大小
+    pub human_readable: bool,
+    /// 是否显示最后修改日期
+    pub show_date: bool,
+    /// 是否显示目录累计大小（流式模式下不支持）
+    pub show_disk_usage: bool,
+    /// 是否用双引号包裹文件名
+    pub quote_names: bool,
+    /// 是否不显示树形连接线（仅缩进）
+    pub no_indent: bool,
+    /// 是否显示统计报告
+    pub show_report: bool,
+    /// 是否隐藏 Windows 样板信息
+    pub no_win_banner: bool,
+    /// 是否显示文件
+    pub show_files: bool,
+    /// 是否遵循 gitignore
+    pub respect_gitignore: bool,
+}
+
+impl StreamRenderConfig {
+    /// 从完整配置创建流式渲染配置
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use treepp::config::Config;
+    /// use treepp::render::StreamRenderConfig;
+    ///
+    /// let config = Config::default();
+    /// let render_config = StreamRenderConfig::from_config(&config);
+    /// ```
+    #[must_use]
+    pub fn from_config(config: &Config) -> Self {
+        Self {
+            charset: config.render.charset,
+            path_mode: config.render.path_mode,
+            show_size: config.render.show_size,
+            human_readable: config.render.human_readable,
+            show_date: config.render.show_date,
+            show_disk_usage: config.render.show_disk_usage,
+            quote_names: config.render.quote_names,
+            no_indent: config.render.no_indent,
+            show_report: config.render.show_report,
+            no_win_banner: config.render.no_win_banner,
+            show_files: config.scan.show_files,
+            respect_gitignore: config.scan.respect_gitignore,
+        }
+    }
+}
+
+/// 流式渲染器
+///
+/// 管理树形前缀状态，支持逐条目渲染。
+/// 用于流式扫描场景，实现边扫描边输出。
+///
+/// # Examples
+///
+/// ```
+/// use std::path::PathBuf;
+/// use treepp::config::Config;
+/// use treepp::render::{StreamRenderer, StreamRenderConfig};
+/// use treepp::scan::{StreamEntry, EntryKind, EntryMetadata};
+///
+/// let config = Config::default();
+/// let render_config = StreamRenderConfig::from_config(&config);
+/// let mut renderer = StreamRenderer::new(render_config);
+///
+/// let entry = StreamEntry {
+///     path: PathBuf::from("test.txt"),
+///     name: "test.txt".to_string(),
+///     kind: EntryKind::File,
+///     metadata: EntryMetadata::default(),
+///     depth: 0,
+///     is_last: true,
+/// };
+///
+/// let line = renderer.render_entry(&entry);
+/// assert!(line.contains("test.txt"));
+/// ```
+#[derive(Debug)]
+pub struct StreamRenderer {
+    /// 前缀栈：记录每层是否还有后续兄弟节点（true = 有更多兄弟）
+    prefix_stack: Vec<bool>,
+    /// 树形字符集
+    chars: TreeChars,
+    /// 渲染配置
+    config: StreamRenderConfig,
+}
+
+impl StreamRenderer {
+    /// 创建新的流式渲染器
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use treepp::config::Config;
+    /// use treepp::render::{StreamRenderer, StreamRenderConfig};
+    ///
+    /// let config = Config::default();
+    /// let render_config = StreamRenderConfig::from_config(&config);
+    /// let renderer = StreamRenderer::new(render_config);
+    /// ```
+    #[must_use]
+    pub fn new(config: StreamRenderConfig) -> Self {
+        let chars = TreeChars::from_charset(config.charset);
+        Self {
+            prefix_stack: Vec::new(),
+            chars,
+            config,
+        }
+    }
+
+    /// 渲染 Banner 和根路径头部
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::path::Path;
+    /// use treepp::config::Config;
+    /// use treepp::render::{StreamRenderer, StreamRenderConfig};
+    ///
+    /// let config = Config::default();
+    /// let render_config = StreamRenderConfig::from_config(&config);
+    /// let renderer = StreamRenderer::new(render_config);
+    ///
+    /// let header = renderer.render_header(Path::new("C:\\Projects"));
+    /// ```
+    #[must_use]
+    pub fn render_header(&self, root_path: &Path) -> String {
+        let mut output = String::new();
+
+        // Windows 样板头信息
+        let banner = if self.config.no_win_banner {
+            None
+        } else {
+            match WinBanner::get_cached() {
+                Ok(b) => Some(b),
+                Err(e) => {
+                    let _ = writeln!(output, "警告: {}", e);
+                    None
+                }
+            }
+        };
+
+        // 输出样板头
+        if let Some(b) = &banner {
+            output.push_str(&b.volume_line);
+            output.push('\n');
+            output.push_str(&b.serial_line);
+            output.push('\n');
+        }
+
+        // 根路径
+        output.push_str(&root_path.to_string_lossy());
+        output.push('\n');
+
+        output
+    }
+
+    /// 渲染单个条目为一行文本
+    ///
+    /// 根据条目的深度和 `is_last` 状态生成正确的树形前缀。
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::path::PathBuf;
+    /// use treepp::config::Config;
+    /// use treepp::render::{StreamRenderer, StreamRenderConfig};
+    /// use treepp::scan::{StreamEntry, EntryKind, EntryMetadata};
+    ///
+    /// let config = Config::default();
+    /// let render_config = StreamRenderConfig::from_config(&config);
+    /// let mut renderer = StreamRenderer::new(render_config);
+    ///
+    /// let entry = StreamEntry {
+    ///     path: PathBuf::from("src"),
+    ///     name: "src".to_string(),
+    ///     kind: EntryKind::Directory,
+    ///     metadata: EntryMetadata::default(),
+    ///     depth: 0,
+    ///     is_last: false,
+    /// };
+    ///
+    /// let line = renderer.render_entry(&entry);
+    /// assert!(line.contains("src"));
+    /// ```
+    #[must_use]
+    pub fn render_entry(&self, entry: &StreamEntry) -> String {
+        if self.config.no_indent {
+            self.render_entry_no_indent(entry)
+        } else {
+            self.render_entry_with_tree(entry)
+        }
+    }
+
+    /// 渲染带树形连接符的条目
+    fn render_entry_with_tree(&self, entry: &StreamEntry) -> String {
+        let mut line = String::new();
+
+        // 构建前缀
+        let prefix = self.build_prefix();
+        line.push_str(&prefix);
+
+        // 添加连接符
+        let connector = if entry.is_last {
+            self.chars.last_branch
+        } else {
+            self.chars.branch
+        };
+        line.push_str(connector);
+
+        // 添加名称
+        let name = self.format_name(&entry.name, &entry.path);
+        line.push_str(&name);
+
+        // 添加元信息
+        let meta = self.format_meta(&entry.metadata, entry.kind);
+        line.push_str(&meta);
+
+        line
+    }
+
+    /// 渲染无树形连接符的条目（仅缩进）
+    fn render_entry_no_indent(&self, entry: &StreamEntry) -> String {
+        let mut line = String::new();
+
+        // 缩进
+        let indent = "  ".repeat(entry.depth);
+        line.push_str(&indent);
+
+        // 名称
+        let name = self.format_name(&entry.name, &entry.path);
+        line.push_str(&name);
+
+        // 元信息
+        let meta = self.format_meta(&entry.metadata, entry.kind);
+        line.push_str(&meta);
+
+        line
+    }
+
+    /// 构建当前前缀字符串
+    fn build_prefix(&self) -> String {
+        let mut prefix = String::new();
+        for &has_more in &self.prefix_stack {
+            if has_more {
+                prefix.push_str(self.chars.vertical);
+            } else {
+                prefix.push_str(self.chars.space);
+            }
+        }
+        prefix
+    }
+
+    /// 格式化名称
+    fn format_name(&self, name: &str, path: &Path) -> String {
+        let display_name = match self.config.path_mode {
+            PathMode::Full => path.to_string_lossy().into_owned(),
+            PathMode::Relative => name.to_string(),
+        };
+
+        if self.config.quote_names {
+            format!("\"{}\"", display_name)
+        } else {
+            display_name
+        }
+    }
+
+    /// 格式化元信息
+    fn format_meta(&self, metadata: &EntryMetadata, kind: EntryKind) -> String {
+        let mut parts = Vec::new();
+
+        // 文件大小
+        if self.config.show_size && kind == EntryKind::File {
+            let size_str = if self.config.human_readable {
+                format_size_human(metadata.size)
+            } else {
+                metadata.size.to_string()
+            };
+            parts.push(size_str);
+        }
+
+        // 注意：流式模式下不支持 disk_usage，因为需要完整树才能计算
+
+        // 修改日期
+        if self.config.show_date {
+            if let Some(ref modified) = metadata.modified {
+                parts.push(format_datetime(modified));
+            }
+        }
+
+        if parts.is_empty() {
+            String::new()
+        } else {
+            format!("        {}", parts.join("  "))
+        }
+    }
+
+    /// 进入子目录前调用（更新前缀栈）
+    ///
+    /// # Arguments
+    ///
+    /// * `has_more_siblings` - 当前目录是否还有后续兄弟节点
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use treepp::config::Config;
+    /// use treepp::render::{StreamRenderer, StreamRenderConfig};
+    ///
+    /// let config = Config::default();
+    /// let render_config = StreamRenderConfig::from_config(&config);
+    /// let mut renderer = StreamRenderer::new(render_config);
+    ///
+    /// renderer.push_level(true);  // 进入非最后一个目录
+    /// renderer.pop_level();        // 离开目录
+    /// ```
+    pub fn push_level(&mut self, has_more_siblings: bool) {
+        self.prefix_stack.push(has_more_siblings);
+    }
+
+    /// 离开子目录后调用（恢复前缀栈）
+    pub fn pop_level(&mut self) {
+        self.prefix_stack.pop();
+    }
+
+    /// 渲染统计报告
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::time::Duration;
+    /// use treepp::config::Config;
+    /// use treepp::render::{StreamRenderer, StreamRenderConfig};
+    ///
+    /// let config = Config::default();
+    /// let render_config = StreamRenderConfig::from_config(&config);
+    /// let renderer = StreamRenderer::new(render_config);
+    ///
+    /// let report = renderer.render_report(5, 20, Duration::from_millis(100));
+    /// ```
+    #[must_use]
+    pub fn render_report(
+        &self,
+        directory_count: usize,
+        file_count: usize,
+        duration: Duration,
+    ) -> String {
+        let mut output = String::new();
+
+        // gitignore 提示
+        if self.config.respect_gitignore {
+            output.push('\n');
+            output.push_str(".gitignore rules applied");
+            output.push('\n');
+        }
+
+        // 统计报告
+        if self.config.show_report {
+            let time_str = format!(" in {:.3}s", duration.as_secs_f64());
+
+            output.push('\n');
+            if self.config.show_files {
+                let _ = writeln!(
+                    output,
+                    "{} directory, {} files{}",
+                    directory_count, file_count, time_str
+                );
+            } else {
+                let _ = writeln!(output, "{} directory{}", directory_count, time_str);
+            }
+        }
+
+        output
+    }
+
+    /// 渲染无子目录提示（当目录为空时使用）
+    #[must_use]
+    pub fn render_no_subfolder(&self) -> String {
+        if self.config.no_win_banner {
+            return String::new();
+        }
+
+        match WinBanner::get_cached() {
+            Ok(banner) => format!("\n{}\n", banner.no_subfolder),
+            Err(_) => String::new(),
+        }
     }
 }
 
@@ -526,7 +934,6 @@ mod tests {
     use super::*;
     use crate::scan::EntryMetadata;
     use std::path::PathBuf;
-    use std::time::Duration;
 
     /// 创建测试用的简单树结构
     fn create_test_tree() -> TreeNode {
@@ -740,6 +1147,299 @@ mod tests {
         assert_eq!(chars.branch, "+--");
         assert_eq!(chars.last_branch, "\\--");
         assert_eq!(chars.vertical, "|   ");
+    }
+
+    // ========================================================================
+    // StreamRenderer 测试
+    // ========================================================================
+
+    #[test]
+    fn test_stream_renderer_new() {
+        let config = Config::default();
+        let render_config = StreamRenderConfig::from_config(&config);
+        let renderer = StreamRenderer::new(render_config);
+
+        assert!(renderer.prefix_stack.is_empty());
+    }
+
+    #[test]
+    fn test_stream_renderer_render_entry_basic() {
+        let config = Config::default();
+        let render_config = StreamRenderConfig::from_config(&config);
+        let renderer = StreamRenderer::new(render_config);
+
+        let entry = StreamEntry {
+            path: PathBuf::from("test.txt"),
+            name: "test.txt".to_string(),
+            kind: EntryKind::File,
+            metadata: EntryMetadata::default(),
+            depth: 0,
+            is_last: true,
+        };
+
+        let line = renderer.render_entry(&entry);
+        assert!(line.contains("test.txt"));
+        assert!(line.contains("└─")); // Unicode last branch
+    }
+
+    #[test]
+    fn test_stream_renderer_render_entry_not_last() {
+        let config = Config::default();
+        let render_config = StreamRenderConfig::from_config(&config);
+        let renderer = StreamRenderer::new(render_config);
+
+        let entry = StreamEntry {
+            path: PathBuf::from("test.txt"),
+            name: "test.txt".to_string(),
+            kind: EntryKind::File,
+            metadata: EntryMetadata::default(),
+            depth: 0,
+            is_last: false,
+        };
+
+        let line = renderer.render_entry(&entry);
+        assert!(line.contains("├─")); // Unicode branch
+    }
+
+    #[test]
+    fn test_stream_renderer_render_entry_ascii() {
+        let mut config = Config::default();
+        config.render.charset = CharsetMode::Ascii;
+        let render_config = StreamRenderConfig::from_config(&config);
+        let renderer = StreamRenderer::new(render_config);
+
+        let entry = StreamEntry {
+            path: PathBuf::from("test.txt"),
+            name: "test.txt".to_string(),
+            kind: EntryKind::File,
+            metadata: EntryMetadata::default(),
+            depth: 0,
+            is_last: true,
+        };
+
+        let line = renderer.render_entry(&entry);
+        assert!(line.contains("\\--")); // ASCII last branch
+    }
+
+    #[test]
+    fn test_stream_renderer_render_entry_no_indent() {
+        let mut config = Config::default();
+        config.render.no_indent = true;
+        let render_config = StreamRenderConfig::from_config(&config);
+        let renderer = StreamRenderer::new(render_config);
+
+        let entry = StreamEntry {
+            path: PathBuf::from("test.txt"),
+            name: "test.txt".to_string(),
+            kind: EntryKind::File,
+            metadata: EntryMetadata::default(),
+            depth: 2,
+            is_last: true,
+        };
+
+        let line = renderer.render_entry(&entry);
+        assert!(!line.contains("├"));
+        assert!(!line.contains("└"));
+        assert!(line.starts_with("    ")); // 2 levels of indent
+    }
+
+    #[test]
+    fn test_stream_renderer_render_entry_with_size() {
+        let mut config = Config::default();
+        config.render.show_size = true;
+        let render_config = StreamRenderConfig::from_config(&config);
+        let renderer = StreamRenderer::new(render_config);
+
+        let entry = StreamEntry {
+            path: PathBuf::from("test.txt"),
+            name: "test.txt".to_string(),
+            kind: EntryKind::File,
+            metadata: EntryMetadata {
+                size: 1024,
+                ..Default::default()
+            },
+            depth: 0,
+            is_last: true,
+        };
+
+        let line = renderer.render_entry(&entry);
+        assert!(line.contains("1024"));
+    }
+
+    #[test]
+    fn test_stream_renderer_render_entry_with_human_readable_size() {
+        let mut config = Config::default();
+        config.render.show_size = true;
+        config.render.human_readable = true;
+        let render_config = StreamRenderConfig::from_config(&config);
+        let renderer = StreamRenderer::new(render_config);
+
+        let entry = StreamEntry {
+            path: PathBuf::from("test.txt"),
+            name: "test.txt".to_string(),
+            kind: EntryKind::File,
+            metadata: EntryMetadata {
+                size: 1024,
+                ..Default::default()
+            },
+            depth: 0,
+            is_last: true,
+        };
+
+        let line = renderer.render_entry(&entry);
+        assert!(line.contains("1.0 KB"));
+    }
+
+    #[test]
+    fn test_stream_renderer_render_entry_with_quote() {
+        let mut config = Config::default();
+        config.render.quote_names = true;
+        let render_config = StreamRenderConfig::from_config(&config);
+        let renderer = StreamRenderer::new(render_config);
+
+        let entry = StreamEntry {
+            path: PathBuf::from("test.txt"),
+            name: "test.txt".to_string(),
+            kind: EntryKind::File,
+            metadata: EntryMetadata::default(),
+            depth: 0,
+            is_last: true,
+        };
+
+        let line = renderer.render_entry(&entry);
+        assert!(line.contains("\"test.txt\""));
+    }
+
+    #[test]
+    fn test_stream_renderer_push_pop_level() {
+        let config = Config::default();
+        let render_config = StreamRenderConfig::from_config(&config);
+        let mut renderer = StreamRenderer::new(render_config);
+
+        assert!(renderer.prefix_stack.is_empty());
+
+        renderer.push_level(true);
+        assert_eq!(renderer.prefix_stack.len(), 1);
+        assert_eq!(renderer.prefix_stack[0], true);
+
+        renderer.push_level(false);
+        assert_eq!(renderer.prefix_stack.len(), 2);
+        assert_eq!(renderer.prefix_stack[1], false);
+
+        renderer.pop_level();
+        assert_eq!(renderer.prefix_stack.len(), 1);
+
+        renderer.pop_level();
+        assert!(renderer.prefix_stack.is_empty());
+    }
+
+    #[test]
+    fn test_stream_renderer_prefix_with_siblings() {
+        let config = Config::default();
+        let render_config = StreamRenderConfig::from_config(&config);
+        let mut renderer = StreamRenderer::new(render_config);
+
+        // 模拟进入有后续兄弟的目录
+        renderer.push_level(true);
+
+        let entry = StreamEntry {
+            path: PathBuf::from("nested.txt"),
+            name: "nested.txt".to_string(),
+            kind: EntryKind::File,
+            metadata: EntryMetadata::default(),
+            depth: 1,
+            is_last: true,
+        };
+
+        let line = renderer.render_entry(&entry);
+        // 应该有垂直线
+        assert!(line.contains("│"));
+    }
+
+    #[test]
+    fn test_stream_renderer_prefix_without_siblings() {
+        let config = Config::default();
+        let render_config = StreamRenderConfig::from_config(&config);
+        let mut renderer = StreamRenderer::new(render_config);
+
+        // 模拟进入最后一个目录
+        renderer.push_level(false);
+
+        let entry = StreamEntry {
+            path: PathBuf::from("nested.txt"),
+            name: "nested.txt".to_string(),
+            kind: EntryKind::File,
+            metadata: EntryMetadata::default(),
+            depth: 1,
+            is_last: true,
+        };
+
+        let line = renderer.render_entry(&entry);
+        // 应该有空白而非垂直线
+        assert!(!line.contains("│"));
+        assert!(line.starts_with("    ")); // space prefix
+    }
+
+    #[test]
+    fn test_stream_renderer_render_report() {
+        let mut config = Config::default();
+        config.render.show_report = true;
+        config.scan.show_files = true;
+        let render_config = StreamRenderConfig::from_config(&config);
+        let renderer = StreamRenderer::new(render_config);
+
+        let report = renderer.render_report(5, 20, Duration::from_millis(100));
+
+        assert!(report.contains("5 directory"));
+        assert!(report.contains("20 files"));
+        assert!(report.contains("0.100s"));
+    }
+
+    #[test]
+    fn test_stream_renderer_render_report_dirs_only() {
+        let mut config = Config::default();
+        config.render.show_report = true;
+        config.scan.show_files = false;
+        let render_config = StreamRenderConfig::from_config(&config);
+        let renderer = StreamRenderer::new(render_config);
+
+        let report = renderer.render_report(5, 0, Duration::from_millis(50));
+
+        assert!(report.contains("5 directory"));
+        assert!(!report.contains("files"));
+    }
+
+    #[test]
+    fn test_stream_renderer_render_report_with_gitignore() {
+        let mut config = Config::default();
+        config.render.show_report = true;
+        config.scan.respect_gitignore = true;
+        let render_config = StreamRenderConfig::from_config(&config);
+        let renderer = StreamRenderer::new(render_config);
+
+        let report = renderer.render_report(5, 20, Duration::from_millis(100));
+
+        assert!(report.contains(".gitignore rules applied"));
+    }
+
+    #[test]
+    fn test_stream_render_config_from_config() {
+        let mut config = Config::default();
+        config.render.charset = CharsetMode::Ascii;
+        config.render.show_size = true;
+        config.render.human_readable = true;
+        config.render.quote_names = true;
+        config.scan.show_files = true;
+        config.scan.respect_gitignore = true;
+
+        let render_config = StreamRenderConfig::from_config(&config);
+
+        assert_eq!(render_config.charset, CharsetMode::Ascii);
+        assert!(render_config.show_size);
+        assert!(render_config.human_readable);
+        assert!(render_config.quote_names);
+        assert!(render_config.show_files);
+        assert!(render_config.respect_gitignore);
     }
 
     // ========================================================================

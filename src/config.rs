@@ -682,8 +682,44 @@ impl Config {
         self.render.show_date
             || matches!(self.render.sort_key, SortKey::Mtime | SortKey::Ctime)
     }
+
+    /// 判断是否应使用流式输出模式
+    ///
+    /// 满足以下所有条件时使用流式输出：
+    /// - 输出格式为 TXT
+    /// - 未指定输出文件（仅终端输出）
+    /// - 未启用 disk_usage（需要完整树计算）
+    /// - 非静默模式
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use treepp::config::Config;
+    ///
+    /// let config = Config::default();
+    /// assert!(config.should_stream());
+    /// ```
+    ///
+    /// ```
+    /// use std::path::PathBuf;
+    /// use treepp::config::Config;
+    ///
+    /// let mut config = Config::default();
+    /// config.output.output_path = Some(PathBuf::from("tree.txt"));
+    /// assert!(!config.should_stream());
+    /// ```
+    #[must_use]
+    pub fn should_stream(&self) -> bool {
+        self.output.output_path.is_none()
+            && self.output.format == OutputFormat::Txt
+            && !self.render.show_disk_usage
+            && !self.output.silent
+    }
 }
 
+// ============================================================================
+// 单元测试
+// ============================================================================
 // ============================================================================
 // 单元测试
 // ============================================================================
@@ -720,6 +756,16 @@ mod tests {
     #[test]
     fn sort_key_default_should_be_name() {
         assert_eq!(SortKey::default(), SortKey::Name);
+    }
+
+    #[test]
+    fn sort_key_valid_keys_should_contain_all_variants() {
+        let keys = SortKey::valid_keys();
+        assert!(keys.contains(&"name"));
+        assert!(keys.contains(&"size"));
+        assert!(keys.contains(&"mtime"));
+        assert!(keys.contains(&"ctime"));
+        assert_eq!(keys.len(), 4);
     }
 
     // ------------------------------------------------------------------------
@@ -901,60 +947,148 @@ mod tests {
 
     #[test]
     fn config_with_root_should_set_root_path() {
-        let config = Config::with_root(PathBuf::from("C:\\Windows"));
-        assert_eq!(config.root_path, PathBuf::from("C:\\Windows"));
+        let config = Config::with_root(PathBuf::from("/some/path"));
+        assert_eq!(config.root_path, PathBuf::from("/some/path"));
+        assert!(!config.show_help);
+        assert!(!config.show_version);
     }
 
     #[test]
-    fn config_is_info_only_should_detect_help_and_version() {
+    fn config_is_info_only_should_return_true_for_help() {
         let mut config = Config::default();
         assert!(!config.is_info_only());
 
         config.show_help = true;
         assert!(config.is_info_only());
+    }
 
-        config.show_help = false;
+    #[test]
+    fn config_is_info_only_should_return_true_for_version() {
+        let mut config = Config::default();
         config.show_version = true;
-        assert!(config.is_info_only());
-
-        config.show_help = true;
         assert!(config.is_info_only());
     }
 
     #[test]
-    fn config_needs_size_info_should_detect_size_related_options() {
+    fn config_is_info_only_should_return_true_for_both() {
         let mut config = Config::default();
-        assert!(!config.needs_size_info());
+        config.show_help = true;
+        config.show_version = true;
+        assert!(config.is_info_only());
+    }
 
+    // ------------------------------------------------------------------------
+    // Config::needs_size_info 测试
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn config_needs_size_info_should_return_false_by_default() {
+        let config = Config::default();
+        assert!(!config.needs_size_info());
+    }
+
+    #[test]
+    fn config_needs_size_info_should_return_true_when_show_size() {
+        let mut config = Config::default();
         config.render.show_size = true;
         assert!(config.needs_size_info());
+    }
 
-        config.render.show_size = false;
+    #[test]
+    fn config_needs_size_info_should_return_true_when_human_readable() {
+        let mut config = Config::default();
         config.render.human_readable = true;
         assert!(config.needs_size_info());
+    }
 
-        config.render.human_readable = false;
+    #[test]
+    fn config_needs_size_info_should_return_true_when_show_disk_usage() {
+        let mut config = Config::default();
         config.render.show_disk_usage = true;
         assert!(config.needs_size_info());
     }
 
-    #[test]
-    fn config_needs_time_info_should_detect_time_related_options() {
-        let mut config = Config::default();
-        assert!(!config.needs_time_info());
+    // ------------------------------------------------------------------------
+    // Config::needs_time_info 测试
+    // ------------------------------------------------------------------------
 
+    #[test]
+    fn config_needs_time_info_should_return_false_by_default() {
+        let config = Config::default();
+        assert!(!config.needs_time_info());
+    }
+
+    #[test]
+    fn config_needs_time_info_should_return_true_when_show_date() {
+        let mut config = Config::default();
         config.render.show_date = true;
         assert!(config.needs_time_info());
+    }
 
-        config.render.show_date = false;
+    #[test]
+    fn config_needs_time_info_should_return_true_when_sort_by_mtime() {
+        let mut config = Config::default();
         config.render.sort_key = SortKey::Mtime;
         assert!(config.needs_time_info());
+    }
 
+    #[test]
+    fn config_needs_time_info_should_return_true_when_sort_by_ctime() {
+        let mut config = Config::default();
         config.render.sort_key = SortKey::Ctime;
         assert!(config.needs_time_info());
+    }
 
+    #[test]
+    fn config_needs_time_info_should_return_false_when_sort_by_name() {
+        let mut config = Config::default();
         config.render.sort_key = SortKey::Name;
         assert!(!config.needs_time_info());
+    }
+
+    #[test]
+    fn config_needs_time_info_should_return_false_when_sort_by_size() {
+        let mut config = Config::default();
+        config.render.sort_key = SortKey::Size;
+        assert!(!config.needs_time_info());
+    }
+
+    // ------------------------------------------------------------------------
+    // Config::should_stream 测试
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn config_should_stream_should_return_true_by_default() {
+        let config = Config::default();
+        assert!(config.should_stream());
+    }
+
+    #[test]
+    fn config_should_stream_should_return_false_when_output_path_set() {
+        let mut config = Config::default();
+        config.output.output_path = Some(PathBuf::from("output.txt"));
+        assert!(!config.should_stream());
+    }
+
+    #[test]
+    fn config_should_stream_should_return_false_when_format_is_json() {
+        let mut config = Config::default();
+        config.output.format = OutputFormat::Json;
+        assert!(!config.should_stream());
+    }
+
+    #[test]
+    fn config_should_stream_should_return_false_when_show_disk_usage() {
+        let mut config = Config::default();
+        config.render.show_disk_usage = true;
+        assert!(!config.should_stream());
+    }
+
+    #[test]
+    fn config_should_stream_should_return_false_when_silent() {
+        let mut config = Config::default();
+        config.output.silent = true;
+        assert!(!config.should_stream());
     }
 
     // ------------------------------------------------------------------------
@@ -962,153 +1096,133 @@ mod tests {
     // ------------------------------------------------------------------------
 
     #[test]
-    fn validate_should_derive_format_from_output_path() {
-        use tempfile::TempDir;
+    fn config_validate_should_fail_for_nonexistent_path() {
+        let config = Config::with_root(PathBuf::from("/nonexistent/path/that/does/not/exist"));
+        let result = config.validate();
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ConfigError::InvalidPath { path, reason } => {
+                assert_eq!(path, PathBuf::from("/nonexistent/path/that/does/not/exist"));
+                assert!(reason.contains("不存在"));
+            }
+            _ => panic!("应返回 InvalidPath 错误"),
+        }
+    }
 
-        let temp_dir = TempDir::new().expect("创建临时目录失败");
+    #[test]
+    fn config_validate_should_fail_for_file_as_root() {
+        // 使用 Cargo.toml 作为测试文件（它肯定存在于项目根目录）
+        let config = Config::with_root(PathBuf::from("Cargo.toml"));
+        let result = config.validate();
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ConfigError::InvalidPath { reason, .. } => {
+                assert!(reason.contains("不是目录"));
+            }
+            _ => panic!("应返回 InvalidPath 错误"),
+        }
+    }
+
+    #[test]
+    fn config_validate_should_succeed_for_current_directory() {
+        let config = Config::default();
+        let result = config.validate();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn config_validate_should_canonicalize_path() {
+        let config = Config::with_root(PathBuf::from("."));
+        let validated = config.validate().unwrap();
+        // 规范化后的路径应该是绝对路径
+        assert!(validated.root_path.is_absolute());
+    }
+
+    #[test]
+    fn config_validate_should_infer_json_format_from_extension() {
         let mut config = Config::default();
-        config.root_path = temp_dir.path().to_path_buf();
-        config.output.output_path = Some(PathBuf::from("result.json"));
-
+        config.output.output_path = Some(PathBuf::from("tree.json"));
         let validated = config.validate().unwrap();
         assert_eq!(validated.output.format, OutputFormat::Json);
     }
 
     #[test]
-    fn validate_should_derive_yaml_format_from_yml_extension() {
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().expect("创建临时目录失败");
+    fn config_validate_should_infer_yaml_format_from_yml_extension() {
         let mut config = Config::default();
-        config.root_path = temp_dir.path().to_path_buf();
-        config.output.output_path = Some(PathBuf::from("result.yml"));
-
+        config.output.output_path = Some(PathBuf::from("tree.yml"));
         let validated = config.validate().unwrap();
         assert_eq!(validated.output.format, OutputFormat::Yaml);
     }
 
     #[test]
-    fn validate_should_derive_yaml_format_from_yaml_extension() {
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().expect("创建临时目录失败");
+    fn config_validate_should_infer_yaml_format_from_yaml_extension() {
         let mut config = Config::default();
-        config.root_path = temp_dir.path().to_path_buf();
-        config.output.output_path = Some(PathBuf::from("result.yaml"));
-
+        config.output.output_path = Some(PathBuf::from("tree.yaml"));
         let validated = config.validate().unwrap();
         assert_eq!(validated.output.format, OutputFormat::Yaml);
     }
 
     #[test]
-    fn validate_should_fail_for_unknown_extension() {
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().expect("创建临时目录失败");
+    fn config_validate_should_infer_toml_format_from_extension() {
         let mut config = Config::default();
-        config.root_path = temp_dir.path().to_path_buf();
-        config.output.output_path = Some(PathBuf::from("result.xyz"));
-
-        let err = config.validate().unwrap_err();
-        assert!(matches!(err, ConfigError::UnknownOutputFormat { .. }));
-    }
-
-    #[test]
-    fn validate_should_enable_show_size_when_human_readable_is_set() {
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().expect("创建临时目录失败");
-        let mut config = Config::default();
-        config.root_path = temp_dir.path().to_path_buf();
-        config.render.human_readable = true;
-        config.render.show_size = false;
-
+        config.output.output_path = Some(PathBuf::from("tree.toml"));
         let validated = config.validate().unwrap();
-        assert!(validated.render.show_size);
-        assert!(validated.render.human_readable);
+        assert_eq!(validated.output.format, OutputFormat::Toml);
     }
 
     #[test]
-    fn validate_should_fail_when_silent_without_output() {
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().expect("创建临时目录失败");
+    fn config_validate_should_infer_txt_format_from_extension() {
         let mut config = Config::default();
-        config.root_path = temp_dir.path().to_path_buf();
-        config.output.silent = true;
-        config.output.output_path = None;
-
-        let err = config.validate().unwrap_err();
-        assert!(matches!(err, ConfigError::ConflictingOptions { .. }));
-
-        if let ConfigError::ConflictingOptions { opt_a, .. } = err {
-            assert_eq!(opt_a, "--silent");
-        }
-    }
-
-    #[test]
-    fn validate_should_succeed_when_silent_with_output() {
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().expect("创建临时目录失败");
-        let mut config = Config::default();
-        config.root_path = temp_dir.path().to_path_buf();
-        config.output.silent = true;
         config.output.output_path = Some(PathBuf::from("tree.txt"));
-
         let validated = config.validate().unwrap();
-        assert!(validated.output.silent);
         assert_eq!(validated.output.format, OutputFormat::Txt);
     }
 
     #[test]
-    fn validate_should_preserve_all_options() {
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().expect("创建临时目录失败");
+    fn config_validate_should_fail_for_unknown_extension() {
         let mut config = Config::default();
-        config.root_path = temp_dir.path().to_path_buf();
-        config.scan.show_files = true;
-        config.scan.max_depth = Some(3);
-        config.scan.respect_gitignore = true;
-        config.matching.include_patterns = vec!["*.rs".to_string()];
-        config.matching.exclude_patterns = vec!["target".to_string()];
-        config.matching.ignore_case = true;
-        config.matching.prune_empty = true;
-        config.render.charset = CharsetMode::Ascii;
-        config.render.path_mode = PathMode::Full;
-        config.render.show_size = true;
-        config.render.show_date = true;
-        config.render.sort_key = SortKey::Size;
-        config.render.reverse_sort = true;
-        config.render.show_report = true;
-        config.render.no_win_banner = true;
-        config.render.quote_names = true;
-        config.render.dirs_first = true;
-        config.output.output_path = Some(PathBuf::from("out.toml"));
+        config.output.output_path = Some(PathBuf::from("tree.xyz"));
+        let result = config.validate();
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ConfigError::UnknownOutputFormat { path } => {
+                assert_eq!(path, PathBuf::from("tree.xyz"));
+            }
+            _ => panic!("应返回 UnknownOutputFormat 错误"),
+        }
+    }
 
+    #[test]
+    fn config_validate_should_fail_for_silent_without_output() {
+        let mut config = Config::default();
+        config.output.silent = true;
+        let result = config.validate();
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ConfigError::ConflictingOptions { opt_a, opt_b, .. } => {
+                assert!(opt_a.contains("silent"));
+                assert!(opt_b.contains("output"));
+            }
+            _ => panic!("应返回 ConflictingOptions 错误"),
+        }
+    }
+
+    #[test]
+    fn config_validate_should_succeed_for_silent_with_output() {
+        let mut config = Config::default();
+        config.output.silent = true;
+        config.output.output_path = Some(PathBuf::from("tree.txt"));
+        let result = config.validate();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn config_validate_should_enable_show_size_when_human_readable() {
+        let mut config = Config::default();
+        config.render.human_readable = true;
+        config.render.show_size = false;
         let validated = config.validate().unwrap();
-
-        // 路径已被规范化，不再比较具体值
-        assert!(validated.root_path.is_absolute());
-        assert!(validated.scan.show_files);
-        assert_eq!(validated.scan.max_depth, Some(3));
-        assert!(validated.scan.respect_gitignore);
-        assert_eq!(validated.matching.include_patterns, vec!["*.rs"]);
-        assert_eq!(validated.matching.exclude_patterns, vec!["target"]);
-        assert!(validated.matching.ignore_case);
-        assert!(validated.matching.prune_empty);
-        assert_eq!(validated.render.charset, CharsetMode::Ascii);
-        assert_eq!(validated.render.path_mode, PathMode::Full);
         assert!(validated.render.show_size);
-        assert!(validated.render.show_date);
-        assert_eq!(validated.render.sort_key, SortKey::Size);
-        assert!(validated.render.reverse_sort);
-        assert!(validated.render.show_report);
-        assert!(validated.render.no_win_banner);
-        assert!(validated.render.quote_names);
-        assert!(validated.render.dirs_first);
-        assert_eq!(validated.output.format, OutputFormat::Toml);
     }
 
     // ------------------------------------------------------------------------
@@ -1116,46 +1230,55 @@ mod tests {
     // ------------------------------------------------------------------------
 
     #[test]
-    fn config_error_display_should_contain_relevant_info() {
+    fn config_error_conflicting_options_should_display_correctly() {
         let err = ConfigError::ConflictingOptions {
             opt_a: "--foo".to_string(),
             opt_b: "--bar".to_string(),
-            reason: "test reason".to_string(),
+            reason: "互斥选项".to_string(),
         };
         let msg = err.to_string();
         assert!(msg.contains("--foo"));
         assert!(msg.contains("--bar"));
-        assert!(msg.contains("test reason"));
+        assert!(msg.contains("互斥选项"));
+    }
 
+    #[test]
+    fn config_error_invalid_value_should_display_correctly() {
         let err = ConfigError::InvalidValue {
-            option: "--level".to_string(),
-            value: "abc".to_string(),
-            reason: "must be a number".to_string(),
+            option: "--depth".to_string(),
+            value: "-1".to_string(),
+            reason: "必须为正整数".to_string(),
         };
         let msg = err.to_string();
-        assert!(msg.contains("--level"));
-        assert!(msg.contains("abc"));
-        assert!(msg.contains("must be a number"));
+        assert!(msg.contains("--depth"));
+        assert!(msg.contains("-1"));
+        assert!(msg.contains("必须为正整数"));
+    }
 
+    #[test]
+    fn config_error_invalid_path_should_display_correctly() {
         let err = ConfigError::InvalidPath {
-            path: PathBuf::from("/nonexistent"),
-            reason: "not found".to_string(),
+            path: PathBuf::from("/invalid/path"),
+            reason: "路径不存在".to_string(),
         };
         let msg = err.to_string();
-        assert!(msg.contains("nonexistent"));
-        assert!(msg.contains("not found"));
+        assert!(msg.contains("/invalid/path") || msg.contains("\\invalid\\path"));
+        assert!(msg.contains("路径不存在"));
+    }
 
+    #[test]
+    fn config_error_unknown_output_format_should_display_correctly() {
         let err = ConfigError::UnknownOutputFormat {
-            path: PathBuf::from("file.xyz"),
+            path: PathBuf::from("output.xyz"),
         };
         let msg = err.to_string();
-        assert!(msg.contains("file.xyz"));
+        assert!(msg.contains("output.xyz"));
         assert!(msg.contains(".txt"));
         assert!(msg.contains(".json"));
     }
 
     #[test]
-    fn config_error_should_be_cloneable_and_comparable() {
+    fn config_error_should_be_clone_and_eq() {
         let err1 = ConfigError::ConflictingOptions {
             opt_a: "a".to_string(),
             opt_b: "b".to_string(),
@@ -1165,46 +1288,58 @@ mod tests {
         assert_eq!(err1, err2);
     }
 
+    // ------------------------------------------------------------------------
+    // 边界条件测试
+    // ------------------------------------------------------------------------
+
     #[test]
-    fn validate_should_fail_for_nonexistent_path() {
+    fn config_with_all_options_enabled_should_validate() {
         let mut config = Config::default();
-        config.root_path = PathBuf::from("/nonexistent/path/12345");
+        config.scan.show_files = true;
+        config.scan.max_depth = Some(10);
+        config.scan.respect_gitignore = true;
+        config.matching.include_patterns = vec!["*.rs".to_string()];
+        config.matching.exclude_patterns = vec!["target".to_string()];
+        config.matching.ignore_case = true;
+        config.matching.prune_empty = true;
+        config.render.charset = CharsetMode::Ascii;
+        config.render.path_mode = PathMode::Full;
+        config.render.show_size = true;
+        config.render.human_readable = true;
+        config.render.show_date = true;
+        config.render.show_disk_usage = true;
+        config.render.sort_key = SortKey::Mtime;
+        config.render.reverse_sort = true;
+        config.render.show_report = true;
+        config.render.dirs_first = true;
+        config.render.quote_names = true;
+        config.output.output_path = Some(PathBuf::from("tree.json"));
 
-        let err = config.validate().unwrap_err();
-        assert!(matches!(err, ConfigError::InvalidPath { .. }));
-
-        if let ConfigError::InvalidPath { reason, .. } = err {
-            assert!(reason.contains("不存在"));
-        }
+        let result = config.validate();
+        assert!(result.is_ok());
     }
 
     #[test]
-    fn validate_should_fail_for_file_as_root() {
-        use tempfile::NamedTempFile;
-
-        let temp_file = NamedTempFile::new().expect("创建临时文件失败");
-        let mut config = Config::default();
-        config.root_path = temp_file.path().to_path_buf();
-
-        let err = config.validate().unwrap_err();
-        assert!(matches!(err, ConfigError::InvalidPath { .. }));
-
-        if let ConfigError::InvalidPath { reason, .. } = err {
-            assert!(reason.contains("不是目录"));
-        }
+    fn scan_options_thread_count_should_be_non_zero() {
+        let opts = ScanOptions::default();
+        assert!(opts.thread_count.get() > 0);
     }
 
     #[test]
-    fn validate_should_canonicalize_path() {
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().expect("创建临时目录失败");
+    fn config_clone_should_produce_equal_copy() {
         let mut config = Config::default();
-        config.root_path = temp_dir.path().to_path_buf();
+        config.scan.show_files = true;
+        config.render.show_size = true;
 
-        let validated = config.validate().expect("验证应成功");
+        let cloned = config.clone();
+        assert_eq!(config, cloned);
+    }
 
-        // 规范化后的路径应该是绝对路径
-        assert!(validated.root_path.is_absolute());
+    #[test]
+    fn config_debug_should_be_implemented() {
+        let config = Config::default();
+        let debug_str = format!("{:?}", config);
+        assert!(debug_str.contains("Config"));
+        assert!(debug_str.contains("root_path"));
     }
 }

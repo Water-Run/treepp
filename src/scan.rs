@@ -5,6 +5,7 @@
 //! - **统一 IR**：`TreeNode` 与 `EntryKind` 表示目录树结构
 //! - **扫描统计**：`ScanStats` 记录扫描结果与耗时
 //! - **双模式扫描**：单线程 `walk` 与多线程 `parallel` 模式，输出保证一致
+//! - **流式扫描**：`scan_streaming` 支持边扫边回调，实现实时输出
 //! - **过滤功能**：include/exclude 通配、ignore-case、level 限制、prune 空目录
 //! - **gitignore 支持**：分层叠加 `.gitignore` 规则，支持规则链继承与缓存
 //! - **确定性排序**：按 `SortKey` 排序，支持逆序
@@ -354,6 +355,89 @@ pub struct ScanStats {
 }
 
 // ============================================================================
+// 流式扫描类型
+// ============================================================================
+
+/// 流式扫描条目
+///
+/// 在流式扫描模式下，每个发现的条目会通过回调传递此结构。
+/// 包含条目的完整信息以及用于树形渲染的位置信息。
+///
+/// # Examples
+///
+/// ```
+/// use std::path::PathBuf;
+/// use treepp::scan::{StreamEntry, EntryKind, EntryMetadata};
+///
+/// let entry = StreamEntry {
+///     path: PathBuf::from("src/main.rs"),
+///     name: "main.rs".to_string(),
+///     kind: EntryKind::File,
+///     metadata: EntryMetadata { size: 1024, ..Default::default() },
+///     depth: 1,
+///     is_last: true,
+/// };
+/// assert_eq!(entry.name, "main.rs");
+/// assert!(entry.is_last);
+/// ```
+#[derive(Debug, Clone)]
+pub struct StreamEntry {
+    /// 条目完整路径
+    pub path: PathBuf,
+    /// 条目名称（不含路径）
+    pub name: String,
+    /// 条目类型
+    pub kind: EntryKind,
+    /// 条目元数据
+    pub metadata: EntryMetadata,
+    /// 当前深度（根目录子项为 0）
+    pub depth: usize,
+    /// 是否为当前层级最后一个条目
+    pub is_last: bool,
+}
+
+/// 流式扫描统计（简化版，不含树结构）
+///
+/// # Examples
+///
+/// ```
+/// use std::time::Duration;
+/// use treepp::scan::StreamStats;
+///
+/// let stats = StreamStats {
+///     duration: Duration::from_millis(50),
+///     directory_count: 3,
+///     file_count: 10,
+/// };
+/// assert_eq!(stats.directory_count, 3);
+/// ```
+#[derive(Debug, Clone)]
+pub struct StreamStats {
+    /// 扫描耗时
+    pub duration: Duration,
+    /// 目录总数（不含根）
+    pub directory_count: usize,
+    /// 文件总数
+    pub file_count: usize,
+}
+
+/// 流式扫描事件类型
+///
+/// 用于通知回调当前扫描状态变化。
+#[derive(Debug, Clone)]
+pub enum StreamEvent {
+    /// 进入目录（在处理完目录条目后、处理其子项前触发）
+    EnterDir {
+        /// 是否为当前层级最后一个目录
+        is_last: bool,
+    },
+    /// 离开目录（在处理完目录所有子项后触发）
+    LeaveDir,
+    /// 发现条目
+    Entry(StreamEntry),
+}
+
+// ============================================================================
 // 匹配规则
 // ============================================================================
 
@@ -585,6 +669,61 @@ pub fn sort_tree(node: &mut TreeNode, sort_key: SortKey, reverse: bool, dirs_fir
     for child in &mut node.children {
         sort_tree(child, sort_key, reverse, dirs_first);
     }
+}
+
+/// 对条目列表进行排序（用于流式扫描）
+fn sort_entries(
+    entries: &mut [(PathBuf, Metadata)],
+    sort_key: SortKey,
+    reverse: bool,
+    dirs_first: bool,
+) {
+    entries.sort_by(|(path_a, meta_a), (path_b, meta_b)| {
+        let is_dir_a = meta_a.is_dir();
+        let is_dir_b = meta_b.is_dir();
+
+        // 目录优先排序
+        let kind_order = if dirs_first {
+            match (is_dir_a, is_dir_b) {
+                (true, false) => Ordering::Less,
+                (false, true) => Ordering::Greater,
+                _ => Ordering::Equal,
+            }
+        } else {
+            Ordering::Equal
+        };
+
+        if kind_order != Ordering::Equal {
+            return kind_order;
+        }
+
+        // 获取文件名用于比较
+        let name_a = path_a
+            .file_name()
+            .map(|s| s.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        let name_b = path_b
+            .file_name()
+            .map(|s| s.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+
+        let cmp = match sort_key {
+            SortKey::Name => name_a.cmp(&name_b),
+            SortKey::Size => {
+                let size_a = if meta_a.is_file() { meta_a.len() } else { 0 };
+                let size_b = if meta_b.is_file() { meta_b.len() } else { 0 };
+                size_a.cmp(&size_b)
+            }
+            SortKey::Mtime => meta_a.modified().ok().cmp(&meta_b.modified().ok()),
+            SortKey::Ctime => meta_a.created().ok().cmp(&meta_b.created().ok()),
+        };
+
+        if reverse {
+            cmp.reverse()
+        } else {
+            cmp
+        }
+    });
 }
 
 // ============================================================================
@@ -1000,6 +1139,245 @@ pub fn scan_parallel(config: &Config) -> TreeppResult<ScanStats> {
         directory_count,
         file_count,
     })
+}
+
+// ============================================================================
+// 流式扫描
+// ============================================================================
+
+/// 流式扫描（边扫边回调，支持实时输出）
+///
+/// 使用深度优先遍历顺序，在每个目录内并行获取元数据以保持性能。
+/// 回调函数在发现每个条目时立即被调用，支持实时滚动输出。
+///
+/// # 参数
+///
+/// * `config` - 扫描配置
+/// * `callback` - 事件回调函数，接收 `StreamEvent` 事件
+///
+/// # 返回值
+///
+/// 成功返回扫描统计信息（不含树结构）。
+///
+/// # Errors
+///
+/// 返回 `ScanError` 如果根路径不存在或回调返回错误。
+///
+/// # Examples
+///
+/// ```no_run
+/// use treepp::config::Config;
+/// use treepp::scan::{scan_streaming, StreamEvent, EntryKind};
+/// use std::path::PathBuf;
+///
+/// let config = Config::with_root(PathBuf::from(".")).validate().unwrap();
+/// let stats = scan_streaming(&config, |event| {
+///     match event {
+///         StreamEvent::Entry(entry) => {
+///             println!("{}: {}", if entry.kind == EntryKind::Directory { "目录" } else { "文件" }, entry.name);
+///         }
+///         StreamEvent::EnterDir { .. } => {}
+///         StreamEvent::LeaveDir => {}
+///     }
+///     Ok(())
+/// }).expect("扫描失败");
+/// println!("共 {} 个目录, {} 个文件", stats.directory_count, stats.file_count);
+/// ```
+pub fn scan_streaming<F>(config: &Config, mut callback: F) -> TreeppResult<StreamStats>
+where
+    F: FnMut(StreamEvent) -> Result<(), ScanError>,
+{
+    let start = Instant::now();
+
+    // 验证根路径
+    if !config.root_path.exists() {
+        return Err(ScanError::PathNotFound {
+            path: config.root_path.clone(),
+        }
+            .into());
+    }
+
+    if !config.root_path.is_dir() {
+        return Err(ScanError::NotADirectory {
+            path: config.root_path.clone(),
+        }
+            .into());
+    }
+
+    // 创建扫描上下文
+    let ctx = ScanContext::from_config(config)?;
+
+    // 初始化 gitignore 链
+    let initial_chain = GitignoreChain::new();
+
+    // 创建线程池用于目录内并行元数据获取
+    let thread_count = config.scan.thread_count.get();
+    let pool = ThreadPoolBuilder::new()
+        .num_threads(thread_count)
+        .build()
+        .map_err(|e| ScanError::WalkError {
+            message: format!("线程池创建失败: {}", e),
+            path: Some(config.root_path.clone()),
+        })?;
+
+    // 不再使用 pool.install 包裹整个扫描
+    let (dir_count, file_count) = streaming_scan_dir(
+        &config.root_path,
+        0,
+        &ctx,
+        &initial_chain,
+        &mut callback,
+        &pool,
+    )?;
+
+    let duration = start.elapsed();
+
+    Ok(StreamStats {
+        duration,
+        directory_count: dir_count,
+        file_count,
+    })
+}
+
+/// 流式扫描目录（内部递归函数）
+fn streaming_scan_dir<F>(
+    path: &Path,
+    depth: usize,
+    ctx: &ScanContext,
+    parent_chain: &GitignoreChain,
+    callback: &mut F,
+    pool: &rayon::ThreadPool,
+) -> Result<(usize, usize), ScanError>
+where
+    F: FnMut(StreamEvent) -> Result<(), ScanError>,
+{
+    // 深度限制检查（depth 是当前目录子项的深度）
+    // 注意：streaming 的 depth 比 walk 的 depth 小 1，所以用 >= 而非 >
+    if let Some(max) = ctx.max_depth {
+        if depth >= max {
+            return Ok((0, 0));
+        }
+    }
+
+    // 构建当前目录的 gitignore 链
+    let current_chain = if ctx.respect_gitignore {
+        if let Some(gi) = ctx.get_gitignore(path) {
+            parent_chain.with_child(gi)
+        } else {
+            parent_chain.clone()
+        }
+    } else {
+        parent_chain.clone()
+    };
+
+    // 读取目录条目
+    let raw_entries: Vec<_> = match fs::read_dir(path) {
+        Ok(entries) => entries.flatten().collect(),
+        Err(e) => {
+            return Err(ScanError::ReadDirFailed {
+                path: path.to_path_buf(),
+                source: e,
+            });
+        }
+    };
+
+    // 并行获取元数据
+    let entries_with_meta: Vec<(PathBuf, Metadata)> = pool.install(|| {
+        raw_entries
+            .into_par_iter()
+            .filter_map(|entry| {
+                let entry_path = entry.path();
+                let meta = entry.metadata().ok()?;
+                Some((entry_path, meta))
+            })
+            .collect()
+    });
+
+    // 过滤
+    let mut filtered: Vec<(PathBuf, Metadata)> = entries_with_meta
+        .into_iter()
+        .filter(|(entry_path, meta)| {
+            let entry_name = entry_path
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+
+            let is_dir = meta.is_dir();
+
+            // gitignore 检查
+            if ctx.respect_gitignore && current_chain.is_ignored(entry_path, is_dir) {
+                return false;
+            }
+
+            // 过滤检查
+            !ctx.should_filter(&entry_name, is_dir)
+        })
+        .collect();
+
+    // 排序
+    sort_entries(
+        &mut filtered,
+        ctx.sort_key,
+        ctx.reverse,
+        ctx.dirs_first,
+    );
+
+    // 按序处理并回调
+    let count = filtered.len();
+    let mut dir_count = 0;
+    let mut file_count = 0;
+
+    for (i, (entry_path, meta)) in filtered.into_iter().enumerate() {
+        let is_last = i == count - 1;
+        let is_dir = meta.is_dir();
+        let kind = if is_dir {
+            EntryKind::Directory
+        } else {
+            EntryKind::File
+        };
+        let entry_meta = EntryMetadata::from_fs_metadata(&meta);
+        let name = entry_path
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+
+        // 发送条目事件
+        let entry = StreamEntry {
+            path: entry_path.clone(),
+            name,
+            kind,
+            metadata: entry_meta,
+            depth,
+            is_last,
+        };
+        callback(StreamEvent::Entry(entry))?;
+
+        if is_dir {
+            dir_count += 1;
+
+            // 发送进入目录事件
+            callback(StreamEvent::EnterDir { is_last })?;
+
+            // 递归处理子目录
+            let (sub_dirs, sub_files) = streaming_scan_dir(
+                &entry_path,
+                depth + 1,
+                ctx,
+                &current_chain,
+                callback,
+                pool,
+            )?;
+            dir_count += sub_dirs;
+            file_count += sub_files;
+
+            // 发送离开目录事件
+            callback(StreamEvent::LeaveDir)?;
+        } else {
+            file_count += 1;
+        }
+    }
+
+    Ok((dir_count, file_count))
 }
 
 // ============================================================================
@@ -1609,6 +1987,44 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
+    // StreamEntry 测试
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn test_stream_entry_creation() {
+        let entry = StreamEntry {
+            path: PathBuf::from("src/main.rs"),
+            name: "main.rs".to_string(),
+            kind: EntryKind::File,
+            metadata: EntryMetadata {
+                size: 1024,
+                ..Default::default()
+            },
+            depth: 1,
+            is_last: true,
+        };
+
+        assert_eq!(entry.name, "main.rs");
+        assert_eq!(entry.kind, EntryKind::File);
+        assert_eq!(entry.depth, 1);
+        assert!(entry.is_last);
+        assert_eq!(entry.metadata.size, 1024);
+    }
+
+    #[test]
+    fn test_stream_stats_creation() {
+        let stats = StreamStats {
+            duration: Duration::from_millis(100),
+            directory_count: 5,
+            file_count: 20,
+        };
+
+        assert_eq!(stats.directory_count, 5);
+        assert_eq!(stats.file_count, 20);
+        assert_eq!(stats.duration.as_millis(), 100);
+    }
+
+    // ------------------------------------------------------------------------
     // GitignoreChain 测试
     // ------------------------------------------------------------------------
 
@@ -2027,6 +2443,36 @@ mod tests {
         assert_eq!(root.children[0].children[1].name, "z.txt");
     }
 
+    #[test]
+    fn test_sort_entries_by_name() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+
+        // 创建文件
+        File::create(root.join("zebra.txt")).unwrap();
+        File::create(root.join("alpha.txt")).unwrap();
+        File::create(root.join("beta.txt")).unwrap();
+
+        let mut entries: Vec<(PathBuf, Metadata)> = fs::read_dir(root)
+            .unwrap()
+            .flatten()
+            .filter_map(|e| {
+                let path = e.path();
+                let meta = e.metadata().ok()?;
+                Some((path, meta))
+            })
+            .collect();
+
+        sort_entries(&mut entries, SortKey::Name, false, false);
+
+        let names: Vec<_> = entries
+            .iter()
+            .map(|(p, _)| p.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+
+        assert_eq!(names, vec!["alpha.txt", "beta.txt", "zebra.txt"]);
+    }
+
     // ------------------------------------------------------------------------
     // 基本扫描测试
     // ------------------------------------------------------------------------
@@ -2246,6 +2692,246 @@ mod tests {
         assert!(!has_node_with_name(&stats.tree, "l3.bak"));
         assert!(!has_node_with_name(&stats.tree, "l3.cache"));
         assert!(has_node_with_name(&stats.tree, "l3.txt"));
+    }
+
+    // ------------------------------------------------------------------------
+    // 流式扫描测试
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn test_scan_streaming_basic() {
+        let dir = setup_test_dir();
+        let mut config = Config::with_root(dir.path().to_path_buf());
+        config.scan.show_files = true;
+
+        let mut entries = Vec::new();
+        let mut enter_count = 0;
+        let mut leave_count = 0;
+
+        let stats = scan_streaming(&config, |event| {
+            match event {
+                StreamEvent::Entry(entry) => {
+                    entries.push(entry);
+                }
+                StreamEvent::EnterDir { .. } => {
+                    enter_count += 1;
+                }
+                StreamEvent::LeaveDir => {
+                    leave_count += 1;
+                }
+            }
+            Ok(())
+        })
+            .expect("流式扫描失败");
+
+        assert_eq!(stats.directory_count, 3);
+        assert_eq!(stats.file_count, 5);
+        assert_eq!(entries.len(), 8); // 3 目录 + 5 文件
+        assert_eq!(enter_count, 3); // 进入 3 个目录
+        assert_eq!(leave_count, 3); // 离开 3 个目录
+    }
+
+    #[test]
+    fn test_scan_streaming_dirs_only() {
+        let dir = setup_test_dir();
+        let config = Config::with_root(dir.path().to_path_buf());
+
+        let mut entries = Vec::new();
+
+        let stats = scan_streaming(&config, |event| {
+            if let StreamEvent::Entry(entry) = event {
+                entries.push(entry);
+            }
+            Ok(())
+        })
+            .expect("流式扫描失败");
+
+        assert_eq!(stats.directory_count, 3);
+        assert_eq!(stats.file_count, 0);
+        assert_eq!(entries.len(), 3);
+
+        for entry in &entries {
+            assert_eq!(entry.kind, EntryKind::Directory);
+        }
+    }
+
+    #[test]
+    fn test_scan_streaming_with_gitignore() {
+        let dir = setup_gitignore_dir();
+        let mut config = Config::with_root(dir.path().to_path_buf());
+        config.scan.show_files = true;
+        config.scan.respect_gitignore = true;
+
+        let mut names = Vec::new();
+
+        let _stats = scan_streaming(&config, |event| {
+            if let StreamEvent::Entry(entry) = event {
+                names.push(entry.name.clone());
+            }
+            Ok(())
+        })
+            .expect("流式扫描失败");
+
+        // 验证 target 和 app.log 被忽略
+        assert!(!names.contains(&"target".to_string()));
+        assert!(!names.contains(&"app.log".to_string()));
+    }
+
+    #[test]
+    fn test_scan_streaming_depth_info() {
+        let dir = setup_test_dir();
+        let mut config = Config::with_root(dir.path().to_path_buf());
+        config.scan.show_files = true;
+
+        let mut entries = Vec::new();
+
+        let _stats = scan_streaming(&config, |event| {
+            if let StreamEvent::Entry(entry) = event {
+                entries.push((entry.name.clone(), entry.depth));
+            }
+            Ok(())
+        })
+            .expect("流式扫描失败");
+
+        // 根目录下的条目应该是 depth=0
+        let root_entries: Vec<_> = entries.iter().filter(|(_, d)| *d == 0).collect();
+        assert!(!root_entries.is_empty());
+
+        // src 目录下的文件应该是 depth=1
+        let nested_entries: Vec<_> = entries.iter().filter(|(_, d)| *d == 1).collect();
+        assert!(!nested_entries.is_empty());
+    }
+
+    #[test]
+    fn test_scan_streaming_is_last_flag() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+
+        // 创建简单结构
+        File::create(root.join("a.txt")).unwrap();
+        File::create(root.join("b.txt")).unwrap();
+        File::create(root.join("c.txt")).unwrap();
+
+        let mut config = Config::with_root(root.to_path_buf());
+        config.scan.show_files = true;
+
+        let mut entries = Vec::new();
+
+        let _stats = scan_streaming(&config, |event| {
+            if let StreamEvent::Entry(entry) = event {
+                entries.push((entry.name.clone(), entry.is_last));
+            }
+            Ok(())
+        })
+            .expect("流式扫描失败");
+
+        // 应该有 3 个条目
+        assert_eq!(entries.len(), 3);
+
+        // 只有最后一个应该标记为 is_last
+        let last_count = entries.iter().filter(|(_, is_last)| *is_last).count();
+        assert_eq!(last_count, 1);
+    }
+
+    #[test]
+    fn test_scan_streaming_nonexistent_path() {
+        let config = Config::with_root(PathBuf::from("/nonexistent/path/12345"));
+
+        let result = scan_streaming(&config, |_| Ok(()));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_scan_streaming_max_depth() {
+        let dir = setup_test_dir();
+        let mut config = Config::with_root(dir.path().to_path_buf());
+        config.scan.show_files = true;
+        config.scan.max_depth = Some(1);
+
+        let mut entries = Vec::new();
+
+        let stats = scan_streaming(&config, |event| {
+            if let StreamEvent::Entry(entry) = event {
+                entries.push(entry);
+            }
+            Ok(())
+        })
+            .expect("流式扫描失败");
+
+        // 深度 1 应该包含根目录下的直接子项和它们的直接子项
+        // 但不包含更深层的
+        assert_eq!(stats.directory_count, 3);
+        assert_eq!(stats.file_count, 2);
+    }
+
+    #[test]
+    fn test_scan_streaming_callback_error_propagation() {
+        let dir = setup_test_dir();
+        let mut config = Config::with_root(dir.path().to_path_buf());
+        config.scan.show_files = true;
+
+        let mut count = 0;
+        let result = scan_streaming(&config, |event| {
+            if let StreamEvent::Entry(_) = event {
+                count += 1;
+                if count >= 2 {
+                    return Err(ScanError::WalkError {
+                        message: "测试错误".to_string(),
+                        path: None,
+                    });
+                }
+            }
+            Ok(())
+        });
+
+        assert!(result.is_err());
+    }
+
+    // ------------------------------------------------------------------------
+    // 流式扫描与批处理一致性测试
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn test_streaming_vs_batch_entry_names() {
+        let dir = setup_test_dir();
+        let mut config = Config::with_root(dir.path().to_path_buf());
+        config.scan.show_files = true;
+
+        // 批处理扫描
+        let batch_stats = scan(&config).expect("批处理扫描失败");
+        let batch_names = collect_names(&batch_stats.tree);
+
+        // 流式扫描
+        let mut stream_names = Vec::new();
+        let _stream_stats = scan_streaming(&config, |event| {
+            if let StreamEvent::Entry(entry) = event {
+                stream_names.push(entry.name.clone());
+            }
+            Ok(())
+        })
+            .expect("流式扫描失败");
+        stream_names.sort();
+
+        // 流式扫描不包含根节点名称，所以需要去掉批处理的根节点
+        let batch_without_root: Vec<_> = batch_names
+            .into_iter()
+            .filter(|n| n != &batch_stats.tree.name)
+            .collect();
+
+        assert_eq!(stream_names, batch_without_root);
+    }
+
+    #[test]
+    fn test_streaming_vs_batch_counts() {
+        let dir = setup_test_dir();
+        let mut config = Config::with_root(dir.path().to_path_buf());
+        config.scan.show_files = true;
+
+        let batch_stats = scan(&config).expect("批处理扫描失败");
+        let stream_stats = scan_streaming(&config, |_| Ok(())).expect("流式扫描失败");
+
+        assert_eq!(batch_stats.directory_count, stream_stats.directory_count);
+        assert_eq!(batch_stats.file_count, stream_stats.file_count);
     }
 
     // ------------------------------------------------------------------------
@@ -2475,5 +3161,15 @@ mod tests {
         // 验证统计信息与树结构一致
         assert_eq!(stats.directory_count, stats.tree.count_directories());
         assert_eq!(stats.file_count, stats.tree.count_files());
+    }
+
+    #[test]
+    fn test_stream_stats_duration_is_measured() {
+        let dir = setup_test_dir();
+        let config = Config::with_root(dir.path().to_path_buf());
+
+        let stats = scan_streaming(&config, |_| Ok(())).expect("扫描失败");
+
+        assert!(stats.duration.as_nanos() > 0);
     }
 }
