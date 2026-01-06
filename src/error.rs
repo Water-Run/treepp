@@ -141,15 +141,6 @@ pub enum CliError {
         opt_b: String,
     },
 
-    /// 路径参数出现在选项之后
-    #[error("路径参数必须在所有选项之前: '{path}' 出现在选项 '{after_option}' 之后")]
-    PathAfterOptions {
-        /// 路径参数
-        path: String,
-        /// 之前出现的选项
-        after_option: String,
-    },
-
     /// 指定了多个路径
     #[error("只能指定一个路径，但发现多个: {paths:?}")]
     MultiplePaths {

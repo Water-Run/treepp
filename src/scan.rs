@@ -4,7 +4,7 @@
 //!
 //! - **统一 IR**：`TreeNode` 与 `EntryKind` 表示目录树结构
 //! - **扫描统计**：`ScanStats` 记录扫描结果与耗时
-//! - **双模式扫描**：单线程 `walk` 与多线程 `parallel` 模式，输出保证一致
+//! - **并行扫描**：使用 rayon 分治策略，线程数可配置
 //! - **流式扫描**：`scan_streaming` 支持边扫边回调，实现实时输出
 //! - **过滤功能**：include/exclude 通配、ignore-case、level 限制、prune 空目录
 //! - **gitignore 支持**：分层叠加 `.gitignore` 规则，支持规则链继承与缓存
@@ -801,181 +801,31 @@ impl ScanContext {
 }
 
 // ============================================================================
-// 单线程扫描
+// 扫描实现
 // ============================================================================
 
-/// 单线程递归扫描
-fn walk_recursive(
-    path: &Path,
-    depth: usize,
-    ctx: &ScanContext,
-    parent_chain: &GitignoreChain,
-) -> Option<TreeNode> {
-    // 深度限制检查
-    if let Some(max) = ctx.max_depth {
-        if depth > max {
-            return None;
-        }
-    }
-
-    let meta = fs::metadata(path).ok()?;
-    let kind = EntryKind::from_metadata(&meta);
-    let metadata = EntryMetadata::from_fs_metadata(&meta);
-
-    // 构建当前目录的 gitignore 链
-    let current_chain = if ctx.respect_gitignore && kind == EntryKind::Directory {
-        if let Some(gi) = ctx.get_gitignore(path) {
-            parent_chain.with_child(gi)
-        } else {
-            parent_chain.clone()
-        }
-    } else {
-        parent_chain.clone()
-    };
-
-    let mut node = TreeNode::new(path.to_path_buf(), kind, metadata);
-
-    if kind == EntryKind::Directory {
-        let entries = match fs::read_dir(path) {
-            Ok(e) => e,
-            Err(_) => return Some(node),
-        };
-
-        for entry in entries.flatten() {
-            let entry_path = entry.path();
-            let entry_name = entry_path
-                .file_name()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_default();
-
-            let entry_meta = match entry.metadata() {
-                Ok(m) => m,
-                Err(_) => continue,
-            };
-
-            let is_dir = entry_meta.is_dir();
-
-            // gitignore 检查
-            if ctx.respect_gitignore && current_chain.is_ignored(&entry_path, is_dir) {
-                continue;
-            }
-
-            // 过滤检查
-            if ctx.should_filter(&entry_name, is_dir) {
-                continue;
-            }
-
-            // 递归处理
-            if let Some(child) = walk_recursive(&entry_path, depth + 1, ctx, &current_chain) {
-                node.children.push(child);
-            }
-        }
-    }
-
-    Some(node)
-}
-
-/// 单线程扫描入口
+/// 扫描目录（内部递归函数）
 ///
-/// 使用深度优先递归遍历目录树。
-///
-/// # Errors
-///
-/// 返回 `ScanError` 如果根路径不存在或无法访问。
-///
-/// # Examples
-///
-/// ```no_run
-/// use std::path::PathBuf;
-/// use treepp::config::Config;
-/// use treepp::scan::scan_walk;
-///
-/// let config = Config::with_root(PathBuf::from("."));
-/// let stats = scan_walk(&config).expect("扫描失败");
-/// println!("目录: {}, 文件: {}", stats.directory_count, stats.file_count);
-/// ```
-pub fn scan_walk(config: &Config) -> TreeppResult<ScanStats> {
-    let start = Instant::now();
-
-    // 验证根路径
-    if !config.root_path.exists() {
-        return Err(ScanError::PathNotFound {
-            path: config.root_path.clone(),
-        }
-            .into());
-    }
-
-    if !config.root_path.is_dir() {
-        return Err(ScanError::NotADirectory {
-            path: config.root_path.clone(),
-        }
-            .into());
-    }
-
-    // 创建扫描上下文
-    let ctx = ScanContext::from_config(config)?;
-
-    // 初始化空的 gitignore 链
-    let initial_chain = GitignoreChain::new();
-
-    // 执行扫描
-    let mut tree =
-        walk_recursive(&config.root_path, 0, &ctx, &initial_chain).ok_or_else(|| {
-            ScanError::ReadDirFailed {
-                path: config.root_path.clone(),
-                source: std::io::Error::new(std::io::ErrorKind::Other, "无法读取根目录"),
-            }
-        })?;
-
-    // 计算目录累计大小（如需要）
-    if ctx.needs_size {
-        tree.compute_disk_usage();
-    }
-
-    // 修剪空目录（如需要）
-    if ctx.prune_empty {
-        tree.prune_empty_dirs();
-    }
-
-    // 排序
-    sort_tree(&mut tree, ctx.sort_key, ctx.reverse, ctx.dirs_first);
-
-    let duration = start.elapsed();
-    let directory_count = tree.count_directories();
-    let file_count = tree.count_files();
-
-    Ok(ScanStats {
-        tree,
-        duration,
-        directory_count,
-        file_count,
-    })
-}
-
-// ============================================================================
-// 多线程扫描
-// ============================================================================
-
-/// 多线程分治扫描（内部函数）
-fn parallel_scan_dir(
+/// 使用批量收集模式：先读取当前目录所有条目，再并行处理子目录。
+fn scan_dir(
     path: &Path,
     depth: usize,
     ctx: &ScanContext,
     parent_chain: GitignoreChain,
 ) -> Option<TreeNode> {
-    // 深度限制检查
-    if let Some(max) = ctx.max_depth {
-        if depth > max {
-            return None;
-        }
-    }
-
     let meta = fs::metadata(path).ok()?;
     let kind = EntryKind::from_metadata(&meta);
     let metadata = EntryMetadata::from_fs_metadata(&meta);
 
     if kind != EntryKind::Directory {
         return Some(TreeNode::new(path.to_path_buf(), kind, metadata));
+    }
+
+    // 深度限制检查：如果已达到最大深度，返回空目录节点（不处理子项）
+    if let Some(max) = ctx.max_depth {
+        if depth >= max {
+            return Some(TreeNode::new(path.to_path_buf(), kind, metadata));
+        }
     }
 
     // 构建当前目录的 gitignore 链
@@ -989,10 +839,10 @@ fn parallel_scan_dir(
         parent_chain
     };
 
-    // 读取目录条目
+    // 批量读取目录条目
     let entries: Vec<_> = fs::read_dir(path).ok()?.flatten().collect();
 
-    // 分离子目录和文件
+    // 批量获取元数据并分类
     let mut subdirs = Vec::new();
     let mut files = Vec::new();
 
@@ -1028,13 +878,10 @@ fn parallel_scan_dir(
         }
     }
 
-    // 并行处理子目录，正确传递 gitignore 链
+    // 并行处理子目录
     let subdir_trees: Vec<TreeNode> = subdirs
         .into_par_iter()
-        .filter_map(|subdir| {
-            // 克隆当前链传递给子目录
-            parallel_scan_dir(&subdir, depth + 1, ctx, current_chain.clone())
-        })
+        .filter_map(|subdir| scan_dir(&subdir, depth + 1, ctx, current_chain.clone()))
         .collect();
 
     // 合并结果
@@ -1049,31 +896,27 @@ fn parallel_scan_dir(
     ))
 }
 
-/// 多线程扫描入口
+/// 执行目录扫描
 ///
-/// 使用 rayon 分治策略并行扫描目录树。
-/// 对于小目录或单核系统，内部可能回退到单线程模式。
-///
-/// # 保证
-///
-/// 输出结果与 `scan_walk` 在结构上完全一致（经过相同的排序后）。
+/// 使用 rayon 线程池进行并行扫描。线程数由配置控制，
+/// 即使设为 1 也使用相同的批量收集模式以保证性能一致性。
 ///
 /// # Errors
 ///
-/// 返回 `ScanError` 如果根路径不存在、线程池创建失败等。
+/// 返回 `TreeppError` 如果扫描过程中发生错误。
 ///
 /// # Examples
 ///
 /// ```no_run
 /// use std::path::PathBuf;
 /// use treepp::config::Config;
-/// use treepp::scan::scan_parallel;
+/// use treepp::scan::scan;
 ///
-/// let config = Config::with_root(PathBuf::from("."));
-/// let stats = scan_parallel(&config).expect("扫描失败");
-/// println!("耗时: {:?}", stats.duration);
+/// let config = Config::with_root(PathBuf::from(".")).validate().unwrap();
+/// let stats = scan(&config).expect("扫描失败");
+/// println!("{} 个目录, {} 个文件", stats.directory_count, stats.file_count);
 /// ```
-pub fn scan_parallel(config: &Config) -> TreeppResult<ScanStats> {
+pub fn scan(config: &Config) -> TreeppResult<ScanStats> {
     let start = Instant::now();
 
     // 验证根路径
@@ -1110,7 +953,7 @@ pub fn scan_parallel(config: &Config) -> TreeppResult<ScanStats> {
     // 在线程池中执行扫描
     let root_path = config.root_path.clone();
     let mut tree = pool
-        .install(|| parallel_scan_dir(&root_path, 0, &ctx, initial_chain))
+        .install(|| scan_dir(&root_path, 0, &ctx, initial_chain))
         .ok_or_else(|| ScanError::ReadDirFailed {
             path: config.root_path.clone(),
             source: std::io::Error::new(std::io::ErrorKind::Other, "无法读取根目录"),
@@ -1126,7 +969,7 @@ pub fn scan_parallel(config: &Config) -> TreeppResult<ScanStats> {
         tree.prune_empty_dirs();
     }
 
-    // 排序（确保与 walk 模式输出一致）
+    // 排序
     sort_tree(&mut tree, ctx.sort_key, ctx.reverse, ctx.dirs_first);
 
     let duration = start.elapsed();
@@ -1147,7 +990,7 @@ pub fn scan_parallel(config: &Config) -> TreeppResult<ScanStats> {
 
 /// 流式扫描（边扫边回调，支持实时输出）
 ///
-/// 使用深度优先遍历顺序，在每个目录内并行获取元数据以保持性能。
+/// 使用深度优先遍历顺序，在每个目录内批量获取元数据以保持性能。
 /// 回调函数在发现每个条目时立即被调用，支持实时滚动输出。
 ///
 /// # 参数
@@ -1210,25 +1053,9 @@ where
     // 初始化 gitignore 链
     let initial_chain = GitignoreChain::new();
 
-    // 创建线程池用于目录内并行元数据获取
-    let thread_count = config.scan.thread_count.get();
-    let pool = ThreadPoolBuilder::new()
-        .num_threads(thread_count)
-        .build()
-        .map_err(|e| ScanError::WalkError {
-            message: format!("线程池创建失败: {}", e),
-            path: Some(config.root_path.clone()),
-        })?;
-
-    // 不再使用 pool.install 包裹整个扫描
-    let (dir_count, file_count) = streaming_scan_dir(
-        &config.root_path,
-        0,
-        &ctx,
-        &initial_chain,
-        &mut callback,
-        &pool,
-    )?;
+    // 执行流式扫描（不需要线程池，因为流式输出必须顺序执行）
+    let (dir_count, file_count) =
+        streaming_scan_dir(&config.root_path, 0, &ctx, &initial_chain, &mut callback)?;
 
     let duration = start.elapsed();
 
@@ -1246,13 +1073,11 @@ fn streaming_scan_dir<F>(
     ctx: &ScanContext,
     parent_chain: &GitignoreChain,
     callback: &mut F,
-    pool: &rayon::ThreadPool,
 ) -> Result<(usize, usize), ScanError>
 where
     F: FnMut(StreamEvent) -> Result<(), ScanError>,
 {
-    // 深度限制检查（depth 是当前目录子项的深度）
-    // 注意：streaming 的 depth 比 walk 的 depth 小 1，所以用 >= 而非 >
+    // 深度限制检查
     if let Some(max) = ctx.max_depth {
         if depth >= max {
             return Ok((0, 0));
@@ -1270,7 +1095,7 @@ where
         parent_chain.clone()
     };
 
-    // 读取目录条目
+    // 批量读取目录条目
     let raw_entries: Vec<_> = match fs::read_dir(path) {
         Ok(entries) => entries.flatten().collect(),
         Err(e) => {
@@ -1281,17 +1106,15 @@ where
         }
     };
 
-    // 并行获取元数据
-    let entries_with_meta: Vec<(PathBuf, Metadata)> = pool.install(|| {
-        raw_entries
-            .into_par_iter()
-            .filter_map(|entry| {
-                let entry_path = entry.path();
-                let meta = entry.metadata().ok()?;
-                Some((entry_path, meta))
-            })
-            .collect()
-    });
+    // 批量获取元数据
+    let entries_with_meta: Vec<(PathBuf, Metadata)> = raw_entries
+        .into_iter()
+        .filter_map(|entry| {
+            let entry_path = entry.path();
+            let meta = entry.metadata().ok()?;
+            Some((entry_path, meta))
+        })
+        .collect();
 
     // 过滤
     let mut filtered: Vec<(PathBuf, Metadata)> = entries_with_meta
@@ -1315,12 +1138,7 @@ where
         .collect();
 
     // 排序
-    sort_entries(
-        &mut filtered,
-        ctx.sort_key,
-        ctx.reverse,
-        ctx.dirs_first,
-    );
+    sort_entries(&mut filtered, ctx.sort_key, ctx.reverse, ctx.dirs_first);
 
     // 按序处理并回调
     let count = filtered.len();
@@ -1359,14 +1177,8 @@ where
             callback(StreamEvent::EnterDir { is_last })?;
 
             // 递归处理子目录
-            let (sub_dirs, sub_files) = streaming_scan_dir(
-                &entry_path,
-                depth + 1,
-                ctx,
-                &current_chain,
-                callback,
-                pool,
-            )?;
+            let (sub_dirs, sub_files) =
+                streaming_scan_dir(&entry_path, depth + 1, ctx, &current_chain, callback)?;
             dir_count += sub_dirs;
             file_count += sub_files;
 
@@ -1378,39 +1190,6 @@ where
     }
 
     Ok((dir_count, file_count))
-}
-
-// ============================================================================
-// 统一扫描入口
-// ============================================================================
-
-/// 执行目录扫描
-///
-/// 根据配置的线程数自动选择扫描模式：
-/// - 线程数为 1 时使用单线程模式
-/// - 否则使用多线程模式
-///
-/// # Errors
-///
-/// 返回 `TreeppError` 如果扫描过程中发生错误。
-///
-/// # Examples
-///
-/// ```no_run
-/// use std::path::PathBuf;
-/// use treepp::config::Config;
-/// use treepp::scan::scan;
-///
-/// let config = Config::with_root(PathBuf::from(".")).validate().unwrap();
-/// let stats = scan(&config).expect("扫描失败");
-/// println!("{} 个目录, {} 个文件", stats.directory_count, stats.file_count);
-/// ```
-pub fn scan(config: &Config) -> TreeppResult<ScanStats> {
-    if config.scan.thread_count.get() == 1 {
-        scan_walk(config)
-    } else {
-        scan_parallel(config)
-    }
 }
 
 // ============================================================================
@@ -2478,36 +2257,36 @@ mod tests {
     // ------------------------------------------------------------------------
 
     #[test]
-    fn test_scan_walk_basic() {
+    fn test_scan_basic() {
         let dir = setup_test_dir();
         let mut config = Config::with_root(dir.path().to_path_buf());
         config.scan.show_files = true;
 
-        let stats = scan_walk(&config).expect("扫描失败");
+        let stats = scan(&config).expect("扫描失败");
 
         assert_eq!(stats.directory_count, 3); // src, tests, empty
         assert_eq!(stats.file_count, 5); // Cargo.toml, README.md, main.rs, lib.rs, test.rs
     }
 
     #[test]
-    fn test_scan_walk_dirs_only() {
+    fn test_scan_dirs_only() {
         let dir = setup_test_dir();
         let config = Config::with_root(dir.path().to_path_buf());
 
-        let stats = scan_walk(&config).expect("扫描失败");
+        let stats = scan(&config).expect("扫描失败");
 
         assert_eq!(stats.directory_count, 3);
         assert_eq!(stats.file_count, 0);
     }
 
     #[test]
-    fn test_scan_walk_max_depth_zero() {
+    fn test_scan_max_depth_zero() {
         let dir = setup_test_dir();
         let mut config = Config::with_root(dir.path().to_path_buf());
         config.scan.show_files = true;
         config.scan.max_depth = Some(0);
 
-        let stats = scan_walk(&config).expect("扫描失败");
+        let stats = scan(&config).expect("扫描失败");
 
         // 深度 0 只包含根目录本身
         assert_eq!(stats.directory_count, 0);
@@ -2515,13 +2294,13 @@ mod tests {
     }
 
     #[test]
-    fn test_scan_walk_max_depth_one() {
+    fn test_scan_max_depth_one() {
         let dir = setup_test_dir();
         let mut config = Config::with_root(dir.path().to_path_buf());
         config.scan.show_files = true;
         config.scan.max_depth = Some(1);
 
-        let stats = scan_walk(&config).expect("扫描失败");
+        let stats = scan(&config).expect("扫描失败");
 
         // 深度 1 包含根目录下的直接子项
         assert_eq!(stats.directory_count, 3); // src, tests, empty
@@ -2529,57 +2308,57 @@ mod tests {
     }
 
     #[test]
-    fn test_scan_walk_with_prune() {
+    fn test_scan_with_prune() {
         let dir = setup_test_dir();
         let mut config = Config::with_root(dir.path().to_path_buf());
         config.scan.show_files = true;
         config.matching.prune_empty = true;
 
-        let stats = scan_walk(&config).expect("扫描失败");
+        let stats = scan(&config).expect("扫描失败");
 
         assert_eq!(stats.directory_count, 2); // src, tests (empty 被修剪)
     }
 
     #[test]
-    fn test_scan_walk_with_include() {
+    fn test_scan_with_include() {
         let dir = setup_test_dir();
         let mut config = Config::with_root(dir.path().to_path_buf());
         config.scan.show_files = true;
         config.matching.include_patterns = vec!["*.rs".to_string()];
 
-        let stats = scan_walk(&config).expect("扫描失败");
+        let stats = scan(&config).expect("扫描失败");
 
         assert_eq!(stats.file_count, 3); // main.rs, lib.rs, test.rs
     }
 
     #[test]
-    fn test_scan_walk_with_exclude() {
+    fn test_scan_with_exclude() {
         let dir = setup_test_dir();
         let mut config = Config::with_root(dir.path().to_path_buf());
         config.scan.show_files = true;
         config.matching.exclude_patterns = vec!["*.md".to_string()];
 
-        let stats = scan_walk(&config).expect("扫描失败");
+        let stats = scan(&config).expect("扫描失败");
 
         assert_eq!(stats.file_count, 4); // 不包含 README.md
         assert!(!has_node_with_name(&stats.tree, "README.md"));
     }
 
     #[test]
-    fn test_scan_walk_nonexistent_path() {
+    fn test_scan_nonexistent_path() {
         let config = Config::with_root(PathBuf::from("/nonexistent/path/12345"));
-        let result = scan_walk(&config);
+        let result = scan(&config);
         assert!(result.is_err());
     }
 
     #[test]
-    fn test_scan_walk_file_as_root() {
+    fn test_scan_file_as_root() {
         let dir = TempDir::new().unwrap();
         let file_path = dir.path().join("file.txt");
         File::create(&file_path).unwrap();
 
         let config = Config::with_root(file_path);
-        let result = scan_walk(&config);
+        let result = scan(&config);
         assert!(result.is_err());
     }
 
@@ -2588,13 +2367,13 @@ mod tests {
     // ------------------------------------------------------------------------
 
     #[test]
-    fn test_scan_walk_with_gitignore() {
+    fn test_scan_with_gitignore() {
         let dir = setup_gitignore_dir();
         let mut config = Config::with_root(dir.path().to_path_buf());
         config.scan.show_files = true;
         config.scan.respect_gitignore = true;
 
-        let stats = scan_walk(&config).expect("扫描失败");
+        let stats = scan(&config).expect("扫描失败");
 
         // target 目录和 .log 文件应被忽略
         assert!(!has_node_with_name(&stats.tree, "target"));
@@ -2605,13 +2384,13 @@ mod tests {
     }
 
     #[test]
-    fn test_scan_walk_without_gitignore() {
+    fn test_scan_without_gitignore() {
         let dir = setup_gitignore_dir();
         let mut config = Config::with_root(dir.path().to_path_buf());
         config.scan.show_files = true;
         config.scan.respect_gitignore = false;
 
-        let stats = scan_walk(&config).expect("扫描失败");
+        let stats = scan(&config).expect("扫描失败");
 
         // 不启用 gitignore 时，所有文件都应存在
         assert!(has_node_with_name(&stats.tree, "target"));
@@ -2619,13 +2398,13 @@ mod tests {
     }
 
     #[test]
-    fn test_scan_walk_nested_gitignore_inheritance() {
+    fn test_scan_nested_gitignore_inheritance() {
         let dir = setup_nested_gitignore_dir();
         let mut config = Config::with_root(dir.path().to_path_buf());
         config.scan.show_files = true;
         config.scan.respect_gitignore = true;
 
-        let stats = scan_walk(&config).expect("扫描失败");
+        let stats = scan(&config).expect("扫描失败");
 
         // 验证根目录规则生效：所有 *.tmp 被忽略
         assert!(!has_node_with_name(&stats.tree, "root.tmp"));
@@ -2650,48 +2429,92 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // 多线程扫描测试
+    // 不同线程数测试
     // ------------------------------------------------------------------------
 
     #[test]
-    fn test_scan_parallel_basic() {
+    fn test_scan_single_thread() {
         let dir = setup_test_dir();
         let mut config = Config::with_root(dir.path().to_path_buf());
         config.scan.show_files = true;
+        config.scan.thread_count = std::num::NonZeroUsize::new(1).unwrap();
 
-        let stats = scan_parallel(&config).expect("扫描失败");
+        let stats = scan(&config).expect("扫描失败");
 
         assert_eq!(stats.directory_count, 3);
         assert_eq!(stats.file_count, 5);
     }
 
     #[test]
-    fn test_scan_parallel_with_gitignore() {
-        let dir = setup_gitignore_dir();
+    fn test_scan_multi_thread() {
+        let dir = setup_test_dir();
         let mut config = Config::with_root(dir.path().to_path_buf());
         config.scan.show_files = true;
-        config.scan.respect_gitignore = true;
+        config.scan.thread_count = std::num::NonZeroUsize::new(4).unwrap();
 
-        let stats = scan_parallel(&config).expect("扫描失败");
+        let stats = scan(&config).expect("扫描失败");
 
-        assert!(!has_node_with_name(&stats.tree, "target"));
-        assert!(!has_node_with_name(&stats.tree, "app.log"));
+        assert_eq!(stats.directory_count, 3);
+        assert_eq!(stats.file_count, 5);
     }
 
     #[test]
-    fn test_scan_parallel_nested_gitignore() {
+    fn test_scan_thread_count_consistency() {
+        let dir = setup_test_dir();
+
+        let mut config1 = Config::with_root(dir.path().to_path_buf());
+        config1.scan.show_files = true;
+        config1.scan.thread_count = std::num::NonZeroUsize::new(1).unwrap();
+
+        let mut config4 = Config::with_root(dir.path().to_path_buf());
+        config4.scan.show_files = true;
+        config4.scan.thread_count = std::num::NonZeroUsize::new(4).unwrap();
+
+        let mut config8 = Config::with_root(dir.path().to_path_buf());
+        config8.scan.show_files = true;
+        config8.scan.thread_count = std::num::NonZeroUsize::new(8).unwrap();
+
+        let stats1 = scan(&config1).expect("单线程扫描失败");
+        let stats4 = scan(&config4).expect("4线程扫描失败");
+        let stats8 = scan(&config8).expect("8线程扫描失败");
+
+        // 所有线程数配置应产生相同结果
+        assert_eq!(stats1.file_count, stats4.file_count);
+        assert_eq!(stats4.file_count, stats8.file_count);
+        assert_eq!(stats1.directory_count, stats4.directory_count);
+        assert_eq!(stats4.directory_count, stats8.directory_count);
+
+        // 验证名称集合一致
+        let names1 = collect_names(&stats1.tree);
+        let names4 = collect_names(&stats4.tree);
+        let names8 = collect_names(&stats8.tree);
+        assert_eq!(names1, names4);
+        assert_eq!(names4, names8);
+    }
+
+    #[test]
+    fn test_scan_with_gitignore_thread_consistency() {
         let dir = setup_nested_gitignore_dir();
-        let mut config = Config::with_root(dir.path().to_path_buf());
-        config.scan.show_files = true;
-        config.scan.respect_gitignore = true;
 
-        let stats = scan_parallel(&config).expect("扫描失败");
+        let mut config1 = Config::with_root(dir.path().to_path_buf());
+        config1.scan.show_files = true;
+        config1.scan.respect_gitignore = true;
+        config1.scan.thread_count = std::num::NonZeroUsize::new(1).unwrap();
 
-        // 验证嵌套规则生效
-        assert!(!has_node_with_name(&stats.tree, "l3.tmp"));
-        assert!(!has_node_with_name(&stats.tree, "l3.bak"));
-        assert!(!has_node_with_name(&stats.tree, "l3.cache"));
-        assert!(has_node_with_name(&stats.tree, "l3.txt"));
+        let mut config8 = Config::with_root(dir.path().to_path_buf());
+        config8.scan.show_files = true;
+        config8.scan.respect_gitignore = true;
+        config8.scan.thread_count = std::num::NonZeroUsize::new(8).unwrap();
+
+        let stats1 = scan(&config1).expect("单线程扫描失败");
+        let stats8 = scan(&config8).expect("8线程扫描失败");
+
+        assert_eq!(stats1.file_count, stats8.file_count);
+        assert_eq!(stats1.directory_count, stats8.directory_count);
+
+        let names1 = collect_names(&stats1.tree);
+        let names8 = collect_names(&stats8.tree);
+        assert_eq!(names1, names8);
     }
 
     // ------------------------------------------------------------------------
@@ -2858,8 +2681,7 @@ mod tests {
         })
             .expect("流式扫描失败");
 
-        // 深度 1 应该包含根目录下的直接子项和它们的直接子项
-        // 但不包含更深层的
+        // 深度 1 应该包含根目录下的直接子项
         assert_eq!(stats.directory_count, 3);
         assert_eq!(stats.file_count, 2);
     }
@@ -2935,136 +2757,6 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // 单线程与多线程一致性测试
-    // ------------------------------------------------------------------------
-
-    #[test]
-    fn test_scan_walk_parallel_consistency_basic() {
-        let dir = setup_test_dir();
-        let mut config = Config::with_root(dir.path().to_path_buf());
-        config.scan.show_files = true;
-
-        let walk_stats = scan_walk(&config).expect("walk 扫描失败");
-        let parallel_stats = scan_parallel(&config).expect("parallel 扫描失败");
-
-        assert_eq!(walk_stats.directory_count, parallel_stats.directory_count);
-        assert_eq!(walk_stats.file_count, parallel_stats.file_count);
-
-        let walk_names = collect_names(&walk_stats.tree);
-        let parallel_names = collect_names(&parallel_stats.tree);
-        assert_eq!(walk_names, parallel_names);
-    }
-
-    #[test]
-    fn test_scan_walk_parallel_consistency_with_gitignore() {
-        let dir = setup_gitignore_dir();
-        let mut config = Config::with_root(dir.path().to_path_buf());
-        config.scan.show_files = true;
-        config.scan.respect_gitignore = true;
-
-        let walk_stats = scan_walk(&config).expect("walk 扫描失败");
-        let parallel_stats = scan_parallel(&config).expect("parallel 扫描失败");
-
-        assert_eq!(walk_stats.directory_count, parallel_stats.directory_count);
-        assert_eq!(walk_stats.file_count, parallel_stats.file_count);
-
-        let walk_names = collect_names(&walk_stats.tree);
-        let parallel_names = collect_names(&parallel_stats.tree);
-        assert_eq!(walk_names, parallel_names);
-    }
-
-    #[test]
-    fn test_scan_walk_parallel_consistency_nested_gitignore() {
-        let dir = setup_nested_gitignore_dir();
-        let mut config = Config::with_root(dir.path().to_path_buf());
-        config.scan.show_files = true;
-        config.scan.respect_gitignore = true;
-
-        let walk_stats = scan_walk(&config).expect("walk 扫描失败");
-        let parallel_stats = scan_parallel(&config).expect("parallel 扫描失败");
-
-        // 验证计数一致
-        assert_eq!(
-            walk_stats.directory_count, parallel_stats.directory_count,
-            "目录数量不一致"
-        );
-        assert_eq!(
-            walk_stats.file_count, parallel_stats.file_count,
-            "文件数量不一致"
-        );
-
-        // 验证结构一致
-        let walk_names = collect_names(&walk_stats.tree);
-        let parallel_names = collect_names(&parallel_stats.tree);
-        assert_eq!(walk_names, parallel_names, "节点名称集合不一致");
-    }
-
-    #[test]
-    fn test_scan_walk_parallel_consistency_with_filters() {
-        let dir = setup_test_dir();
-        let mut config = Config::with_root(dir.path().to_path_buf());
-        config.scan.show_files = true;
-        config.matching.include_patterns = vec!["*.rs".to_string()];
-        config.matching.prune_empty = true;
-
-        let walk_stats = scan_walk(&config).expect("walk 扫描失败");
-        let parallel_stats = scan_parallel(&config).expect("parallel 扫描失败");
-
-        assert_eq!(walk_stats.file_count, parallel_stats.file_count);
-
-        let walk_names = collect_names(&walk_stats.tree);
-        let parallel_names = collect_names(&parallel_stats.tree);
-        assert_eq!(walk_names, parallel_names);
-    }
-
-    // ------------------------------------------------------------------------
-    // 统一入口测试
-    // ------------------------------------------------------------------------
-
-    #[test]
-    fn test_unified_scan_selects_walk_for_single_thread() {
-        let dir = setup_test_dir();
-        let mut config = Config::with_root(dir.path().to_path_buf());
-        config.scan.show_files = true;
-        config.scan.thread_count = std::num::NonZeroUsize::new(1).unwrap();
-
-        let stats = scan(&config).expect("扫描失败");
-
-        assert_eq!(stats.file_count, 5);
-    }
-
-    #[test]
-    fn test_unified_scan_selects_parallel_for_multi_thread() {
-        let dir = setup_test_dir();
-        let mut config = Config::with_root(dir.path().to_path_buf());
-        config.scan.show_files = true;
-        config.scan.thread_count = std::num::NonZeroUsize::new(4).unwrap();
-
-        let stats = scan(&config).expect("扫描失败");
-
-        assert_eq!(stats.file_count, 5);
-    }
-
-    #[test]
-    fn test_unified_scan_consistency() {
-        let dir = setup_test_dir();
-
-        let mut config1 = Config::with_root(dir.path().to_path_buf());
-        config1.scan.show_files = true;
-        config1.scan.thread_count = std::num::NonZeroUsize::new(1).unwrap();
-
-        let mut config8 = Config::with_root(dir.path().to_path_buf());
-        config8.scan.show_files = true;
-        config8.scan.thread_count = std::num::NonZeroUsize::new(8).unwrap();
-
-        let stats1 = scan(&config1).expect("单线程扫描失败");
-        let stats8 = scan(&config8).expect("多线程扫描失败");
-
-        assert_eq!(stats1.file_count, stats8.file_count);
-        assert_eq!(stats1.directory_count, stats8.directory_count);
-    }
-
-    // ------------------------------------------------------------------------
     // 边界条件测试
     // ------------------------------------------------------------------------
 
@@ -3074,7 +2766,7 @@ mod tests {
         let mut config = Config::with_root(dir.path().to_path_buf());
         config.scan.show_files = true;
 
-        let stats = scan_walk(&config).expect("扫描失败");
+        let stats = scan(&config).expect("扫描失败");
 
         assert_eq!(stats.directory_count, 0);
         assert_eq!(stats.file_count, 0);
@@ -3088,7 +2780,7 @@ mod tests {
         let mut config = Config::with_root(dir.path().to_path_buf());
         config.scan.show_files = true;
 
-        let stats = scan_walk(&config).expect("扫描失败");
+        let stats = scan(&config).expect("扫描失败");
 
         assert_eq!(stats.file_count, 1);
     }
@@ -3109,7 +2801,7 @@ mod tests {
         let mut config = Config::with_root(root.to_path_buf());
         config.scan.show_files = true;
 
-        let stats = scan_walk(&config).expect("扫描失败");
+        let stats = scan(&config).expect("扫描失败");
 
         assert_eq!(stats.directory_count, 5);
         assert_eq!(stats.file_count, 1);
@@ -3129,7 +2821,7 @@ mod tests {
         config.matching.include_patterns = vec!["*.rs".to_string()];
         config.matching.ignore_case = true;
 
-        let stats = scan_walk(&config).expect("扫描失败");
+        let stats = scan(&config).expect("扫描失败");
 
         assert_eq!(stats.file_count, 1);
         assert!(has_node_with_name(&stats.tree, "Test.RS"));
@@ -3144,7 +2836,7 @@ mod tests {
         let dir = setup_test_dir();
         let config = Config::with_root(dir.path().to_path_buf());
 
-        let stats = scan_walk(&config).expect("扫描失败");
+        let stats = scan(&config).expect("扫描失败");
 
         // 扫描应该花费一些时间（虽然可能很短）
         assert!(stats.duration.as_nanos() > 0);
@@ -3156,7 +2848,7 @@ mod tests {
         let mut config = Config::with_root(dir.path().to_path_buf());
         config.scan.show_files = true;
 
-        let stats = scan_walk(&config).expect("扫描失败");
+        let stats = scan(&config).expect("扫描失败");
 
         // 验证统计信息与树结构一致
         assert_eq!(stats.directory_count, stats.tree.count_directories());

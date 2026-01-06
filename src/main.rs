@@ -125,9 +125,6 @@ fn print_error(err: &TreeppError) {
         TreeppError::Cli(CliError::UnknownOption { .. }) => {
             eprintln!("提示: 使用 treepp --help 查看可用选项");
         }
-        TreeppError::Cli(CliError::PathAfterOptions { .. }) => {
-            eprintln!("提示: 路径参数必须在所有选项之前，例如: treepp C:\\dir /F");
-        }
         TreeppError::Cli(CliError::MultiplePaths { .. }) => {
             eprintln!("提示: 只能指定一个目标路径");
         }

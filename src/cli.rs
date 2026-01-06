@@ -307,7 +307,7 @@ struct MatchedArg {
 ///
 /// # 路径位置规则
 ///
-/// 路径参数必须出现在所有选项之前，这与 Windows 原生 `tree` 命令行为一致。
+/// 路径参数可以出现在任意位置，包括选项之前、之后或之间。
 ///
 /// # Examples
 ///
@@ -327,10 +327,6 @@ pub struct CliParser {
     position: usize,
     /// 已使用的规范名称集合（用于重复检测）
     seen_canonical_names: HashSet<String>,
-    /// 是否已遇到选项（用于检测路径位置）
-    has_seen_option: bool,
-    /// 第一个遇到的选项（用于错误消息）
-    first_option: Option<String>,
 }
 
 impl CliParser {
@@ -353,8 +349,6 @@ impl CliParser {
             args,
             position: 0,
             seen_canonical_names: HashSet::new(),
-            has_seen_option: false,
-            first_option: None,
         }
     }
 
@@ -382,9 +376,10 @@ impl CliParser {
     ///
     /// # 路径位置规则
     ///
-    /// 路径参数必须出现在所有选项之前。例如：
+    /// 路径参数可以出现在任意位置。例如：
     /// - `treepp C:\dir /F` ✓ 正确
-    /// - `treepp /F C:\dir` ✗ 错误
+    /// - `treepp /F C:\dir` ✓ 正确
+    /// - `treepp /F C:\dir --ascii` ✓ 正确
     ///
     /// # 返回值
     ///
@@ -396,7 +391,6 @@ impl CliParser {
     /// - `CliError::MissingValue` - 需要值的参数缺少值
     /// - `CliError::InvalidValue` - 参数值无效
     /// - `CliError::DuplicateOption` - 参数重复
-    /// - `CliError::PathAfterOptions` - 路径出现在选项之后
     /// - `CliError::MultiplePaths` - 指定了多个路径
     ///
     /// # Examples
@@ -425,12 +419,6 @@ impl CliParser {
             if Self::is_option_like(&current_arg) {
                 let matched = self.try_match_argument(&current_arg)?;
 
-                // 记录第一个选项（用于错误消息）
-                if !self.has_seen_option {
-                    self.has_seen_option = true;
-                    self.first_option = Some(current_arg.clone());
-                }
-
                 // 非累积参数才检查重复
                 if !ACCUMULATIVE_OPTIONS.contains(&matched.definition.canonical) {
                     self.register_canonical_name(matched.definition.canonical)?;
@@ -446,14 +434,7 @@ impl CliParser {
                     return Ok(ParseResult::Version);
                 }
             } else {
-                // 非选项参数视为路径
-                // 检查路径是否出现在选项之后
-                if self.has_seen_option {
-                    return Err(CliError::PathAfterOptions {
-                        path: current_arg,
-                        after_option: self.first_option.clone().unwrap_or_default(),
-                    });
-                }
+                // 非选项参数视为路径，直接收集
                 collected_paths.push(current_arg);
             }
 
@@ -1754,47 +1735,6 @@ mod tests {
     // ------------------------------------------------------------------------
     // 路径位置测试
     // ------------------------------------------------------------------------
-
-    #[test]
-    fn should_accept_path_before_options() {
-        let temp_dir = create_temp_dir();
-        let path_str = temp_dir.path().to_string_lossy().to_string();
-
-        let parser = CliParser::new(vec![path_str.clone(), "/F".to_string()]);
-        let result = parser.parse();
-
-        assert!(result.is_ok(), "路径在选项之前应该成功: {:?}", result);
-    }
-
-    #[test]
-    fn should_fail_path_after_options() {
-        let parser = CliParser::new(vec!["/F".to_string(), "C:\\some\\path".to_string()]);
-        let result = parser.parse();
-
-        assert!(matches!(result, Err(CliError::PathAfterOptions { .. })));
-
-        if let Err(CliError::PathAfterOptions { path, after_option }) = result {
-            assert_eq!(path, "C:\\some\\path");
-            assert_eq!(after_option, "/F");
-        }
-    }
-
-    #[test]
-    fn should_fail_path_after_multiple_options() {
-        let parser = CliParser::new(vec![
-            "/F".to_string(),
-            "-a".to_string(),
-            "C:\\some\\path".to_string(),
-        ]);
-        let result = parser.parse();
-
-        assert!(matches!(result, Err(CliError::PathAfterOptions { .. })));
-
-        if let Err(CliError::PathAfterOptions { after_option, .. }) = result {
-            // 第一个选项应该被记录
-            assert_eq!(after_option, "/F");
-        }
-    }
 
     #[test]
     fn should_fail_multiple_paths() {
