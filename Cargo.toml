@@ -13,31 +13,31 @@ categories = ["command-line-utilities", "filesystem"]
 [dependencies]
 
 # 并行遍历
-rayon = "1.10"
+rayon = "1.11.0"
 
 # 目录遍历
-walkdir = "2.5"
+walkdir = "2.5.0"
 
 # gitignore 规则解析
-ignore = "0.4"
+ignore = "0.4.25"
 
 # 通配符匹配
-glob = "0.3"
+glob = "0.3.3"
 
 # 序列化支持 (json/yaml/toml 输出)
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-serde_yaml = "0.9"
-toml = "0.8"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.148"
+serde_yaml = "0.9.34"
+toml = "0.9.10"
 
 # 错误处理
-thiserror = "2.0"
+thiserror = "2.0.17"
 
-# 跨平台路径处理
-dunce = "1.0"
+# Windows 编码转换
+encoding_rs = "0.8"
 
 [dev-dependencies]
-tempfile = "3.14"
+tempfile = "3.24.0"
 
 [profile.release]
 opt-level = 3

@@ -10,20 +10,19 @@
 //! - **Windows 样板**：默认显示系统卷信息，`/NB` 禁止
 //!
 //! 作者: WaterRun
-//! 更新于: 2025-01-05
+//! 更新于: 2025-01-06
 
 #![forbid(unsafe_code)]
 
 use std::fmt::Write as FmtWrite;
+use std::fs;
 use std::path::Path;
+use std::process::Command;
+use std::sync::OnceLock;
 use std::time::SystemTime;
 
-#[cfg(windows)]
-use std::fs;
-#[cfg(windows)]
-use std::process::Command;
-
 use crate::config::{CharsetMode, Config, PathMode};
+use crate::error::RenderError;
 use crate::scan::{EntryKind, ScanStats, TreeNode};
 
 // ============================================================================
@@ -31,26 +30,21 @@ use crate::scan::{EntryKind, ScanStats, TreeNode};
 // ============================================================================
 
 /// Windows tree++ 样板信息目录路径
-#[cfg(windows)]
-const TREEPP_BANNER_DIR: &str = r"C:\__treepp__";
+const TREEPP_BANNER_DIR: &str = r"C:\__tree++__";
 
 /// Windows tree++ 样板信息文件名
-#[cfg(windows)]
 const TREEPP_BANNER_FILE: &str = "tree++.txt";
 
 /// 样板文件内容提示
-#[cfg(windows)]
-const TREEPP_BANNER_FILE_CONTENT: &str =
-    "This file is used by tree++ to obtain Windows tree command banner information.";
+const TREEPP_BANNER_FILE_CONTENT: &str = r#"This directory is automatically created by tree++ to align with the native Windows tree command's banner (boilerplate) output.
 
-/// 默认卷名 (回退值)
-const DEFAULT_VOLUME_NAME: &str = "Local Disk";
+You may safely delete this directory. If you do not want tree++ to create it, use the /NB option when running tree++.
 
-/// 默认卷序列号 (回退值)
-const DEFAULT_VOLUME_SERIAL: &str = "0000-0000";
+GitHub: https://github.com/Water-Run/treepp
+"#;
 
-/// 默认无子文件夹提示 (回退值)
-const DEFAULT_NO_SUBFOLDER: &str = "No subfolders exist";
+/// 全局缓存的 Windows 样板信息
+static CACHED_BANNER: OnceLock<Result<WinBanner, String>> = OnceLock::new();
 
 // ============================================================================
 // Windows 样板信息
@@ -59,17 +53,18 @@ const DEFAULT_NO_SUBFOLDER: &str = "No subfolders exist";
 /// Windows tree 命令样板信息
 ///
 /// 包含从 Windows 原生 tree 命令提取的样板信息。
+/// 通过在 `C:\__tree++__` 目录执行 `tree` 命令获取系统本地化的样板文本。
 ///
-/// # Examples
+/// # 输出格式
 ///
+/// Windows `tree` 命令输出固定为 4 行：
+/// ```text
+/// 卷 系统 的文件夹 PATH 列表      <- 第1行: volume_line
+/// 卷序列号为 2810-11C7            <- 第2行: serial_line
+/// C:.                             <- 第3行: 当前目录（忽略）
+/// 没有子文件夹                    <- 第4行: no_subfolder
 /// ```
-/// use treepp::render::WinBanner;
-///
-/// let banner = WinBanner::default();
-/// assert!(!banner.volume_line.is_empty());
-/// assert!(!banner.serial_line.is_empty());
-/// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WinBanner {
     /// 卷信息行 (如 "卷 系统 的文件夹 PATH 列表")
     pub volume_line: String,
@@ -79,102 +74,116 @@ pub struct WinBanner {
     pub no_subfolder: String,
 }
 
-impl Default for WinBanner {
-    fn default() -> Self {
-        Self {
-            volume_line: format!("卷 {} 的文件夹 PATH 列表", DEFAULT_VOLUME_NAME),
-            serial_line: format!("卷序列号为 {}", DEFAULT_VOLUME_SERIAL),
-            no_subfolder: DEFAULT_NO_SUBFOLDER.to_string(),
-        }
-    }
-}
-
 impl WinBanner {
-    /// 从 Windows tree 命令获取样板信息
+    /// 获取 Windows 样板信息（带缓存）
+    ///
+    /// 首次调用时从系统获取，后续调用返回缓存结果。
+    ///
+    /// # Errors
+    ///
+    /// 返回 `RenderError::BannerFetchFailed` 如果：
+    /// - 无法创建样板目录
+    /// - 无法执行 tree 命令
+    /// - tree 输出行数不足
+    pub fn get_cached() -> Result<&'static WinBanner, RenderError> {
+        CACHED_BANNER
+            .get_or_init(|| Self::fetch_from_system().map_err(|e| e.to_string()))
+            .as_ref()
+            .map_err(|reason| RenderError::BannerFetchFailed {
+                reason: reason.clone(),
+            })
+    }
+
+    /// 直接从系统获取样板信息（不使用缓存）
     ///
     /// 此方法会执行以下操作：
-    /// 1. 确保 `C:\__treepp__` 目录存在
+    /// 1. 确保 `C:\__tree++__` 目录存在
     /// 2. 确保 `tree++.txt` 文件存在
-    /// 3. 执行 `tree /f` 命令获取输出
-    /// 4. 解析输出提取样板信息
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// use treepp::render::WinBanner;
-    ///
-    /// let banner = WinBanner::from_system();
-    /// println!("Volume: {}", banner.volume_line);
-    /// println!("Serial: {}", banner.serial_line);
-    /// ```
-    #[cfg(windows)]
-    #[must_use]
-    pub fn from_system() -> Self {
-        Self::fetch_from_tree_command().unwrap_or_default()
-    }
-
-    /// 非 Windows 平台的回退实现
-    #[cfg(not(windows))]
-    #[must_use]
-    pub fn from_system() -> Self {
-        Self::default()
+    /// 3. 在该目录下执行 `tree` 命令（无参数）
+    /// 4. 提取输出的第1行、第2行、最后一行
+    pub fn fetch() -> Result<Self, RenderError> {
+        Self::fetch_from_system()
     }
 
     /// 从 tree 命令获取样板信息的内部实现
-    #[cfg(windows)]
-    fn fetch_from_tree_command() -> std::io::Result<Self> {
+    fn fetch_from_system() -> Result<Self, RenderError> {
         let dir_path = Path::new(TREEPP_BANNER_DIR);
         let file_path = dir_path.join(TREEPP_BANNER_FILE);
 
         // 确保目录存在
         if !dir_path.exists() {
-            fs::create_dir_all(dir_path)?;
+            fs::create_dir_all(dir_path).map_err(|e| RenderError::BannerFetchFailed {
+                reason: format!("无法创建目录 {}: {}", TREEPP_BANNER_DIR, e),
+            })?;
         }
 
-        // 确保样板文件存在
+        // 确保样板文件存在（用于标识此目录用途）
         if !file_path.exists() {
-            fs::write(&file_path, TREEPP_BANNER_FILE_CONTENT)?;
+            fs::write(&file_path, TREEPP_BANNER_FILE_CONTENT).map_err(|e| {
+                RenderError::BannerFetchFailed {
+                    reason: format!("无法创建文件 {}: {}", file_path.display(), e),
+                }
+            })?;
         }
 
-        // 执行 tree /f 命令
+        // 在 C:\__tree++__ 目录下执行 tree 命令（无参数）
         let output = Command::new("cmd")
-            .args(["/C", "chcp 65001 >nul && tree /f"])
+            .args(["/C", "tree"])
             .current_dir(dir_path)
-            .output()?;
+            .output()
+            .map_err(|e| RenderError::BannerFetchFailed {
+                reason: format!("执行 tree 命令失败: {}", e),
+            })?;
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
+        if !output.status.success() {
+            return Err(RenderError::BannerFetchFailed {
+                reason: format!("tree 命令返回错误码: {:?}", output.status.code()),
+            });
+        }
+
+        // 解码 GBK 输出
+        let stdout = Self::decode_system_output(&output.stdout)?;
+
         Self::parse_tree_output(&stdout)
     }
 
+    /// 解码系统输出（处理 Windows GBK/CP936 编码）
+    fn decode_system_output(bytes: &[u8]) -> Result<String, RenderError> {
+        let (decoded, _, had_errors) = encoding_rs::GBK.decode(bytes);
+
+        if had_errors {
+            match std::str::from_utf8(bytes) {
+                Ok(s) => Ok(s.to_string()),
+                Err(_) => Ok(String::from_utf8_lossy(bytes).into_owned()),
+            }
+        } else {
+            Ok(decoded.into_owned())
+        }
+    }
+
     /// 解析 tree 命令输出
-    fn parse_tree_output(output: &str) -> std::io::Result<Self> {
+    ///
+    /// 直接提取第1行、第2行、最后一行，无需关键字匹配。
+    fn parse_tree_output(output: &str) -> Result<Self, RenderError> {
         let lines: Vec<&str> = output.lines().collect();
 
-        if lines.len() < 2 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Tree output too short",
-            ));
+        // tree 输出至少需要 4 行
+        if lines.len() < 4 {
+            return Err(RenderError::BannerFetchFailed {
+                reason: format!(
+                    "tree 输出行数不足，期望至少 4 行，实际 {} 行:\n{}",
+                    lines.len(),
+                    output
+                ),
+            });
         }
 
-        let volume_line = lines
-            .iter()
-            .find(|l| l.contains("卷") && l.contains("PATH"))
-            .or_else(|| lines.iter().find(|l| l.contains("Volume") && l.contains("PATH")))
-            .map(|s| s.trim().to_string())
-            .unwrap_or_else(|| format!("卷 {} 的文件夹 PATH 列表", DEFAULT_VOLUME_NAME));
-
-        let serial_line = lines
-            .iter()
-            .find(|l| l.contains("卷序列号") || l.contains("Serial"))
-            .map(|s| s.trim().to_string())
-            .unwrap_or_else(|| format!("卷序列号为 {}", DEFAULT_VOLUME_SERIAL));
-
-        let no_subfolder = lines
-            .iter()
-            .find(|l| l.contains("没有子文件夹") || l.contains("No subfolders"))
-            .map(|s| s.trim().to_string())
-            .unwrap_or_else(|| DEFAULT_NO_SUBFOLDER.to_string());
+        // 第1行: 卷信息
+        let volume_line = lines[0].trim().to_string();
+        // 第2行: 序列号
+        let serial_line = lines[1].trim().to_string();
+        // 最后一行: 无子文件夹提示
+        let no_subfolder = lines[lines.len() - 1].trim().to_string();
 
         Ok(Self {
             volume_line,
@@ -184,20 +193,8 @@ impl WinBanner {
     }
 
     /// 从字符串解析样板信息（用于测试）
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use treepp::render::WinBanner;
-    ///
-    /// let output = "卷 系统 的文件夹 PATH 列表\n卷序列号为 2810-11C7\nC:.\n没有子文件夹";
-    /// let banner = WinBanner::parse(output);
-    /// assert!(banner.volume_line.contains("系统"));
-    /// assert!(banner.serial_line.contains("2810-11C7"));
-    /// ```
-    #[must_use]
-    pub fn parse(output: &str) -> Self {
-        Self::parse_tree_output(output).unwrap_or_default()
+    pub fn parse(output: &str) -> Result<Self, RenderError> {
+        Self::parse_tree_output(output)
     }
 }
 
@@ -206,22 +203,6 @@ impl WinBanner {
 // ============================================================================
 
 /// 渲染结果
-///
-/// 包含渲染后的文本内容和统计信息。
-///
-/// # Examples
-///
-/// ```
-/// use treepp::render::RenderResult;
-///
-/// let result = RenderResult {
-///     content: "tree output".to_string(),
-///     directory_count: 5,
-///     file_count: 10,
-/// };
-/// assert_eq!(result.directory_count, 5);
-/// assert_eq!(result.file_count, 10);
-/// ```
 #[derive(Debug, Clone)]
 pub struct RenderResult {
     /// 渲染后的文本内容
@@ -273,18 +254,6 @@ impl TreeChars {
 // ============================================================================
 
 /// 格式化文件大小为人类可读形式
-///
-/// # Examples
-///
-/// ```
-/// use treepp::render::format_size_human;
-///
-/// assert_eq!(format_size_human(0), "0 B");
-/// assert_eq!(format_size_human(512), "512 B");
-/// assert_eq!(format_size_human(1024), "1.0 KB");
-/// assert_eq!(format_size_human(1536), "1.5 KB");
-/// assert_eq!(format_size_human(1048576), "1.0 MB");
-/// ```
 #[must_use]
 pub fn format_size_human(size: u64) -> String {
     const KB: u64 = 1024;
@@ -306,18 +275,6 @@ pub fn format_size_human(size: u64) -> String {
 }
 
 /// 格式化 SystemTime 为日期时间字符串
-///
-/// # Examples
-///
-/// ```
-/// use std::time::SystemTime;
-/// use treepp::render::format_datetime;
-///
-/// let now = SystemTime::now();
-/// let formatted = format_datetime(&now);
-/// // 格式: "YYYY-MM-DD HH:MM:SS"
-/// assert!(formatted.len() >= 19);
-/// ```
 #[must_use]
 pub fn format_datetime(time: &SystemTime) -> String {
     use std::time::UNIX_EPOCH;
@@ -325,8 +282,6 @@ pub fn format_datetime(time: &SystemTime) -> String {
     let duration = time.duration_since(UNIX_EPOCH).unwrap_or_default();
     let secs = duration.as_secs();
 
-    // 简单的日期时间计算（不考虑时区，使用 UTC）
-    // 更精确的实现应使用 chrono 等库，但为保持依赖最小化，这里使用简单实现
     let days = secs / 86400;
     let time_of_day = secs % 86400;
 
@@ -334,7 +289,6 @@ pub fn format_datetime(time: &SystemTime) -> String {
     let minutes = (time_of_day % 3600) / 60;
     let seconds = time_of_day % 60;
 
-    // 从 1970-01-01 计算日期
     let (year, month, day) = days_to_ymd(days);
 
     format!(
@@ -345,7 +299,6 @@ pub fn format_datetime(time: &SystemTime) -> String {
 
 /// 将天数转换为年月日
 fn days_to_ymd(days: u64) -> (i32, u32, u32) {
-    // 简化的日期计算，从 1970-01-01 开始
     let mut remaining_days = days as i64;
     let mut year = 1970i32;
 
@@ -438,45 +391,31 @@ fn format_entry_meta(node: &TreeNode, config: &Config) -> String {
 // ============================================================================
 
 /// 渲染树形结构为文本
-///
-/// 这是主要的渲染入口函数，根据配置将 `TreeNode` 渲染为文本树。
-///
-/// # 参数
-///
-/// * `stats` - 扫描统计结果，包含根节点和统计信息
-/// * `config` - 渲染配置
-///
-/// # 返回值
-///
-/// 返回 `RenderResult`，包含渲染后的文本和统计信息。
-///
-/// # Examples
-///
-/// ```no_run
-/// use std::path::PathBuf;
-/// use treepp::config::Config;
-/// use treepp::scan::scan;
-/// use treepp::render::render;
-///
-/// let config = Config::with_root(PathBuf::from(".")).validate().unwrap();
-/// let stats = scan(&config).expect("扫描失败");
-/// let result = render(&stats, &config);
-/// println!("{}", result.content);
-/// ```
 #[must_use]
 pub fn render(stats: &ScanStats, config: &Config) -> RenderResult {
     let mut output = String::new();
     let chars = TreeChars::from_charset(config.render.charset);
 
-    // 获取根路径显示
     let root_path = config.root_path.to_string_lossy();
 
     // Windows 样板头信息
-    if !config.render.no_win_banner {
-        let banner = WinBanner::from_system();
-        output.push_str(&banner.volume_line);
+    let banner = if config.render.no_win_banner {
+        None
+    } else {
+        match WinBanner::get_cached() {
+            Ok(b) => Some(b),
+            Err(e) => {
+                let _ = writeln!(output, "警告: {}", e);
+                None
+            }
+        }
+    };
+
+    // 输出样板头
+    if let Some(b) = &banner {
+        output.push_str(&b.volume_line);
         output.push('\n');
-        output.push_str(&banner.serial_line);
+        output.push_str(&b.serial_line);
         output.push('\n');
     }
 
@@ -491,12 +430,13 @@ pub fn render(stats: &ScanStats, config: &Config) -> RenderResult {
         render_children(&mut output, &stats.tree, &chars, config, "");
     }
 
-    // 无子目录提示（仅在启用 banner 且无子目录时显示）
-    if !config.render.no_win_banner && stats.directory_count == 0 {
-        let banner = WinBanner::from_system();
-        output.push('\n');
-        output.push_str(&banner.no_subfolder);
-        output.push('\n');
+    // 无子目录提示
+    if let Some(b) = &banner {
+        if stats.directory_count == 0 {
+            output.push('\n');
+            output.push_str(&b.no_subfolder);
+            output.push('\n');
+        }
     }
 
     // gitignore 提示
@@ -582,46 +522,26 @@ fn render_children_no_indent(output: &mut String, node: &TreeNode, config: &Conf
 }
 
 /// 获取过滤后的子节点列表
-///
-/// 根据配置过滤子节点：
-/// - 如果不显示文件，则只保留目录
-/// - 如果启用 prune，则排除空目录
 fn get_filtered_children<'a>(node: &'a TreeNode, config: &Config) -> Vec<&'a TreeNode> {
     node.children
         .iter()
         .filter(|c| config.scan.show_files || c.kind == EntryKind::Directory)
-        .filter(|c| !config.matching.prune_empty || c.kind != EntryKind::Directory || !c.is_empty_dir())
+        .filter(|c| {
+            !config.matching.prune_empty || c.kind != EntryKind::Directory || !c.is_empty_dir()
+        })
         .collect()
 }
 
 /// 仅渲染树形文本，不包含 banner 和统计信息
-///
-/// 此函数用于需要纯净树形输出的场景。
-///
-/// # Examples
-///
-/// ```no_run
-/// use std::path::PathBuf;
-/// use treepp::config::Config;
-/// use treepp::scan::scan;
-/// use treepp::render::render_tree_only;
-///
-/// let config = Config::with_root(PathBuf::from(".")).validate().unwrap();
-/// let stats = scan(&config).expect("扫描失败");
-/// let tree_text = render_tree_only(&stats.tree, &config);
-/// println!("{}", tree_text);
-/// ```
 #[must_use]
 pub fn render_tree_only(node: &TreeNode, config: &Config) -> String {
     let mut output = String::new();
     let chars = TreeChars::from_charset(config.render.charset);
 
-    // 根节点名称
     let root_name = format_entry_name(node, config);
     let root_meta = format_entry_meta(node, config);
     let _ = writeln!(output, "{root_name}{root_meta}");
 
-    // 渲染子节点
     if config.render.no_indent {
         render_children_no_indent(&mut output, node, config, 0);
     } else {
@@ -650,14 +570,12 @@ mod tests {
             EntryMetadata::default(),
         );
 
-        // 添加子目录
         let mut src = TreeNode::new(
             PathBuf::from("test_root/src"),
             EntryKind::Directory,
             EntryMetadata::default(),
         );
 
-        // 添加文件
         src.children.push(TreeNode::new(
             PathBuf::from("test_root/src/main.rs"),
             EntryKind::File,
@@ -678,7 +596,6 @@ mod tests {
 
         root.children.push(src);
 
-        // 根目录文件
         root.children.push(TreeNode::new(
             PathBuf::from("test_root/Cargo.toml"),
             EntryKind::File,
@@ -691,7 +608,6 @@ mod tests {
         root
     }
 
-    /// 创建测试用的 ScanStats
     fn create_test_stats(tree: TreeNode) -> ScanStats {
         let directory_count = tree.count_directories();
         let file_count = tree.count_files();
@@ -703,6 +619,89 @@ mod tests {
             file_count,
         }
     }
+
+    // ========================================================================
+    // WinBanner 测试
+    // ========================================================================
+
+    #[test]
+    fn test_win_banner_parse_valid_4_lines() {
+        let output = "卷 系统 的文件夹 PATH 列表\n卷序列号为 2810-11C7\nC:.\n没有子文件夹";
+        let banner = WinBanner::parse(output).expect("解析应成功");
+
+        assert_eq!(banner.volume_line, "卷 系统 的文件夹 PATH 列表");
+        assert_eq!(banner.serial_line, "卷序列号为 2810-11C7");
+        assert_eq!(banner.no_subfolder, "没有子文件夹");
+    }
+
+    #[test]
+    fn test_win_banner_parse_with_trailing_whitespace() {
+        let output =
+            "卷 系统 的文件夹 PATH 列表  \n  卷序列号为 2810-11C7\nC:.\n没有子文件夹  \n";
+        let banner = WinBanner::parse(output).expect("解析应成功");
+
+        assert_eq!(banner.volume_line, "卷 系统 的文件夹 PATH 列表");
+        assert_eq!(banner.serial_line, "卷序列号为 2810-11C7");
+        assert_eq!(banner.no_subfolder, "没有子文件夹");
+    }
+
+    #[test]
+    fn test_win_banner_parse_english_locale() {
+        let output =
+            "Folder PATH listing for volume OS\nVolume serial number is ABCD-1234\nC:.\nNo subfolders exist";
+        let banner = WinBanner::parse(output).expect("解析应成功");
+
+        assert_eq!(banner.volume_line, "Folder PATH listing for volume OS");
+        assert_eq!(banner.serial_line, "Volume serial number is ABCD-1234");
+        assert_eq!(banner.no_subfolder, "No subfolders exist");
+    }
+
+    #[test]
+    fn test_win_banner_parse_too_few_lines() {
+        let output = "只有一行";
+        let result = WinBanner::parse(output);
+        assert!(result.is_err());
+
+        let output = "第一行\n第二行";
+        let result = WinBanner::parse(output);
+        assert!(result.is_err());
+
+        let output = "第一行\n第二行\n第三行";
+        let result = WinBanner::parse(output);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_win_banner_parse_exactly_4_lines() {
+        let output = "line1\nline2\nline3\nline4";
+        let banner = WinBanner::parse(output).expect("4行应该解析成功");
+
+        assert_eq!(banner.volume_line, "line1");
+        assert_eq!(banner.serial_line, "line2");
+        assert_eq!(banner.no_subfolder, "line4");
+    }
+
+    #[test]
+    fn test_win_banner_parse_more_than_4_lines() {
+        // 如果目录有子目录，输出会更多行，最后一行可能是目录名
+        let output = "卷 系统 的文件夹 PATH 列表\n卷序列号为 2810-11C7\nC:.\n├─subdir\n└─another";
+        let banner = WinBanner::parse(output).expect("多行应该解析成功");
+
+        assert_eq!(banner.volume_line, "卷 系统 的文件夹 PATH 列表");
+        assert_eq!(banner.serial_line, "卷序列号为 2810-11C7");
+        assert_eq!(banner.no_subfolder, "└─another"); // 最后一行
+    }
+
+    #[test]
+    fn test_win_banner_empty_input() {
+        let output = "";
+        let result = WinBanner::parse(output);
+        assert!(result.is_err());
+    }
+
+    // ========================================================================
+    // format_size_human 测试
+    // ========================================================================
 
     #[test]
     fn test_format_size_human() {
@@ -716,31 +715,67 @@ mod tests {
         assert_eq!(format_size_human(1099511627776), "1.0 TB");
     }
 
+    // ========================================================================
+    // format_datetime 测试
+    // ========================================================================
+
     #[test]
     fn test_format_datetime() {
         use std::time::UNIX_EPOCH;
 
-        // 测试 UNIX 纪元
         let epoch = UNIX_EPOCH;
         let formatted = format_datetime(&epoch);
         assert_eq!(formatted, "1970-01-01 00:00:00");
     }
 
+    // ========================================================================
+    // days_to_ymd 测试
+    // ========================================================================
+
     #[test]
-    fn test_win_banner_default() {
-        let banner = WinBanner::default();
-        assert!(!banner.volume_line.is_empty());
-        assert!(!banner.serial_line.is_empty());
-        assert!(!banner.no_subfolder.is_empty());
+    fn test_days_to_ymd() {
+        assert_eq!(days_to_ymd(0), (1970, 1, 1));
+        assert_eq!(days_to_ymd(1), (1970, 1, 2));
+        assert_eq!(days_to_ymd(31), (1970, 2, 1));
+        assert_eq!(days_to_ymd(365), (1971, 1, 1));
+    }
+
+    // ========================================================================
+    // is_leap_year 测试
+    // ========================================================================
+
+    #[test]
+    fn test_is_leap_year() {
+        assert!(!is_leap_year(1970));
+        assert!(!is_leap_year(1900));
+        assert!(is_leap_year(2000));
+        assert!(is_leap_year(2024));
+        assert!(!is_leap_year(2023));
+    }
+
+    // ========================================================================
+    // TreeChars 测试
+    // ========================================================================
+
+    #[test]
+    fn test_tree_chars_unicode() {
+        let chars = TreeChars::from_charset(CharsetMode::Unicode);
+        assert_eq!(chars.branch, "├─");
+        assert_eq!(chars.last_branch, "└─");
+        assert_eq!(chars.vertical, "│   ");
     }
 
     #[test]
-    fn test_win_banner_parse() {
-        let output = "卷 系统 的文件夹 PATH 列表\n卷序列号为 2810-11C7\nC:.\n没有子文件夹";
-        let banner = WinBanner::parse(output);
-        assert!(banner.volume_line.contains("系统"));
-        assert!(banner.serial_line.contains("2810-11C7"));
+    fn test_tree_chars_ascii() {
+        let chars = TreeChars::from_charset(CharsetMode::Ascii);
+        assert_eq!(chars.branch, "+--");
+        assert_eq!(chars.last_branch, "\\--");
+        assert_eq!(chars.vertical, "|   ");
     }
+
+    // ========================================================================
+    // render 测试
+    // ========================================================================
 
     #[test]
     fn test_render_basic() {
@@ -788,7 +823,6 @@ mod tests {
 
         let result = render(&stats, &config);
 
-        // 无树形连接符
         assert!(!result.content.contains("├"));
         assert!(!result.content.contains("└"));
         assert!(!result.content.contains("+--"));
@@ -806,7 +840,6 @@ mod tests {
 
         let result = render(&stats, &config);
 
-        // 检查是否包含大小信息
         assert!(result.content.contains("1024") || result.content.contains("2048"));
     }
 
@@ -823,7 +856,6 @@ mod tests {
 
         let result = render(&stats, &config);
 
-        // 检查是否包含人类可读大小
         assert!(result.content.contains("KB") || result.content.contains("B"));
     }
 
@@ -854,10 +886,8 @@ mod tests {
 
         let result = render(&stats, &config);
 
-        // 不应包含文件
         assert!(!result.content.contains("main.rs"));
         assert!(!result.content.contains("Cargo.toml"));
-        // 应包含目录
         assert!(result.content.contains("src"));
     }
 
@@ -873,43 +903,6 @@ mod tests {
         assert!(result.contains("test_root"));
         assert!(result.contains("src"));
         assert!(result.contains("main.rs"));
-    }
-
-    #[test]
-    fn test_tree_chars_unicode() {
-        let chars = TreeChars::from_charset(CharsetMode::Unicode);
-        assert_eq!(chars.branch, "├─");
-        assert_eq!(chars.last_branch, "└─");
-        assert_eq!(chars.vertical, "│   ");
-    }
-
-    #[test]
-    fn test_tree_chars_ascii() {
-        let chars = TreeChars::from_charset(CharsetMode::Ascii);
-        assert_eq!(chars.branch, "+--");
-        assert_eq!(chars.last_branch, "\\--");
-        assert_eq!(chars.vertical, "|   ");
-    }
-
-    #[test]
-    fn test_days_to_ymd() {
-        // 1970-01-01
-        assert_eq!(days_to_ymd(0), (1970, 1, 1));
-        // 1970-01-02
-        assert_eq!(days_to_ymd(1), (1970, 1, 2));
-        // 1970-02-01
-        assert_eq!(days_to_ymd(31), (1970, 2, 1));
-        // 1971-01-01
-        assert_eq!(days_to_ymd(365), (1971, 1, 1));
-    }
-
-    #[test]
-    fn test_is_leap_year() {
-        assert!(!is_leap_year(1970));
-        assert!(!is_leap_year(1900));
-        assert!(is_leap_year(2000));
-        assert!(is_leap_year(2024));
-        assert!(!is_leap_year(2023));
     }
 
     #[test]

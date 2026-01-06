@@ -12,7 +12,7 @@
 //! 所有错误类型实现 `std::error::Error`，支持错误链追溯。
 //!
 //! 作者: WaterRun
-//! 更新于: 2025-01-05
+//! 更新于: 2025-01-06
 
 #![forbid(unsafe_code)]
 
@@ -368,6 +368,13 @@ pub enum RenderError {
     InvalidUtf8Path {
         /// 问题路径（尽可能转换）
         path_lossy: String,
+    },
+
+    /// Windows 样板信息获取失败
+    #[error("获取 Windows tree 样板信息失败: {reason}")]
+    BannerFetchFailed {
+        /// 失败原因
+        reason: String,
     },
 }
 
