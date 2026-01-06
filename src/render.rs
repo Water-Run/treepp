@@ -274,74 +274,40 @@ pub fn format_size_human(size: u64) -> String {
     }
 }
 
-/// 格式化 SystemTime 为日期时间字符串
+/// 格式化 SystemTime 为本地时间日期字符串
+///
+/// 将 UTC 时间转换为本地时区时间并格式化输出。
+///
+/// # Examples
+///
+/// ```
+/// use std::time::SystemTime;
+/// use treepp::render::format_datetime;
+///
+/// let now = SystemTime::now();
+/// let formatted = format_datetime(&now);
+/// // 输出格式: "2025-01-06 15:30:45"
+/// assert!(formatted.len() == 19);
+/// ```
 #[must_use]
 pub fn format_datetime(time: &SystemTime) -> String {
-    use std::time::UNIX_EPOCH;
+    use chrono::{DateTime, Local};
 
-    let duration = time.duration_since(UNIX_EPOCH).unwrap_or_default();
-    let secs = duration.as_secs();
-
-    let days = secs / 86400;
-    let time_of_day = secs % 86400;
-
-    let hours = time_of_day / 3600;
-    let minutes = (time_of_day % 3600) / 60;
-    let seconds = time_of_day % 60;
-
-    let (year, month, day) = days_to_ymd(days);
-
-    format!(
-        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
-        year, month, day, hours, minutes, seconds
-    )
-}
-
-/// 将天数转换为年月日
-fn days_to_ymd(days: u64) -> (i32, u32, u32) {
-    let mut remaining_days = days as i64;
-    let mut year = 1970i32;
-
-    loop {
-        let days_in_year = if is_leap_year(year) { 366 } else { 365 };
-        if remaining_days < days_in_year {
-            break;
-        }
-        remaining_days -= days_in_year;
-        year += 1;
-    }
-
-    let leap = is_leap_year(year);
-    let days_in_months: [i64; 12] = if leap {
-        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    } else {
-        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    };
-
-    let mut month = 1u32;
-    for days_in_month in days_in_months {
-        if remaining_days < days_in_month {
-            break;
-        }
-        remaining_days -= days_in_month;
-        month += 1;
-    }
-
-    let day = remaining_days as u32 + 1;
-
-    (year, month, day)
-}
-
-/// 判断是否为闰年
-const fn is_leap_year(year: i32) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
+    let datetime: DateTime<Local> = (*time).into();
+    datetime.format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
 /// 格式化条目名称
 fn format_entry_name(node: &TreeNode, config: &Config) -> String {
-    match config.render.path_mode {
+    let name = match config.render.path_mode {
         PathMode::Full => node.path.to_string_lossy().into_owned(),
         PathMode::Relative => node.name.clone(),
+    };
+
+    if config.render.quote_names {
+        format!("\"{}\"", name)
+    } else {
+        name
     }
 }
 
@@ -720,37 +686,40 @@ mod tests {
     // ========================================================================
 
     #[test]
-    fn test_format_datetime() {
-        use std::time::UNIX_EPOCH;
+    fn test_format_datetime_format() {
+        use std::time::SystemTime;
 
-        let epoch = UNIX_EPOCH;
-        let formatted = format_datetime(&epoch);
-        assert_eq!(formatted, "1970-01-01 00:00:00");
+        let now = SystemTime::now();
+        let formatted = format_datetime(&now);
+
+        // 验证格式: YYYY-MM-DD HH:MM:SS (19 字符)
+        assert_eq!(formatted.len(), 19);
+        assert_eq!(&formatted[4..5], "-");
+        assert_eq!(&formatted[7..8], "-");
+        assert_eq!(&formatted[10..11], " ");
+        assert_eq!(&formatted[13..14], ":");
+        assert_eq!(&formatted[16..17], ":");
     }
 
-    // ========================================================================
-    // days_to_ymd 测试
-    // ========================================================================
-
     #[test]
-    fn test_days_to_ymd() {
-        assert_eq!(days_to_ymd(0), (1970, 1, 1));
-        assert_eq!(days_to_ymd(1), (1970, 1, 2));
-        assert_eq!(days_to_ymd(31), (1970, 2, 1));
-        assert_eq!(days_to_ymd(365), (1971, 1, 1));
-    }
+    fn test_format_datetime_returns_local_time() {
+        use chrono::Local;
+        use std::time::SystemTime;
 
-    // ========================================================================
-    // is_leap_year 测试
-    // ========================================================================
+        let now = SystemTime::now();
+        let formatted = format_datetime(&now);
 
-    #[test]
-    fn test_is_leap_year() {
-        assert!(!is_leap_year(1970));
-        assert!(!is_leap_year(1900));
-        assert!(is_leap_year(2000));
-        assert!(is_leap_year(2024));
-        assert!(!is_leap_year(2023));
+        // 获取当前本地时间进行比较
+        let local_now = Local::now();
+        let expected_date = local_now.format("%Y-%m-%d").to_string();
+
+        // 日期部分应该匹配本地时间
+        assert!(
+            formatted.starts_with(&expected_date),
+            "格式化时间 {} 应以本地日期 {} 开头",
+            formatted,
+            expected_date
+        );
     }
 
     // ========================================================================
@@ -915,5 +884,102 @@ mod tests {
         assert_eq!(result.content, "test");
         assert_eq!(result.directory_count, 5);
         assert_eq!(result.file_count, 10);
+    }
+
+    #[test]
+    fn test_format_entry_name_with_quote() {
+        let node = TreeNode::new(
+            PathBuf::from("test.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        );
+
+        let mut config = Config::with_root(PathBuf::from("."));
+        config.render.quote_names = false;
+
+        let name = format_entry_name(&node, &config);
+        assert_eq!(name, "test.txt");
+
+        config.render.quote_names = true;
+        let name = format_entry_name(&node, &config);
+        assert_eq!(name, "\"test.txt\"");
+    }
+
+    #[test]
+    fn test_format_entry_name_full_path_with_quote() {
+        let node = TreeNode::new(
+            PathBuf::from("/path/to/test.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        );
+
+        let mut config = Config::with_root(PathBuf::from("."));
+        config.render.path_mode = PathMode::Full;
+        config.render.quote_names = true;
+
+        let name = format_entry_name(&node, &config);
+        assert!(name.starts_with('"'));
+        assert!(name.ends_with('"'));
+        assert!(name.contains("test.txt"));
+    }
+
+    #[test]
+    fn test_render_with_quote() {
+        let tree = create_test_tree();
+        let stats = create_test_stats(tree);
+
+        let mut config = Config::with_root(PathBuf::from("test_root"));
+        config.render.no_win_banner = true;
+        config.render.quote_names = true;
+        config.scan.show_files = true;
+
+        let result = render(&stats, &config);
+
+        assert!(result.content.contains("\"src\""));
+        assert!(result.content.contains("\"main.rs\""));
+    }
+
+    #[test]
+    fn test_render_with_dirs_first() {
+        use crate::config::SortKey;
+        use crate::scan::sort_tree;
+
+        let mut tree = TreeNode::new(
+            PathBuf::from("root"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        tree.children.push(TreeNode::new(
+            PathBuf::from("root/z_file.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+        tree.children.push(TreeNode::new(
+            PathBuf::from("root/a_dir"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        ));
+
+        // 在渲染前需要排序（模拟 scan 模块的行为）
+        sort_tree(&mut tree, SortKey::Name, false, true);
+
+        let stats = ScanStats {
+            tree,
+            duration: Duration::from_millis(100),
+            directory_count: 1,
+            file_count: 1,
+        };
+
+        let mut config = Config::with_root(PathBuf::from("root"));
+        config.render.no_win_banner = true;
+        config.render.dirs_first = true;
+        config.scan.show_files = true;
+
+        let result = render(&stats, &config);
+
+        // 目录应该在文件之前
+        let a_dir_pos = result.content.find("a_dir").unwrap();
+        let z_file_pos = result.content.find("z_file.txt").unwrap();
+        assert!(a_dir_pos < z_file_pos, "目录应该在文件之前");
     }
 }

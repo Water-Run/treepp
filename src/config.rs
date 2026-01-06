@@ -5,7 +5,7 @@
 //! 后续扫描、匹配、渲染、输出各层仅依赖此配置，不再直接访问原始参数。
 //!
 //! 作者: WaterRun
-//! 更新于: 2025-01-05
+//! 更新于: 2025-01-06
 
 #![forbid(unsafe_code)]
 
@@ -386,6 +386,10 @@ pub struct RenderOptions {
     pub show_report: bool,
     /// 是否隐藏 Windows 原生样板信息
     pub no_win_banner: bool,
+    /// 是否用双引号包裹文件名
+    pub quote_names: bool,
+    /// 是否目录优先显示
+    pub dirs_first: bool,
 }
 
 /// 输出选项
@@ -501,6 +505,7 @@ impl Config {
     ///
     /// 执行以下操作：
     /// - 检查选项冲突
+    /// - 验证根路径存在性并规范化
     /// - 验证参数值合法性
     /// - 从输出路径扩展名推导输出格式
     /// - 应用默认值
@@ -509,6 +514,7 @@ impl Config {
     ///
     /// 返回 `ConfigError` 如果：
     /// - 选项之间存在不可调和的冲突
+    /// - 根路径不存在或不是目录
     /// - 参数值无效（如未知的排序键）
     /// - 输出路径扩展名无法识别
     ///
@@ -539,7 +545,10 @@ impl Config {
         // 1. 选项冲突检查
         self.check_conflicts()?;
 
-        // 2. 派生字段：从输出路径推导格式
+        // 2. 根路径验证与规范化
+        self.validate_and_canonicalize_root_path()?;
+
+        // 3. 派生字段：从输出路径推导格式
         if let Some(ref path) = self.output.output_path {
             if let Some(format) = OutputFormat::from_extension(path) {
                 self.output.format = format;
@@ -548,17 +557,50 @@ impl Config {
             }
         }
 
-        // 3. 隐含依赖：human_readable 隐含 show_size
+        // 4. 隐含依赖：human_readable 隐含 show_size
         if self.render.human_readable {
             self.render.show_size = true;
         }
 
-        // 4. 隐含依赖：show_disk_usage 需要 show_size 语义支持
+        // 5. 隐含依赖：show_disk_usage 需要 show_size 语义支持
         // （但 show_disk_usage 是目录级别统计，与 show_size 不冲突）
 
-        // 5. 线程数下限校验（NonZeroUsize 已保证 >= 1，无需额外检查）
+        // 6. 线程数下限校验（NonZeroUsize 已保证 >= 1，无需额外检查）
 
         Ok(self)
+    }
+
+    /// 验证根路径并规范化
+    ///
+    /// 使用 dunce 规范化路径，避免 Windows 上的 `\\?\` 前缀问题。
+    fn validate_and_canonicalize_root_path(&mut self) -> ConfigResult<()> {
+        // 检查路径是否存在
+        if !self.root_path.exists() {
+            return Err(ConfigError::InvalidPath {
+                path: self.root_path.clone(),
+                reason: "路径不存在".to_string(),
+            });
+        }
+
+        // 检查是否为目录
+        if !self.root_path.is_dir() {
+            return Err(ConfigError::InvalidPath {
+                path: self.root_path.clone(),
+                reason: "路径不是目录".to_string(),
+            });
+        }
+
+        // 使用 dunce 规范化路径，避免 Windows 上的 \\?\ 前缀
+        match dunce::canonicalize(&self.root_path) {
+            Ok(canonical) => {
+                self.root_path = canonical;
+                Ok(())
+            }
+            Err(e) => Err(ConfigError::InvalidPath {
+                path: self.root_path.clone(),
+                reason: format!("无法规范化路径: {}", e),
+            }),
+        }
     }
 
     /// 检查选项冲突
@@ -829,6 +871,8 @@ mod tests {
         assert!(!opts.reverse_sort);
         assert!(!opts.show_report);
         assert!(!opts.no_win_banner);
+        assert!(!opts.quote_names);
+        assert!(!opts.dirs_first);
     }
 
     // ------------------------------------------------------------------------
@@ -919,7 +963,11 @@ mod tests {
 
     #[test]
     fn validate_should_derive_format_from_output_path() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().expect("创建临时目录失败");
         let mut config = Config::default();
+        config.root_path = temp_dir.path().to_path_buf();
         config.output.output_path = Some(PathBuf::from("result.json"));
 
         let validated = config.validate().unwrap();
@@ -928,7 +976,11 @@ mod tests {
 
     #[test]
     fn validate_should_derive_yaml_format_from_yml_extension() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().expect("创建临时目录失败");
         let mut config = Config::default();
+        config.root_path = temp_dir.path().to_path_buf();
         config.output.output_path = Some(PathBuf::from("result.yml"));
 
         let validated = config.validate().unwrap();
@@ -937,7 +989,11 @@ mod tests {
 
     #[test]
     fn validate_should_derive_yaml_format_from_yaml_extension() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().expect("创建临时目录失败");
         let mut config = Config::default();
+        config.root_path = temp_dir.path().to_path_buf();
         config.output.output_path = Some(PathBuf::from("result.yaml"));
 
         let validated = config.validate().unwrap();
@@ -946,7 +1002,11 @@ mod tests {
 
     #[test]
     fn validate_should_fail_for_unknown_extension() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().expect("创建临时目录失败");
         let mut config = Config::default();
+        config.root_path = temp_dir.path().to_path_buf();
         config.output.output_path = Some(PathBuf::from("result.xyz"));
 
         let err = config.validate().unwrap_err();
@@ -955,7 +1015,11 @@ mod tests {
 
     #[test]
     fn validate_should_enable_show_size_when_human_readable_is_set() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().expect("创建临时目录失败");
         let mut config = Config::default();
+        config.root_path = temp_dir.path().to_path_buf();
         config.render.human_readable = true;
         config.render.show_size = false;
 
@@ -966,7 +1030,11 @@ mod tests {
 
     #[test]
     fn validate_should_fail_when_silent_without_output() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().expect("创建临时目录失败");
         let mut config = Config::default();
+        config.root_path = temp_dir.path().to_path_buf();
         config.output.silent = true;
         config.output.output_path = None;
 
@@ -980,7 +1048,11 @@ mod tests {
 
     #[test]
     fn validate_should_succeed_when_silent_with_output() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().expect("创建临时目录失败");
         let mut config = Config::default();
+        config.root_path = temp_dir.path().to_path_buf();
         config.output.silent = true;
         config.output.output_path = Some(PathBuf::from("tree.txt"));
 
@@ -991,8 +1063,11 @@ mod tests {
 
     #[test]
     fn validate_should_preserve_all_options() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().expect("创建临时目录失败");
         let mut config = Config::default();
-        config.root_path = PathBuf::from("C:\\Test");
+        config.root_path = temp_dir.path().to_path_buf();
         config.scan.show_files = true;
         config.scan.max_depth = Some(3);
         config.scan.respect_gitignore = true;
@@ -1008,11 +1083,14 @@ mod tests {
         config.render.reverse_sort = true;
         config.render.show_report = true;
         config.render.no_win_banner = true;
+        config.render.quote_names = true;
+        config.render.dirs_first = true;
         config.output.output_path = Some(PathBuf::from("out.toml"));
 
         let validated = config.validate().unwrap();
 
-        assert_eq!(validated.root_path, PathBuf::from("C:\\Test"));
+        // 路径已被规范化，不再比较具体值
+        assert!(validated.root_path.is_absolute());
         assert!(validated.scan.show_files);
         assert_eq!(validated.scan.max_depth, Some(3));
         assert!(validated.scan.respect_gitignore);
@@ -1028,6 +1106,8 @@ mod tests {
         assert!(validated.render.reverse_sort);
         assert!(validated.render.show_report);
         assert!(validated.render.no_win_banner);
+        assert!(validated.render.quote_names);
+        assert!(validated.render.dirs_first);
         assert_eq!(validated.output.format, OutputFormat::Toml);
     }
 
@@ -1083,5 +1163,48 @@ mod tests {
         };
         let err2 = err1.clone();
         assert_eq!(err1, err2);
+    }
+
+    #[test]
+    fn validate_should_fail_for_nonexistent_path() {
+        let mut config = Config::default();
+        config.root_path = PathBuf::from("/nonexistent/path/12345");
+
+        let err = config.validate().unwrap_err();
+        assert!(matches!(err, ConfigError::InvalidPath { .. }));
+
+        if let ConfigError::InvalidPath { reason, .. } = err {
+            assert!(reason.contains("不存在"));
+        }
+    }
+
+    #[test]
+    fn validate_should_fail_for_file_as_root() {
+        use tempfile::NamedTempFile;
+
+        let temp_file = NamedTempFile::new().expect("创建临时文件失败");
+        let mut config = Config::default();
+        config.root_path = temp_file.path().to_path_buf();
+
+        let err = config.validate().unwrap_err();
+        assert!(matches!(err, ConfigError::InvalidPath { .. }));
+
+        if let ConfigError::InvalidPath { reason, .. } = err {
+            assert!(reason.contains("不是目录"));
+        }
+    }
+
+    #[test]
+    fn validate_should_canonicalize_path() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().expect("创建临时目录失败");
+        let mut config = Config::default();
+        config.root_path = temp_dir.path().to_path_buf();
+
+        let validated = config.validate().expect("验证应成功");
+
+        // 规范化后的路径应该是绝对路径
+        assert!(validated.root_path.is_absolute());
     }
 }

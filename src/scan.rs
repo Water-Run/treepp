@@ -544,14 +544,18 @@ fn load_gitignore_from_path(dir: &Path) -> Option<Gitignore> {
 // ============================================================================
 
 /// 对树节点进行确定性排序（递归）
-fn sort_tree(node: &mut TreeNode, sort_key: SortKey, reverse: bool) {
+pub fn sort_tree(node: &mut TreeNode, sort_key: SortKey, reverse: bool, dirs_first: bool) {
     // 排序子节点
     node.children.sort_by(|a, b| {
-        // 目录在前，文件在后
-        let kind_order = match (a.kind, b.kind) {
-            (EntryKind::Directory, EntryKind::File) => Ordering::Less,
-            (EntryKind::File, EntryKind::Directory) => Ordering::Greater,
-            _ => Ordering::Equal,
+        // 目录优先排序（仅当 dirs_first 为 true 时）
+        let kind_order = if dirs_first {
+            match (a.kind, b.kind) {
+                (EntryKind::Directory, EntryKind::File) => Ordering::Less,
+                (EntryKind::File, EntryKind::Directory) => Ordering::Greater,
+                _ => Ordering::Equal,
+            }
+        } else {
+            Ordering::Equal
         };
 
         if kind_order != Ordering::Equal {
@@ -579,7 +583,7 @@ fn sort_tree(node: &mut TreeNode, sort_key: SortKey, reverse: bool) {
 
     // 递归排序子节点的子节点
     for child in &mut node.children {
-        sort_tree(child, sort_key, reverse);
+        sort_tree(child, sort_key, reverse, dirs_first);
     }
 }
 
@@ -601,6 +605,8 @@ struct ScanContext {
     sort_key: SortKey,
     /// 是否逆序
     reverse: bool,
+    /// 是否目录优先
+    dirs_first: bool,
     /// 是否修剪空目录
     prune_empty: bool,
     /// 是否需要大小信息
@@ -619,6 +625,7 @@ impl ScanContext {
             rules: CompiledRules::compile(config)?,
             sort_key: config.render.sort_key,
             reverse: config.render.reverse_sort,
+            dirs_first: config.render.dirs_first,
             prune_empty: config.matching.prune_empty,
             needs_size: config.needs_size_info(),
             gitignore_cache: Arc::new(GitignoreCache::new()),
@@ -792,7 +799,7 @@ pub fn scan_walk(config: &Config) -> TreeppResult<ScanStats> {
     }
 
     // 排序
-    sort_tree(&mut tree, ctx.sort_key, ctx.reverse);
+    sort_tree(&mut tree, ctx.sort_key, ctx.reverse, ctx.dirs_first);
 
     let duration = start.elapsed();
     let directory_count = tree.count_directories();
@@ -981,7 +988,7 @@ pub fn scan_parallel(config: &Config) -> TreeppResult<ScanStats> {
     }
 
     // 排序（确保与 walk 模式输出一致）
-    sort_tree(&mut tree, ctx.sort_key, ctx.reverse);
+    sort_tree(&mut tree, ctx.sort_key, ctx.reverse, ctx.dirs_first);
 
     let duration = start.elapsed();
     let directory_count = tree.count_directories();
@@ -1820,7 +1827,7 @@ mod tests {
             EntryMetadata::default(),
         ));
 
-        sort_tree(&mut root, SortKey::Name, false);
+        sort_tree(&mut root, SortKey::Name, false, false);
 
         assert_eq!(root.children[0].name, "alpha.txt");
         assert_eq!(root.children[1].name, "beta.txt");
@@ -1850,7 +1857,7 @@ mod tests {
             EntryMetadata::default(),
         ));
 
-        sort_tree(&mut root, SortKey::Name, false);
+        sort_tree(&mut root, SortKey::Name, false, false);
 
         assert_eq!(root.children[0].name, "alpha.txt");
         assert_eq!(root.children[1].name, "Beta.txt");
@@ -1889,7 +1896,7 @@ mod tests {
             },
         ));
 
-        sort_tree(&mut root, SortKey::Size, false);
+        sort_tree(&mut root, SortKey::Size, false, false);
 
         assert_eq!(root.children[0].name, "small.txt");
         assert_eq!(root.children[1].name, "medium.txt");
@@ -1919,11 +1926,42 @@ mod tests {
             EntryMetadata::default(),
         ));
 
-        sort_tree(&mut root, SortKey::Name, true);
+        sort_tree(&mut root, SortKey::Name, true, false);
 
         assert_eq!(root.children[0].name, "c.txt");
         assert_eq!(root.children[1].name, "b.txt");
         assert_eq!(root.children[2].name, "a.txt");
+    }
+
+    #[test]
+    fn test_sort_tree_dirs_first_disabled() {
+        let mut root = TreeNode::new(
+            PathBuf::from("."),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        root.children.push(TreeNode::new(
+            PathBuf::from("z_file.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+        root.children.push(TreeNode::new(
+            PathBuf::from("a_dir"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        ));
+        root.children.push(TreeNode::new(
+            PathBuf::from("b_file.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+
+        // dirs_first = false，按名称排序，不区分目录和文件
+        sort_tree(&mut root, SortKey::Name, false, false);
+
+        assert_eq!(root.children[0].name, "a_dir");
+        assert_eq!(root.children[1].name, "b_file.txt");
+        assert_eq!(root.children[2].name, "z_file.txt");
     }
 
     #[test]
@@ -1949,7 +1987,7 @@ mod tests {
             EntryMetadata::default(),
         ));
 
-        sort_tree(&mut root, SortKey::Name, false);
+        sort_tree(&mut root, SortKey::Name, false, true);
 
         assert_eq!(root.children[0].kind, EntryKind::Directory);
         assert_eq!(root.children[1].kind, EntryKind::File);
@@ -1982,7 +2020,7 @@ mod tests {
 
         root.children.push(subdir);
 
-        sort_tree(&mut root, SortKey::Name, false);
+        sort_tree(&mut root, SortKey::Name, false, true);
 
         // 验证子目录内容也被排序
         assert_eq!(root.children[0].children[0].name, "a.txt");

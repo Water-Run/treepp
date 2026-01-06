@@ -16,7 +16,7 @@
 //! - `3`：输出错误
 //!
 //! 作者: WaterRun
-//! 更新于: 2025-01-05
+//! 更新于: 2025-01-06
 
 #![forbid(unsafe_code)]
 #![deny(warnings)]
@@ -121,7 +121,16 @@ fn print_error(err: &TreeppError) {
     eprintln!("tree++: {}: {}", prefix, err);
 
     // 对于特定错误类型，提供额外提示
-    if let TreeppError::Cli(CliError::UnknownOption { .. }) = err {
-        eprintln!("提示: 使用 treepp --help 查看可用选项");
+    match err {
+        TreeppError::Cli(CliError::UnknownOption { .. }) => {
+            eprintln!("提示: 使用 treepp --help 查看可用选项");
+        }
+        TreeppError::Cli(CliError::PathAfterOptions { .. }) => {
+            eprintln!("提示: 路径参数必须在所有选项之前，例如: treepp C:\\dir /F");
+        }
+        TreeppError::Cli(CliError::MultiplePaths { .. }) => {
+            eprintln!("提示: 只能指定一个目标路径");
+        }
+        _ => {}
     }
 }
