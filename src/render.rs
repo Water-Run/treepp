@@ -10,8 +10,9 @@
 //! - **Windows 样板**：默认显示系统卷信息，`/NB` 禁止
 //! - **流式渲染**：`StreamRenderer` 支持边扫描边渲染
 //!
+//! 文件: src/render.rs
 //! 作者: WaterRun
-//! 更新于: 2025-01-06
+//! 更新于: 2025-01-07
 
 #![forbid(unsafe_code)]
 
@@ -19,7 +20,6 @@ use std::fmt::Write as FmtWrite;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
-use std::sync::OnceLock;
 use std::time::{Duration, SystemTime};
 
 use crate::config::{CharsetMode, Config, PathMode};
@@ -29,9 +29,6 @@ use crate::scan::{EntryKind, EntryMetadata, ScanStats, StreamEntry, TreeNode};
 // ============================================================================
 // 常量
 // ============================================================================
-
-/// Windows tree++ 样板信息目录路径
-const TREEPP_BANNER_DIR: &str = r"C:\__tree++__";
 
 /// Windows tree++ 样板信息文件名
 const TREEPP_BANNER_FILE: &str = "tree++.txt";
@@ -43,9 +40,6 @@ You may safely delete this directory. If you do not want tree++ to create it, us
 
 GitHub: https://github.com/Water-Run/treepp
 "#;
-
-/// 全局缓存的 Windows 样板信息
-static CACHED_BANNER: OnceLock<Result<WinBanner, String>> = OnceLock::new();
 
 // ============================================================================
 // Windows 样板信息
@@ -76,45 +70,28 @@ pub struct WinBanner {
 }
 
 impl WinBanner {
-    /// 获取 Windows 样板信息（带缓存）
+    /// 获取指定盘符的 Windows 样板信息
     ///
-    /// 首次调用时从系统获取，后续调用返回缓存结果。
+    /// # 参数
+    ///
+    /// * `drive` - 盘符（如 'C', 'D'）
     ///
     /// # Errors
     ///
     /// 返回 `RenderError::BannerFetchFailed` 如果：
     /// - 无法创建样板目录
     /// - 无法执行 tree 命令
-    /// - tree 输出行数不足
-    pub fn get_cached() -> Result<&'static WinBanner, RenderError> {
-        CACHED_BANNER
-            .get_or_init(|| Self::fetch_from_system().map_err(|e| e.to_string()))
-            .as_ref()
-            .map_err(|reason| RenderError::BannerFetchFailed {
-                reason: reason.clone(),
-            })
-    }
-
-    /// 直接从系统获取样板信息（不使用缓存）
-    ///
-    /// 此方法会执行以下操作：
-    /// 1. 确保 `C:\__tree++__` 目录存在
-    /// 2. 确保 `tree++.txt` 文件存在
-    /// 3. 在该目录下执行 `tree` 命令（无参数）
-    /// 4. 提取输出的第1行、第2行、最后一行
-    pub fn fetch() -> Result<Self, RenderError> {
-        Self::fetch_from_system()
-    }
-
-    /// 从 tree 命令获取样板信息的内部实现
-    fn fetch_from_system() -> Result<Self, RenderError> {
-        let dir_path = Path::new(TREEPP_BANNER_DIR);
+    /// - tree 输出解析失败
+    pub fn fetch_for_drive(drive: char) -> Result<Self, RenderError> {
+        let drive = drive.to_ascii_uppercase();
+        let banner_dir = format!(r"{}:\__tree++__", drive);
+        let dir_path = Path::new(&banner_dir);
         let file_path = dir_path.join(TREEPP_BANNER_FILE);
 
         // 确保目录存在
         if !dir_path.exists() {
             fs::create_dir_all(dir_path).map_err(|e| RenderError::BannerFetchFailed {
-                reason: format!("无法创建目录 {}: {}", TREEPP_BANNER_DIR, e),
+                reason: format!("无法创建目录 {}: {}", banner_dir, e),
             })?;
         }
 
@@ -127,7 +104,7 @@ impl WinBanner {
             })?;
         }
 
-        // 在 C:\__tree++__ 目录下执行 tree 命令（无参数）
+        // 在样板目录下执行 tree 命令（无参数）
         let output = Command::new("cmd")
             .args(["/C", "tree"])
             .current_dir(dir_path)
@@ -164,15 +141,23 @@ impl WinBanner {
 
     /// 解析 tree 命令输出
     ///
-    /// 直接提取第1行、第2行、最后一行，无需关键字匹配。
+    /// `__tree++__` 目录由程序创建，只包含一个 `tree++.txt` 文件，
+    /// 因此在该目录执行 `tree` 命令的输出是固定的 4 行格式：
+    ///
+    /// ```text
+    /// 卷 系统 的文件夹 PATH 列表      <- 第1行: volume_line
+    /// 卷序列号为 2810-11C7            <- 第2行: serial_line
+    /// X:.                             <- 第3行: 当前目录（忽略）
+    /// 没有子文件夹                    <- 第4行: no_subfolder
+    /// ```
     fn parse_tree_output(output: &str) -> Result<Self, RenderError> {
         let lines: Vec<&str> = output.lines().collect();
 
-        // tree 输出至少需要 4 行
+        // tree 输出固定为 4 行
         if lines.len() < 4 {
             return Err(RenderError::BannerFetchFailed {
                 reason: format!(
-                    "tree 输出行数不足，期望至少 4 行，实际 {} 行:\n{}",
+                    "tree 输出行数不足，期望 4 行，实际 {} 行:\n{}",
                     lines.len(),
                     output
                 ),
@@ -183,8 +168,8 @@ impl WinBanner {
         let volume_line = lines[0].trim().to_string();
         // 第2行: 序列号
         let serial_line = lines[1].trim().to_string();
-        // 最后一行: 无子文件夹提示
-        let no_subfolder = lines[lines.len() - 1].trim().to_string();
+        // 第4行: 无子文件夹提示（固定位置）
+        let no_subfolder = lines[3].trim().to_string();
 
         Ok(Self {
             volume_line,
@@ -194,6 +179,7 @@ impl WinBanner {
     }
 
     /// 从字符串解析样板信息（用于测试）
+    #[cfg(test)]
     pub fn parse(output: &str) -> Result<Self, RenderError> {
         Self::parse_tree_output(output)
     }
@@ -287,18 +273,22 @@ pub struct RenderResult {
 /// 树形连接符集合
 #[derive(Debug, Clone, Copy)]
 pub struct TreeChars {
-    /// 分支连接符 (├─ 或 +--)
+    /// 分支连接符 (├─ 或 +---)
     pub branch: &'static str,
-    /// 最后分支连接符 (└─ 或 \--)
+    /// 最后分支连接符 (└─ 或 \---)
     pub last_branch: &'static str,
-    /// 垂直连接符 (│   或 |   )
+    /// 垂直连接符后续行 (│   或 |   )
     pub vertical: &'static str,
-    /// 空白占位符
+    /// 空白占位符（用于最后一个分支后的子项）
     pub space: &'static str,
 }
 
 impl TreeChars {
     /// 根据字符集模式创建连接符集合
+    ///
+    /// 格式与 Windows tree 命令保持一致：
+    /// - Unicode: ├─, └─, │   (│后3空格), 4空格
+    /// - ASCII: +---, \---, |   (|后3空格), 4空格
     #[must_use]
     pub fn from_charset(charset: CharsetMode) -> Self {
         match charset {
@@ -309,8 +299,8 @@ impl TreeChars {
                 space: "    ",
             },
             CharsetMode::Ascii => Self {
-                branch: "+--",
-                last_branch: "\\--",
+                branch: "+---",
+                last_branch: "\\---",
                 vertical: "|   ",
                 space: "    ",
             },
@@ -566,17 +556,22 @@ impl StreamRenderer {
     pub fn render_header(&self, root_path: &Path, path_explicitly_set: bool) -> String {
         let mut output = String::new();
 
+        // 获取盘符用于 banner
+        let drive = extract_drive_letter(root_path).ok();
+
         // Windows 样板头信息
         let banner = if self.config.no_win_banner {
             None
-        } else {
-            match WinBanner::get_cached() {
+        } else if let Some(d) = drive {
+            match WinBanner::fetch_for_drive(d) {
                 Ok(b) => Some(b),
                 Err(e) => {
                     let _ = writeln!(output, "警告: {}", e);
                     None
                 }
             }
+        } else {
+            None
         };
 
         // 输出样板头
@@ -814,7 +809,7 @@ impl StreamRenderer {
 
     /// 渲染无子目录提示（当目录为空时使用）
     #[must_use]
-    pub fn render_no_subfolder(&self, has_subdirectories: bool) -> String {
+    pub fn render_no_subfolder(&self, has_subdirectories: bool, drive: Option<char>) -> String {
         if self.config.no_win_banner {
             return String::new();
         }
@@ -824,9 +819,15 @@ impl StreamRenderer {
             return String::new();
         }
 
-        match WinBanner::get_cached() {
-            Ok(banner) => format!("\n{}\n", banner.no_subfolder),
-            Err(_) => String::new(),
+        if let Some(d) = drive {
+            match WinBanner::fetch_for_drive(d) {
+                Ok(banner) if !banner.no_subfolder.is_empty() => {
+                    format!("\n{}\n", banner.no_subfolder)
+                }
+                _ => String::new(),
+            }
+        } else {
+            String::new()
         }
     }
 }
@@ -841,17 +842,22 @@ pub fn render(stats: &ScanStats, config: &Config) -> RenderResult {
     let mut output = String::new();
     let chars = TreeChars::from_charset(config.render.charset);
 
+    // 获取盘符用于 banner
+    let drive = extract_drive_letter(&config.root_path).ok();
+
     // Windows 样板头信息
     let banner = if config.render.no_win_banner {
         None
-    } else {
-        match WinBanner::get_cached() {
+    } else if let Some(d) = drive {
+        match WinBanner::fetch_for_drive(d) {
             Ok(b) => Some(b),
             Err(e) => {
                 let _ = writeln!(output, "警告: {}", e);
                 None
             }
         }
+    } else {
+        None
     };
 
     // 输出样板头
@@ -882,11 +888,13 @@ pub fn render(stats: &ScanStats, config: &Config) -> RenderResult {
     }
 
     // 无子目录提示（当目录没有子目录时显示，不考虑文件）
-    if let Some(b) = &banner {
-        if !tree_has_subdirectories(&stats.tree) {
-            output.push('\n');
-            output.push_str(&b.no_subfolder);
-            output.push('\n');
+    if !tree_has_subdirectories(&stats.tree) {
+        if let Some(b) = &banner {
+            if !b.no_subfolder.is_empty() {
+                output.push('\n');
+                output.push_str(&b.no_subfolder);
+                output.push('\n');
+            }
         }
     }
 
@@ -1085,6 +1093,17 @@ mod tests {
     }
 
     #[test]
+    fn test_win_banner_parse_with_trailing_empty_lines() {
+        // tree 命令输出末尾可能有空行，但前 4 行是固定的
+        let output = "卷 系统 的文件夹 PATH 列表\n卷序列号为 2810-11C7\nC:.\n没有子文件夹\n\n";
+        let banner = WinBanner::parse(output).expect("解析应成功");
+
+        assert_eq!(banner.volume_line, "卷 系统 的文件夹 PATH 列表");
+        assert_eq!(banner.serial_line, "卷序列号为 2810-11C7");
+        assert_eq!(banner.no_subfolder, "没有子文件夹");
+    }
+
+    #[test]
     fn test_win_banner_parse_with_trailing_whitespace() {
         let output =
             "卷 系统 的文件夹 PATH 列表  \n  卷序列号为 2810-11C7\nC:.\n没有子文件夹  \n";
@@ -1133,13 +1152,13 @@ mod tests {
 
     #[test]
     fn test_win_banner_parse_more_than_4_lines() {
-        // 如果目录有子目录，输出会更多行，最后一行可能是目录名
-        let output = "卷 系统 的文件夹 PATH 列表\n卷序列号为 2810-11C7\nC:.\n├─subdir\n└─another";
-        let banner = WinBanner::parse(output).expect("多行应该解析成功");
+        // 即使有超过 4 行，也只取前 4 行的固定位置
+        let output = "line1\nline2\nline3\nline4\nline5\nline6";
+        let banner = WinBanner::parse(output).expect("多于4行也应解析成功");
 
-        assert_eq!(banner.volume_line, "卷 系统 的文件夹 PATH 列表");
-        assert_eq!(banner.serial_line, "卷序列号为 2810-11C7");
-        assert_eq!(banner.no_subfolder, "└─another"); // 最后一行
+        assert_eq!(banner.volume_line, "line1");
+        assert_eq!(banner.serial_line, "line2");
+        assert_eq!(banner.no_subfolder, "line4");
     }
 
     #[test]
@@ -1147,6 +1166,22 @@ mod tests {
         let output = "";
         let result = WinBanner::parse(output);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_win_banner_parse_different_drives() {
+        // 验证不同盘符的输出格式相同
+        let output_c = "卷 系统 的文件夹 PATH 列表\n卷序列号为 1234-5678\nC:.\n没有子文件夹";
+        let output_d = "卷 数据 的文件夹 PATH 列表\n卷序列号为 ABCD-EF01\nD:.\n没有子文件夹";
+
+        let banner_c = WinBanner::parse(output_c).expect("C盘解析应成功");
+        let banner_d = WinBanner::parse(output_d).expect("D盘解析应成功");
+
+        assert_eq!(banner_c.no_subfolder, "没有子文件夹");
+        assert_eq!(banner_d.no_subfolder, "没有子文件夹");
+        // 卷名和序列号会不同
+        assert_ne!(banner_c.volume_line, banner_d.volume_line);
+        assert_ne!(banner_c.serial_line, banner_d.serial_line);
     }
 
     // ========================================================================
@@ -1216,14 +1251,16 @@ mod tests {
         assert_eq!(chars.branch, "├─");
         assert_eq!(chars.last_branch, "└─");
         assert_eq!(chars.vertical, "│   ");
+        assert_eq!(chars.space, "    ");
     }
 
     #[test]
     fn test_tree_chars_ascii() {
         let chars = TreeChars::from_charset(CharsetMode::Ascii);
-        assert_eq!(chars.branch, "+--");
-        assert_eq!(chars.last_branch, "\\--");
+        assert_eq!(chars.branch, "+---");
+        assert_eq!(chars.last_branch, "\\---");
         assert_eq!(chars.vertical, "|   ");
+        assert_eq!(chars.space, "    ");
     }
 
     // ========================================================================

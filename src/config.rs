@@ -4,6 +4,7 @@
 //! 所有命令行参数经 CLI 层解析后，统一转换为 `Config` 结构，
 //! 后续扫描、匹配、渲染、输出各层仅依赖此配置，不再直接访问原始参数。
 //!
+//! 文件: src/config.rs
 //! 作者: WaterRun
 //! 更新于: 2025-01-06
 
@@ -214,8 +215,8 @@ impl OutputFormat {
 /// use treepp::config::CharsetMode;
 ///
 /// let mode = CharsetMode::Ascii;
-/// assert_eq!(mode.branch(), "+--");
-/// assert_eq!(mode.last_branch(), "\\--");
+/// assert_eq!(mode.branch(), "+---");
+/// assert_eq!(mode.last_branch(), "\\---");
 ///
 /// let mode = CharsetMode::Unicode;
 /// assert_eq!(mode.branch(), "├─");
@@ -236,7 +237,7 @@ impl CharsetMode {
     pub const fn branch(&self) -> &'static str {
         match self {
             Self::Unicode => "├─",
-            Self::Ascii => "+--",
+            Self::Ascii => "+---",
         }
     }
 
@@ -245,7 +246,7 @@ impl CharsetMode {
     pub const fn last_branch(&self) -> &'static str {
         match self {
             Self::Unicode => "└─",
-            Self::Ascii => "\\--",
+            Self::Ascii => "\\---",
         }
     }
 
@@ -253,7 +254,7 @@ impl CharsetMode {
     #[must_use]
     pub const fn vertical(&self) -> &'static str {
         match self {
-            Self::Unicode => "│  ",
+            Self::Unicode => "│   ",
             Self::Ascii => "|   ",
         }
     }
@@ -262,7 +263,7 @@ impl CharsetMode {
     #[must_use]
     pub const fn indent(&self) -> &'static str {
         match self {
-            Self::Unicode => "   ",
+            Self::Unicode => "    ",
             Self::Ascii => "    ",
         }
     }
@@ -850,15 +851,15 @@ mod tests {
         let mode = CharsetMode::Unicode;
         assert_eq!(mode.branch(), "├─");
         assert_eq!(mode.last_branch(), "└─");
-        assert_eq!(mode.vertical(), "│  ");
-        assert_eq!(mode.indent(), "   ");
+        assert_eq!(mode.vertical(), "│   ");
+        assert_eq!(mode.indent(), "    ");
     }
 
     #[test]
     fn charset_mode_ascii_should_return_ascii_symbols() {
         let mode = CharsetMode::Ascii;
-        assert_eq!(mode.branch(), "+--");
-        assert_eq!(mode.last_branch(), "\\--");
+        assert_eq!(mode.branch(), "+---");
+        assert_eq!(mode.last_branch(), "\\---");
         assert_eq!(mode.vertical(), "|   ");
         assert_eq!(mode.indent(), "    ");
     }

@@ -23,6 +23,7 @@
 //! }
 //! ```
 //!
+//! 文件: src/cli.rs
 //! 作者: WaterRun
 //! 更新于: 2025-01-06
 
@@ -685,7 +686,7 @@ impl CliParser {
 /// ```
 #[must_use]
 pub fn help_text() -> &'static str {
-    r#"tree++ - A better Windows tree command
+    r#"tree++: A much better Windows tree command.
 
 Usage:
   treepp [<PATH>] [<OPTIONS>...]
