@@ -76,5 +76,7 @@ treepp /f
 | `--output` `-o` `/O`          | Output results to a file (`.txt`, `.json`, `.yml`, `.toml`) |
 | `--thread` `-t` `/T`          | Number of scan threads (default is 8)                       |
 | `--gitignore` `-g` `/G`       | Honor `.gitignore`                                          |
+| `--quote` `-q` `/Q`           | Wrap file names in double quotes                            |
+| `--dirs-first` `-D` `/DF`     | Display directories first                                   |
 
 > For the full option set, see: [tree++ Options Documentation](./OPTIONS.md)
