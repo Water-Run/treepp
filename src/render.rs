@@ -214,7 +214,7 @@ fn extract_drive_letter(root_path: &Path) -> Result<char, RenderError> {
 
     Err(RenderError::InvalidPath {
         path: root_path.to_path_buf(),
-        reason: "无法提取盘符".to_string(),
+        reason: "Unable to extract drive letter".to_string(),
     })
 }
 
@@ -386,8 +386,8 @@ fn format_entry_meta(node: &TreeNode, config: &Config) -> String {
     }
 
     // 目录累计大小
-    if config.render.show_disk_usage && node.kind == EntryKind::Directory {
-        if let Some(usage) = node.disk_usage {
+    if config.render.show_disk_usage && node.kind == EntryKind::Directory
+        && let Some(usage) = node.disk_usage {
             let usage_str = if config.render.human_readable {
                 format_size_human(usage)
             } else {
@@ -395,14 +395,12 @@ fn format_entry_meta(node: &TreeNode, config: &Config) -> String {
             };
             parts.push(usage_str);
         }
-    }
 
     // 修改日期
-    if config.render.show_date {
-        if let Some(ref modified) = node.metadata.modified {
+    if config.render.show_date
+        && let Some(ref modified) = node.metadata.modified {
             parts.push(format_datetime(modified));
         }
-    }
 
     if parts.is_empty() {
         String::new()
@@ -440,8 +438,6 @@ pub struct StreamRenderConfig {
     pub no_win_banner: bool,
     /// 是否显示文件
     pub show_files: bool,
-    /// 是否遵循 gitignore
-    pub respect_gitignore: bool,
 }
 
 impl StreamRenderConfig {
@@ -470,7 +466,6 @@ impl StreamRenderConfig {
             show_report: config.render.show_report,
             no_win_banner: config.render.no_win_banner,
             show_files: config.scan.show_files,
-            respect_gitignore: config.scan.respect_gitignore,
         }
     }
 }
@@ -566,7 +561,7 @@ impl StreamRenderer {
             match WinBanner::fetch_for_drive(d) {
                 Ok(b) => Some(b),
                 Err(e) => {
-                    let _ = writeln!(output, "警告: {}", e);
+                    let _ = writeln!(output, "Warning: {}", e);
                     None
                 }
             }
@@ -586,7 +581,7 @@ impl StreamRenderer {
         let root_display = match format_root_path_display(root_path, path_explicitly_set) {
             Ok(s) => s,
             Err(e) => {
-                let _ = writeln!(output, "警告: {}", e);
+                let _ = writeln!(output, "Warning: {}", e);
                 root_path.to_string_lossy().to_uppercase()
             }
         };
@@ -723,11 +718,10 @@ impl StreamRenderer {
         // 注意：流式模式下不支持 disk_usage，因为需要完整树才能计算
 
         // 修改日期
-        if self.config.show_date {
-            if let Some(ref modified) = metadata.modified {
+        if self.config.show_date
+            && let Some(ref modified) = metadata.modified {
                 parts.push(format_datetime(modified));
             }
-        }
 
         if parts.is_empty() {
             String::new()
@@ -806,30 +800,6 @@ impl StreamRenderer {
 
         output
     }
-
-    /// 渲染无子目录提示（当目录为空时使用）
-    #[must_use]
-    pub fn render_no_subfolder(&self, has_subdirectories: bool, drive: Option<char>) -> String {
-        if self.config.no_win_banner {
-            return String::new();
-        }
-
-        // 只有当没有子目录时才显示提示
-        if has_subdirectories {
-            return String::new();
-        }
-
-        if let Some(d) = drive {
-            match WinBanner::fetch_for_drive(d) {
-                Ok(banner) if !banner.no_subfolder.is_empty() => {
-                    format!("\n{}\n", banner.no_subfolder)
-                }
-                _ => String::new(),
-            }
-        } else {
-            String::new()
-        }
-    }
 }
 
 // ============================================================================
@@ -852,7 +822,7 @@ pub fn render(stats: &ScanStats, config: &Config) -> RenderResult {
         match WinBanner::fetch_for_drive(d) {
             Ok(b) => Some(b),
             Err(e) => {
-                let _ = writeln!(output, "警告: {}", e);
+                let _ = writeln!(output, "Warning: {}", e);
                 None
             }
         }
@@ -869,11 +839,12 @@ pub fn render(stats: &ScanStats, config: &Config) -> RenderResult {
     }
 
     // 根路径（使用新的格式化函数）
-    let root_display = match format_root_path_display(&config.root_path, config.path_explicitly_set) {
+    let root_display = match format_root_path_display(&config.root_path, config.path_explicitly_set)
+    {
         Ok(s) => s,
         Err(e) => {
             // 格式化失败时回退到原始显示并输出警告
-            let _ = writeln!(output, "警告: {}", e);
+            let _ = writeln!(output, "Warning: {}", e);
             config.root_path.to_string_lossy().to_uppercase()
         }
     };
@@ -888,15 +859,13 @@ pub fn render(stats: &ScanStats, config: &Config) -> RenderResult {
     }
 
     // 无子目录提示（当目录没有子目录时显示，不考虑文件）
-    if !tree_has_subdirectories(&stats.tree) {
-        if let Some(b) = &banner {
-            if !b.no_subfolder.is_empty() {
+    if !tree_has_subdirectories(&stats.tree)
+        && let Some(b) = &banner
+            && !b.no_subfolder.is_empty() {
                 output.push('\n');
                 output.push_str(&b.no_subfolder);
                 output.push('\n');
             }
-        }
-    }
 
     // gitignore 提示
     if config.scan.respect_gitignore {
@@ -1105,8 +1074,7 @@ mod tests {
 
     #[test]
     fn test_win_banner_parse_with_trailing_whitespace() {
-        let output =
-            "卷 系统 的文件夹 PATH 列表  \n  卷序列号为 2810-11C7\nC:.\n没有子文件夹  \n";
+        let output = "卷 系统 的文件夹 PATH 列表  \n  卷序列号为 2810-11C7\nC:.\n没有子文件夹  \n";
         let banner = WinBanner::parse(output).expect("解析应成功");
 
         assert_eq!(banner.volume_line, "卷 系统 的文件夹 PATH 列表");
@@ -1116,8 +1084,7 @@ mod tests {
 
     #[test]
     fn test_win_banner_parse_english_locale() {
-        let output =
-            "Folder PATH listing for volume OS\nVolume serial number is ABCD-1234\nC:.\nNo subfolders exist";
+        let output = "Folder PATH listing for volume OS\nVolume serial number is ABCD-1234\nC:.\nNo subfolders exist";
         let banner = WinBanner::parse(output).expect("解析应成功");
 
         assert_eq!(banner.volume_line, "Folder PATH listing for volume OS");
@@ -1557,7 +1524,6 @@ mod tests {
         assert!(render_config.human_readable);
         assert!(render_config.quote_names);
         assert!(render_config.show_files);
-        assert!(render_config.respect_gitignore);
     }
 
     // ========================================================================
@@ -1585,7 +1551,6 @@ mod tests {
         assert_eq!(result.directory_count, 1);
         assert_eq!(result.file_count, 3);
     }
-
 
     #[test]
     fn test_render_ascii() {

@@ -6,7 +6,7 @@
 //!
 //! 文件: src/config.rs
 //! 作者: WaterRun
-//! 更新于: 2025-01-06
+//! 更新于: 2025-01-07
 
 #![forbid(unsafe_code)]
 
@@ -37,7 +37,7 @@ use thiserror::Error;
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ConfigError {
     /// 选项之间存在冲突
-    #[error("选项冲突: {opt_a} 与 {opt_b} 不能同时使用 ({reason})")]
+    #[error("Option conflict: {opt_a} and {opt_b} cannot be used together ({reason})")]
     ConflictingOptions {
         /// 冲突选项 A
         opt_a: String,
@@ -48,7 +48,7 @@ pub enum ConfigError {
     },
 
     /// 参数值无效
-    #[error("无效参数值: {option} = {value} ({reason})")]
+    #[error("Invalid parameter value: {option} = {value} ({reason})")]
     InvalidValue {
         /// 选项名称
         option: String,
@@ -59,7 +59,7 @@ pub enum ConfigError {
     },
 
     /// 路径不存在或不可访问
-    #[error("路径无效: {path} ({reason})")]
+    #[error("Invalid path: {path} ({reason})")]
     InvalidPath {
         /// 路径
         path: PathBuf,
@@ -68,7 +68,9 @@ pub enum ConfigError {
     },
 
     /// 输出格式无法推导
-    #[error("无法推导输出格式: {path} (支持的扩展名: .txt, .json, .yml, .yaml, .toml)")]
+    #[error(
+        "Unable to infer output format: {path} (supported extensions: .txt, .json, .yml, .yaml, .toml)"
+    )]
     UnknownOutputFormat {
         /// 输出文件路径
         path: PathBuf,
@@ -583,7 +585,7 @@ impl Config {
         if !self.root_path.exists() {
             return Err(ConfigError::InvalidPath {
                 path: self.root_path.clone(),
-                reason: "路径不存在".to_string(),
+                reason: "Path does not exist".to_string(),
             });
         }
 
@@ -591,7 +593,7 @@ impl Config {
         if !self.root_path.is_dir() {
             return Err(ConfigError::InvalidPath {
                 path: self.root_path.clone(),
-                reason: "路径不是目录".to_string(),
+                reason: "Path is not a directory".to_string(),
             });
         }
 
@@ -603,7 +605,7 @@ impl Config {
             }
             Err(e) => Err(ConfigError::InvalidPath {
                 path: self.root_path.clone(),
-                reason: format!("无法规范化路径: {}", e),
+                reason: format!("Failed to canonicalize path: {}", e),
             }),
         }
     }
@@ -615,7 +617,9 @@ impl Config {
             return Err(ConfigError::ConflictingOptions {
                 opt_a: "--silent".to_string(),
                 opt_b: "(无 --output)".to_string(),
-                reason: "静默模式必须指定输出文件，否则无任何输出".to_string(),
+                reason:
+                    "Silent mode requires an output file; otherwise no output will be produced."
+                        .to_string(),
             });
         }
 
@@ -684,8 +688,7 @@ impl Config {
     /// ```
     #[must_use]
     pub const fn needs_time_info(&self) -> bool {
-        self.render.show_date
-            || matches!(self.render.sort_key, SortKey::Mtime | SortKey::Ctime)
+        self.render.show_date || matches!(self.render.sort_key, SortKey::Mtime | SortKey::Ctime)
     }
 
     /// 判断是否应使用流式输出模式
@@ -722,9 +725,6 @@ impl Config {
     }
 }
 
-// ============================================================================
-// 单元测试
-// ============================================================================
 // ============================================================================
 // 单元测试
 // ============================================================================
@@ -1108,7 +1108,7 @@ mod tests {
         match result.unwrap_err() {
             ConfigError::InvalidPath { path, reason } => {
                 assert_eq!(path, PathBuf::from("/nonexistent/path/that/does/not/exist"));
-                assert!(reason.contains("不存在"));
+                assert!(reason.contains("Path does not exist"));
             }
             _ => panic!("应返回 InvalidPath 错误"),
         }
@@ -1122,7 +1122,7 @@ mod tests {
         assert!(result.is_err());
         match result.unwrap_err() {
             ConfigError::InvalidPath { reason, .. } => {
-                assert!(reason.contains("不是目录"));
+                assert!(reason.contains("Path is not a directory"));
             }
             _ => panic!("应返回 InvalidPath 错误"),
         }
@@ -1264,11 +1264,11 @@ mod tests {
     fn config_error_invalid_path_should_display_correctly() {
         let err = ConfigError::InvalidPath {
             path: PathBuf::from("/invalid/path"),
-            reason: "路径不存在".to_string(),
+            reason: "Path does not exist".to_string(),
         };
         let msg = err.to_string();
         assert!(msg.contains("/invalid/path") || msg.contains("\\invalid\\path"));
-        assert!(msg.contains("路径不存在"));
+        assert!(msg.contains("Path does not exist"));
     }
 
     #[test]

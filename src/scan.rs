@@ -25,8 +25,8 @@ use std::time::{Duration, Instant, SystemTime};
 
 use glob::Pattern;
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
-use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
+use rayon::prelude::*;
 
 use crate::config::{Config, SortKey};
 use crate::error::{MatchError, ScanError, TreeppResult};
@@ -659,11 +659,7 @@ pub fn sort_tree(node: &mut TreeNode, sort_key: SortKey, reverse: bool, dirs_fir
             SortKey::Ctime => a.metadata.created.cmp(&b.metadata.created),
         };
 
-        if reverse {
-            cmp.reverse()
-        } else {
-            cmp
-        }
+        if reverse { cmp.reverse() } else { cmp }
     });
 
     // 递归排序子节点的子节点
@@ -719,11 +715,7 @@ fn sort_entries(
             SortKey::Ctime => meta_a.created().ok().cmp(&meta_b.created().ok()),
         };
 
-        if reverse {
-            cmp.reverse()
-        } else {
-            cmp
-        }
+        if reverse { cmp.reverse() } else { cmp }
     });
 }
 
@@ -823,11 +815,10 @@ fn scan_dir(
     }
 
     // 深度限制检查：如果已达到最大深度，返回空目录节点（不处理子项）
-    if let Some(max) = ctx.max_depth {
-        if depth >= max {
+    if let Some(max) = ctx.max_depth
+        && depth >= max {
             return Some(TreeNode::new(path.to_path_buf(), kind, metadata));
         }
-    }
 
     // 构建当前目录的 gitignore 链
     let current_chain = if ctx.respect_gitignore {
@@ -925,14 +916,14 @@ pub fn scan(config: &Config) -> TreeppResult<ScanStats> {
         return Err(ScanError::PathNotFound {
             path: config.root_path.clone(),
         }
-            .into());
+        .into());
     }
 
     if !config.root_path.is_dir() {
         return Err(ScanError::NotADirectory {
             path: config.root_path.clone(),
         }
-            .into());
+        .into());
     }
 
     // 创建扫描上下文
@@ -957,7 +948,7 @@ pub fn scan(config: &Config) -> TreeppResult<ScanStats> {
         .install(|| scan_dir(&root_path, 0, &ctx, initial_chain))
         .ok_or_else(|| ScanError::ReadDirFailed {
             path: config.root_path.clone(),
-            source: std::io::Error::new(std::io::ErrorKind::Other, "无法读取根目录"),
+            source: std::io::Error::other("无法读取根目录"),
         })?;
 
     // 计算目录累计大小（如需要）
@@ -1038,14 +1029,14 @@ where
         return Err(ScanError::PathNotFound {
             path: config.root_path.clone(),
         }
-            .into());
+        .into());
     }
 
     if !config.root_path.is_dir() {
         return Err(ScanError::NotADirectory {
             path: config.root_path.clone(),
         }
-            .into());
+        .into());
     }
 
     // 创建扫描上下文
@@ -1079,11 +1070,10 @@ where
     F: FnMut(StreamEvent) -> Result<(), ScanError>,
 {
     // 深度限制检查
-    if let Some(max) = ctx.max_depth {
-        if depth >= max {
+    if let Some(max) = ctx.max_depth
+        && depth >= max {
             return Ok((0, 0));
         }
-    }
 
     // 构建当前目录的 gitignore 链
     let current_chain = if ctx.respect_gitignore {
@@ -2546,7 +2536,7 @@ mod tests {
             }
             Ok(())
         })
-            .expect("流式扫描失败");
+        .expect("流式扫描失败");
 
         assert_eq!(stats.directory_count, 3);
         assert_eq!(stats.file_count, 5);
@@ -2568,7 +2558,7 @@ mod tests {
             }
             Ok(())
         })
-            .expect("流式扫描失败");
+        .expect("流式扫描失败");
 
         assert_eq!(stats.directory_count, 3);
         assert_eq!(stats.file_count, 0);
@@ -2594,7 +2584,7 @@ mod tests {
             }
             Ok(())
         })
-            .expect("流式扫描失败");
+        .expect("流式扫描失败");
 
         // 验证 target 和 app.log 被忽略
         assert!(!names.contains(&"target".to_string()));
@@ -2615,7 +2605,7 @@ mod tests {
             }
             Ok(())
         })
-            .expect("流式扫描失败");
+        .expect("流式扫描失败");
 
         // 根目录下的条目应该是 depth=0
         let root_entries: Vec<_> = entries.iter().filter(|(_, d)| *d == 0).collect();
@@ -2647,7 +2637,7 @@ mod tests {
             }
             Ok(())
         })
-            .expect("流式扫描失败");
+        .expect("流式扫描失败");
 
         // 应该有 3 个条目
         assert_eq!(entries.len(), 3);
@@ -2680,7 +2670,7 @@ mod tests {
             }
             Ok(())
         })
-            .expect("流式扫描失败");
+        .expect("流式扫描失败");
 
         // 深度 1 应该包含根目录下的直接子项
         assert_eq!(stats.directory_count, 3);
@@ -2732,7 +2722,7 @@ mod tests {
             }
             Ok(())
         })
-            .expect("流式扫描失败");
+        .expect("流式扫描失败");
         stream_names.sort();
 
         // 流式扫描不包含根节点名称，所以需要去掉批处理的根节点

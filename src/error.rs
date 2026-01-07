@@ -13,7 +13,7 @@
 //!
 //! 文件: src/error.rs
 //! 作者: WaterRun
-//! 更新于: 2025-01-06
+//! 更新于: 2025-01-07
 
 #![forbid(unsafe_code)]
 
@@ -102,21 +102,21 @@ pub type TreeppResult<T> = Result<T, TreeppError>;
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum CliError {
     /// 未知选项
-    #[error("未知选项: {option}")]
+    #[error("Unknown option: {option}")]
     UnknownOption {
         /// 未识别的选项名
         option: String,
     },
 
     /// 选项缺少必需的参数值
-    #[error("选项 {option} 需要一个参数值")]
+    #[error("Option {option} requires a value.")]
     MissingValue {
         /// 选项名
         option: String,
     },
 
     /// 参数值格式错误
-    #[error("选项 {option} 的值 '{value}' 无效: {reason}")]
+    #[error("Invalid value '{value}' for option {option}: {reason}")]
     InvalidValue {
         /// 选项名
         option: String,
@@ -127,14 +127,14 @@ pub enum CliError {
     },
 
     /// 选项重复指定
-    #[error("选项 {option} 重复指定")]
+    #[error("Option {option} was specified more than once.")]
     DuplicateOption {
         /// 选项名
         option: String,
     },
 
     /// 选项之间冲突
-    #[error("选项冲突: {opt_a} 与 {opt_b} 不能同时使用")]
+    #[error("Option conflict: {opt_a} and {opt_b} cannot be used together.")]
     ConflictingOptions {
         /// 冲突选项 A
         opt_a: String,
@@ -143,21 +143,21 @@ pub enum CliError {
     },
 
     /// 指定了多个路径
-    #[error("只能指定一个路径，但发现多个: {paths:?}")]
+    #[error("Only one path can be specified, but multiple were provided: {paths:?}")]
     MultiplePaths {
         /// 所有发现的路径
         paths: Vec<String>,
     },
 
     /// 无法解析的路径参数
-    #[error("无法解析路径参数: {arg}")]
+    #[error("Failed to parse path argument: {arg}")]
     InvalidPath {
         /// 原始参数
         arg: String,
     },
 
     /// 底层解析错误
-    #[error("参数解析错误: {message}")]
+    #[error("Argument parsing failed: {message}")]
     ParseError {
         /// 错误消息
         message: String,
@@ -186,28 +186,28 @@ pub enum CliError {
 #[derive(Debug, Error)]
 pub enum ScanError {
     /// 路径不存在
-    #[error("路径不存在: {path}")]
+    #[error("Path not found: {path}")]
     PathNotFound {
         /// 不存在的路径
         path: PathBuf,
     },
 
     /// 路径不是目录
-    #[error("路径不是目录: {path}")]
+    #[error("Path is not a directory: {path}")]
     NotADirectory {
         /// 非目录路径
         path: PathBuf,
     },
 
     /// 权限不足
-    #[error("权限不足，无法访问: {path}")]
+    #[error("Permission denied: {path}")]
     PermissionDenied {
         /// 无权访问的路径
         path: PathBuf,
     },
 
     /// 读取目录失败
-    #[error("读取目录失败: {path}")]
+    #[error("Failed to read directory: {path}")]
     ReadDirFailed {
         /// 目录路径
         path: PathBuf,
@@ -217,7 +217,7 @@ pub enum ScanError {
     },
 
     /// 获取元数据失败
-    #[error("获取元数据失败: {path}")]
+    #[error("Failed to retrieve metadata: {path}")]
     MetadataFailed {
         /// 文件路径
         path: PathBuf,
@@ -227,7 +227,7 @@ pub enum ScanError {
     },
 
     /// 路径规范化失败
-    #[error("路径规范化失败: {path}")]
+    #[error("Failed to canonicalize path: {path}")]
     CanonicalizeFailed {
         /// 原始路径
         path: PathBuf,
@@ -237,7 +237,7 @@ pub enum ScanError {
     },
 
     /// walkdir 遍历错误
-    #[error("目录遍历错误: {message}")]
+    #[error("Directory walk error: {message}")]
     WalkError {
         /// 错误消息
         message: String,
@@ -295,7 +295,7 @@ impl ScanError {
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum MatchError {
     /// 无效的通配符模式
-    #[error("无效的匹配模式 '{pattern}': {reason}")]
+    #[error("Invalid pattern '{pattern}': {reason}")]
     InvalidPattern {
         /// 无效的模式字符串
         pattern: String,
@@ -304,7 +304,7 @@ pub enum MatchError {
     },
 
     /// gitignore 文件解析失败
-    #[error("解析 .gitignore 失败: {path}")]
+    #[error("Failed to parse .gitignore: {path}")]
     GitignoreParseError {
         /// gitignore 文件路径
         path: PathBuf,
@@ -313,7 +313,7 @@ pub enum MatchError {
     },
 
     /// gitignore 规则构建失败
-    #[error("构建 gitignore 规则失败: {reason}")]
+    #[error("Failed to build gitignore rules: {reason}")]
     GitignoreBuildError {
         /// 错误原因
         reason: String,
@@ -363,7 +363,7 @@ impl MatchError {
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum RenderError {
     /// 格式化错误
-    #[error("格式化错误 ({context}): {detail}")]
+    #[error("Formatting error ({context}): {detail}")]
     FormatError {
         /// 错误上下文
         context: String,
@@ -372,21 +372,21 @@ pub enum RenderError {
     },
 
     /// 编码错误
-    #[error("编码错误: 路径包含无效 UTF-8 字符")]
+    #[error("Encoding error: path contains invalid UTF-8 characters")]
     InvalidUtf8Path {
         /// 问题路径（尽可能转换）
         path_lossy: String,
     },
 
     /// Windows 样板信息获取失败
-    #[error("获取 Windows tree 样板信息失败: {reason}")]
+    #[error("Failed to fetch Windows tree banner: {reason}")]
     BannerFetchFailed {
         /// 失败原因
         reason: String,
     },
 
     /// 无效路径（无法提取盘符）
-    #[error("无效路径 '{path}': {reason}")]
+    #[error("Invalid path '{path}': {reason}")]
     InvalidPath {
         /// 路径
         path: PathBuf,
@@ -394,7 +394,6 @@ pub enum RenderError {
         reason: String,
     },
 }
-
 
 // ============================================================================
 // 输出错误
@@ -419,7 +418,7 @@ pub enum RenderError {
 #[derive(Debug, Error)]
 pub enum OutputError {
     /// 文件创建失败
-    #[error("无法创建输出文件: {path}")]
+    #[error("Failed to create output file: {path}")]
     FileCreateFailed {
         /// 目标文件路径
         path: PathBuf,
@@ -429,7 +428,7 @@ pub enum OutputError {
     },
 
     /// 文件写入失败
-    #[error("写入文件失败: {path}")]
+    #[error("Failed to write file: {path}")]
     WriteFailed {
         /// 目标文件路径
         path: PathBuf,
@@ -439,7 +438,7 @@ pub enum OutputError {
     },
 
     /// 序列化失败
-    #[error("{format} 序列化失败: {reason}")]
+    #[error("{format} serialization failed: {reason}")]
     SerializationFailed {
         /// 输出格式名称
         format: String,
@@ -448,7 +447,7 @@ pub enum OutputError {
     },
 
     /// 标准输出写入失败
-    #[error("写入标准输出失败")]
+    #[error("Failed to write to stdout")]
     StdoutFailed {
         /// 底层 IO 错误
         #[source]
@@ -456,7 +455,7 @@ pub enum OutputError {
     },
 
     /// 输出路径无效
-    #[error("输出路径无效: {path} ({reason})")]
+    #[error("Invalid output path: {path} ({reason})")]
     InvalidOutputPath {
         /// 输出路径
         path: PathBuf,
@@ -665,7 +664,7 @@ mod tests {
             option: "--unknown".to_string(),
         };
         assert!(err.to_string().contains("--unknown"));
-        assert!(err.to_string().contains("未知选项"));
+        assert!(err.to_string().contains("Unknown option:"));
     }
 
     #[test]
@@ -674,7 +673,7 @@ mod tests {
             option: "--level".to_string(),
         };
         assert!(err.to_string().contains("--level"));
-        assert!(err.to_string().contains("需要一个参数值"));
+        assert!(err.to_string().contains("requires a value."));
     }
 
     #[test]
@@ -743,7 +742,7 @@ mod tests {
             path: PathBuf::from("C:\\missing\\dir"),
         };
         let msg = err.to_string();
-        assert!(msg.contains("路径不存在"));
+        assert!(msg.contains("Path not found:"));
         assert!(msg.contains("C:\\missing\\dir"));
     }
 
@@ -753,7 +752,7 @@ mod tests {
             path: PathBuf::from("/root/secret"),
         };
         let msg = err.to_string();
-        assert!(msg.contains("权限不足"));
+        assert!(msg.contains("Permission denied"));
     }
 
     // ------------------------------------------------------------------------
@@ -781,7 +780,7 @@ mod tests {
         };
         let msg = err.to_string();
         assert!(msg.contains("**["));
-        assert!(msg.contains("无效的匹配模式"));
+        assert!(msg.contains("Invalid pattern"));
     }
 
     #[test]
@@ -828,7 +827,7 @@ mod tests {
             path_lossy: "some\u{FFFD}path".to_string(),
         };
         let msg = err.to_string();
-        assert!(msg.contains("无效 UTF-8"));
+        assert!(msg.contains("invalid UTF-8"));
     }
 
     // ------------------------------------------------------------------------
@@ -887,7 +886,7 @@ mod tests {
         };
         let msg = err.to_string();
         assert!(msg.contains("output.json"));
-        assert!(msg.contains("无法创建"));
+        assert!(msg.contains("Failed to create output file:"));
     }
 
     // ------------------------------------------------------------------------

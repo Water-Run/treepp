@@ -17,7 +17,7 @@
 //!
 //! 文件: src/main.rs
 //! 作者: WaterRun
-//! 更新于: 2025-01-06
+//! 更新于: 2025-01-07
 
 #![forbid(unsafe_code)]
 #![deny(warnings)]
@@ -111,12 +111,12 @@ fn error_to_exit_code(err: &TreeppError) -> u8 {
 /// 根据错误类型格式化输出，提供用户友好的错误提示。
 fn print_error(err: &TreeppError) {
     let prefix = match err {
-        TreeppError::Cli(_) => "参数错误",
-        TreeppError::Config(_) => "配置错误",
-        TreeppError::Scan(_) => "扫描错误",
-        TreeppError::Match(_) => "匹配错误",
-        TreeppError::Render(_) => "渲染错误",
-        TreeppError::Output(_) => "输出错误",
+        TreeppError::Cli(_) => "CLI error",
+        TreeppError::Config(_) => "Config error",
+        TreeppError::Scan(_) => "Scan error",
+        TreeppError::Match(_) => "Match error",
+        TreeppError::Render(_) => "Render error",
+        TreeppError::Output(_) => "Output error",
     };
 
     eprintln!("tree++: {}: {}", prefix, err);
@@ -124,10 +124,10 @@ fn print_error(err: &TreeppError) {
     // 对于特定错误类型，提供额外提示
     match err {
         TreeppError::Cli(CliError::UnknownOption { .. }) => {
-            eprintln!("提示: 使用 treepp --help 查看可用选项");
+            eprintln!("Hint: run `treepp --help` to list available options");
         }
         TreeppError::Cli(CliError::MultiplePaths { .. }) => {
-            eprintln!("提示: 只能指定一个目标路径");
+            eprintln!("Hint: only one target path can be specified.");
         }
         _ => {}
     }

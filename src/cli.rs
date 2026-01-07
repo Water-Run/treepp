@@ -721,7 +721,6 @@ Options:
 More info: https://github.com/Water-Run/treepp"#
 }
 
-
 /// 获取版本信息字符串
 ///
 /// # Examples
@@ -1773,10 +1772,7 @@ mod tests {
         let result = parser.parse();
 
         // 当前目录应该存在，所以解析应该成功
-        assert!(
-            result.is_ok(),
-            "只有选项无路径应该成功（使用当前目录）"
-        );
+        assert!(result.is_ok(), "只有选项无路径应该成功（使用当前目录）");
     }
 
     // ------------------------------------------------------------------------
@@ -1905,12 +1901,7 @@ mod tests {
 
         let parser = parser_with_temp_dir(
             &temp_dir,
-            vec![
-                "--output",
-                output_file.to_str().unwrap(),
-                "--silent",
-                "/F",
-            ],
+            vec!["--output", output_file.to_str().unwrap(), "--silent", "/F"],
         );
 
         if let Ok(ParseResult::Config(config)) = parser.parse() {

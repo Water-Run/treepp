@@ -9,7 +9,7 @@
 //!
 //! 文件: src/output.rs
 //! 作者: WaterRun
-//! 更新于: 2025-01-06
+//! 更新于: 2025-01-07
 
 #![forbid(unsafe_code)]
 
@@ -382,14 +382,13 @@ pub fn write_stdout(content: &str, config: &Config) -> Result<(), OutputError> {
 /// ```
 pub fn write_file(content: &str, path: &Path) -> Result<(), OutputError> {
     // 确保父目录存在
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() && !parent.exists() {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty() && !parent.exists() {
             fs::create_dir_all(parent).map_err(|e| OutputError::FileCreateFailed {
                 path: path.to_path_buf(),
                 source: e,
             })?;
         }
-    }
 
     // 创建文件并写入
     let file = File::create(path).map_err(|e| OutputError::FileCreateFailed {
@@ -630,19 +629,18 @@ pub fn validate_output_path(path: &Path) -> Result<(), OutputError> {
     if path.exists() && path.is_dir() {
         return Err(OutputError::InvalidOutputPath {
             path: path.to_path_buf(),
-            reason: "路径指向已存在的目录，需要指定文件名".to_string(),
+            reason: "Path points to an existing directory; please specify a file name.".to_string(),
         });
     }
 
     // 检查父目录
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() && parent.exists() && !parent.is_dir() {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty() && parent.exists() && !parent.is_dir() {
             return Err(OutputError::InvalidOutputPath {
                 path: path.to_path_buf(),
-                reason: "父路径不是目录".to_string(),
+                reason: "Parent path is not a directory.".to_string(),
             });
         }
-    }
 
     Ok(())
 }
@@ -835,7 +833,7 @@ mod tests {
         assert!(result.is_err());
 
         if let Err(OutputError::InvalidOutputPath { reason, .. }) = result {
-            assert!(reason.contains("目录"));
+            assert!(reason.contains("directory"));
         }
     }
 
