@@ -2,23 +2,31 @@
 
 *[中文](./README-zh.md)*
 
-The Windows `tree` command has barely changed since it was released nearly 40 years ago. In the LLM era, it is a very commonly used tool for describing project structures, but with only `/f` and `/a`, its capabilities are clearly insufficient. It is also slow.
+The `tree` command on Windows has seen virtually no changes since it was released nearly 40 years ago. In today’s LLM era, as a tool that is very commonly used to describe project structure, the only two options—`/f` and `/a`—are clearly insufficient. It is also not particularly fast.
 
 **`tree++` is a comprehensive upgrade to `tree`**, bringing the following to the Windows `tree` command:
 
-- ***An extended option set, covering commonly used features such as showing file sizes, limiting recursion depth, changing output styles, exporting results to a file, and excluding specific directories (including honoring `.gitignore`).***
-- ***Multi-threading support, delivering significant performance improvements on large and complex directories.***
-- ***Fully compatible with the original Windows `tree` command’s options and output, and also compatible with Unix-style options (such as `-f` and `--files`).***
+* ***An expanded parameter set, covering common features such as displaying file sizes, limiting recursion depth, changing output style, writing results to a file, and excluding specified directories (including honoring `.gitignore`)***
+* ***Better performance via a Rust implementation; additionally supports multithreading in batch mode, delivering a significant scanning speed improvement***
+* ***Full compatibility with the original Windows `tree` command’s parameters and output format, while also supporting Unix-style options (such as `-f` and `--files`)***
 
-**`tree++` is implemented in `Rust`**, and is open-sourced on [GitHub](https://github.com/Water-Run/treepp).
+**`tree++` is implemented in `Rust`** and is open-sourced on [GitHub](https://github.com/Water-Run/treepp).
+
 
 *Performance comparison (using `C:\Windows` as an example):*
 
-| Type                          | Time (`ms`) | Multiplier |
-| ----------------------------- | ----------- | ---------- |
-| Native `tree`                 | `34055.50`  | 1.0x       |
-| `treepp` (default, 8 threads) | `3480.12`   | 9.79x      |
-| `treepp` (1 thread)           | `6687.58`   | 5.09x      |
+| Type                       | Time (`ms`) | Multiplier |
+|----------------------------|------------:|-----------:|
+| `tree /f` (Windows Native) |  `34367.81` |    `1.00x` |
+| `treepp /f`                |   `8948.63` |    `3.84x` |
+| `treepp /f /nb`            |   `8690.36` |    `3.95x` |
+| `treepp /f /nb /b`         |   `3816.34` |    `9.01x` |
+| `treepp /f /nb /b /t 1`    |  `10672.62` |    `3.22x` |
+| `treepp /f /nb /b /t 2`    |   `6769.22` |    `5.08x` |
+| `treepp /f /nb /b /t 4`    |   `4717.16` |    `7.29x` |
+| `treepp /f /nb /b /t 8`    |   `3797.09` |    `9.05x` |
+| `treepp /f /nb /b /t 16`   |   `3026.32` |   `11.36x` |
+| `treepp /f /nb /b /t 32`   |   `3013.44` |   `11.40x` |
 
 ## Installation
 
@@ -35,7 +43,7 @@ You should see output like:
 ```plaintext
 tree++ version 0.1.0
 
-A much better Windows tree command.
+A Much Better Windows `tree` Command.
 
 author: WaterRun
 link: https://github.com/Water-Run/treepp
@@ -67,16 +75,13 @@ treepp /f
 | `--level` `-L` `/L`           | Limit recursion depth                                       |
 | `--include` `-m` `/M`         | Show only matching files                                    |
 | `--disk-usage` `-u` `/DU`     | Show cumulative directory size                              |
-| `--ignore-case` `-c` `/IC`    | Ignore case when matching                                   |
 | `--report` `-e` `/RP`         | Show trailing summary statistics                            |
 | `--prune` `-P` `/P`           | Prune empty directories                                     |
-| `--sort` `-S` `/SO`           | Specify sort method (`name`, `size`, `mtime`, etc.)         |
 | `--no-win-banner` `-N` `/NB`  | Hide the Windows-native tree banner output                  |
 | `--silent` `-l` `/SI`         | Silent terminal output (use with `output`)                  |
 | `--output` `-o` `/O`          | Output results to a file (`.txt`, `.json`, `.yml`, `.toml`) |
-| `--thread` `-t` `/T`          | Number of scan threads (default is 8)                       |
+| `--batch` `-b` `/B`           | Use batch mode                                              |
+| `--thread` `-t` `/T`          | Number of scan threads (batch mode, default is 8)           |
 | `--gitignore` `-g` `/G`       | Honor `.gitignore`                                          |
-| `--quote` `-q` `/Q`           | Wrap file names in double quotes                            |
-| `--dirs-first` `-D` `/DF`     | Display directories first                                   |
 
 > For the full option set, see: [tree++ Options Documentation](./OPTIONS.md)

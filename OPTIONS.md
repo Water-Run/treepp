@@ -1,16 +1,16 @@
 # `tree++`: Complete Options Documentation and Examples
 
-This document describes all supported options and usage examples for [tree++](https://github.com/Water-Run/treepp).
+This document provides a comprehensive description of all options supported by [tree++](https://github.com/Water-Run/treepp) along with usage examples.
 
-## Sample Directory
+## Mock Directory
 
-All command examples are based on this sample directory structure:
+The example outputs in this document are based on this mock directory:
 
 ```powershell
 PS D:\Rust\tree++> treepp /F
 Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
-D:\RUST\TREE++
+D:.
 │   Cargo.toml
 │   LICENSE
 │   OPTIONS-zh.md
@@ -28,7 +28,7 @@ D:\RUST\TREE++
         scan.rs
 ```
 
-> `treepp /F` behaves identically to the native Windows `tree /F`: displays volume header and tree structure. Running `treepp` alone maintains the original semantics of showing only directory structure.
+> `treepp /F` behaves exactly like the native Windows `tree /F`: displays volume header information and tree structure. Running `treepp` directly also maintains the original semantics of showing only the directory structure.
 
 ## General Usage
 
@@ -36,27 +36,30 @@ D:\RUST\TREE++
 treepp [<PATH>] [<OPTIONS>...]
 ```
 
-- `<PATH>`: Optional, defaults to current directory. When no path is specified, the root is displayed as `X:.`; when explicitly specified, it shows the full uppercase path.
-- `<OPTIONS>`: Can be repeated and mixed. Supports three forms listed in the table below: `--` (GNU-style, case-sensitive), `-` (short options, case-sensitive), and `/` (CMD-style, case-insensitive).
+- `<PATH>`: Optional, defaults to current directory. When no path is specified, the root path displays as `X:.` format; when explicitly specified, displays as a full uppercase path.
+- `<OPTIONS>`: Can be repeated and mixed. Supports three forms listed in the table below: `--` (GNU-style, case-sensitive), `-` (short form, case-sensitive), and `/` (CMD-style, case-insensitive).
 
-## Output Mode Explanation
+## Output Mode Description
 
-### Streaming Output
+`tree++` supports two output modes:
 
-`tree++` uses **streaming output** mode by default, rendering and displaying results as it scans for real-time scrolling effect.
+### Streaming Output (Default)
 
-The following conditions will **fall back to batch mode** (complete scan before output):
+Scans, renders, and outputs simultaneously for real-time scrolling effect. Suitable for most interactive scenarios.
 
-- Non-TXT output format (e.g., JSON, YAML, TOML)
-- `/DU` enabled (cumulative directory size requires full tree calculation)
-- Output file specified (`/O`)
-- Silent mode enabled (`/SI`)
+### Batch Mode
+
+Explicitly enabled via `--batch` (`-b` / `/B`). Outputs only after complete scanning. The following features **require batch mode**:
+
+- Structured output formats (JSON, YAML, TOML)
+- `/DU` (cumulative directory size, requires complete tree calculation)
+- `/T` (multi-threaded scanning)
 
 ## Detailed Option Descriptions
 
 ### `/?`: Show Help
 
-**Function:** Display complete option help information.
+**Function:** Displays complete option help information.
 
 **Syntax:**
 
@@ -76,6 +79,7 @@ Usage:
 Options:
   --help, -h, /?              Show help information
   --version, -v, /V           Show version information
+  --batch, -b, /B             Use batch processing mode
   --ascii, -a, /A             Draw the tree using ASCII characters
   --files, -f, /F             Show files
   --full-path, -p, /FP        Show full paths
@@ -87,25 +91,22 @@ Options:
   --exclude, -I, /X <PATTERN> Exclude files matching the pattern
   --level, -L, /L <N>         Limit recursion depth
   --include, -m, /M <PATTERN> Show only files matching the pattern
-  --disk-usage, -u, /DU       Show cumulative directory sizes
-  --ignore-case, -c, /IC      Case-insensitive matching
+  --disk-usage, -u, /DU       Show cumulative directory sizes (requires --batch)
   --report, -e, /RP           Show summary statistics at the end
   --prune, -P, /P             Prune empty directories
-  --sort, -S, /SO <KEY>       Set sort mode (name, size, mtime, ctime)
   --no-win-banner, -N, /NB    Do not show the Windows native tree banner/header
-  --silent, -l, /SI           Silent mode (use with --output)
+  --silent, -l, /SI           Silent mode (requires --output)
   --output, -o, /O <FILE>     Write output to a file (.txt, .json, .yml, .toml)
-  --thread, -t, /T <N>        Number of scanning threads (default: 8)
+                              Note: JSON/YAML/TOML formats require --batch
+  --thread, -t, /T <N>        Number of scanning threads (requires --batch, default: 8)
   --gitignore, -g, /G         Respect .gitignore
-  --quote, -q, /Q             Wrap file names in double quotes
-  --dirs-first, -D, /DF       List directories first
 
 More info: https://github.com/Water-Run/treepp
 ```
 
 ### `/V`: Show Version
 
-**Function:** Display current version information.
+**Function:** Outputs current version information.
 
 **Syntax:**
 
@@ -125,9 +126,25 @@ author: WaterRun
 link: https://github.com/Water-Run/treepp
 ```
 
-### `/A`: Draw Tree with ASCII Characters
+### `/B`: Batch Mode
 
-**Function:** Output using ASCII tree characters, compatible with `tree /A`.
+**Function:** Enables batch mode, outputting only after complete scanning. Some features (such as structured output, disk usage calculation, multi-threaded scanning) require this mode.
+
+**Syntax:**
+
+```powershell
+treepp (--batch | -b | /B) [<PATH>]
+```
+
+**Example:**
+
+```powershell
+PS D:\Rust\tree++> treepp /B /F /DU
+```
+
+### `/A`: Draw Tree Using ASCII Characters
+
+**Function:** Outputs using ASCII tree characters, compatible with `tree /A`.
 
 **Syntax:**
 
@@ -135,11 +152,11 @@ link: https://github.com/Water-Run/treepp
 treepp (--ascii | -a | /A) [<PATH>]
 ```
 
-**Tree Character Comparison:**
+**Tree Symbol Comparison:**
 
 | Mode    | Branch | Last Branch | Vertical | Indent   |
 |---------|--------|-------------|----------|----------|
-| Unicode | `├─`   | `└─`        | `│   `   | 4 spaces |
+| Unicode | `├─`   | `└─`        | `│`      | 4 spaces |
 | ASCII   | `+---` | `\---`      | `        | `        | 4 spaces |
 
 **Example:**
@@ -154,7 +171,7 @@ D:.
 
 ### `/F`: Show Files
 
-**Function:** List file entries in the directory tree.
+**Function:** Lists file entries in the directory tree.
 
 **Syntax:**
 
@@ -188,7 +205,7 @@ D:.
 
 ### `/FP`: Show Full Paths
 
-**Function:** Display all entries with absolute paths.
+**Function:** Displays all entries with absolute paths.
 
 **Syntax:**
 
@@ -222,7 +239,7 @@ D:\RUST\TREE++
 
 ### `/HR`: Human-Readable File Sizes
 
-**Function:** Convert file sizes to readable units like B/KB/MB/GB/TB. Enabling this option automatically enables `/S`.
+**Function:** Converts file sizes to readable units such as B/KB/MB/GB/TB. Enabling this option automatically enables `/S`.
 
 **Syntax:**
 
@@ -236,7 +253,7 @@ treepp (--human-readable | -H | /HR) [<PATH>]
 PS D:\Rust\tree++> treepp /HR /F
 Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
-D:\RUST\TREE++
+D:.
 │   Cargo.toml        982 B
 │   LICENSE           1.0 KB
 │   OPTIONS-zh.md     7.9 KB
@@ -256,7 +273,7 @@ D:\RUST\TREE++
 
 ### `/S`: Show File Size (Bytes)
 
-**Function:** Display file size in bytes. Can be combined with `/HR` for human-readable format.
+**Function:** Displays file size in bytes. Can be combined with `/HR` to convert to human-readable format.
 
 **Syntax:**
 
@@ -270,7 +287,7 @@ treepp (--size | -s | /S) [<PATH>]
 PS D:\Rust\tree++> treepp /S /F
 Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
-D:\RUST\TREE++
+D:.
 │   Cargo.toml        982
 │   LICENSE           1067
 │   OPTIONS-zh.md     8120
@@ -290,7 +307,7 @@ D:\RUST\TREE++
 
 ### `/NI`: No Tree Connector Lines
 
-**Function:** Use plain space indentation instead of tree symbols (2 spaces per level).
+**Function:** Uses plain space indentation instead of tree symbols (2 spaces per level).
 
 **Syntax:**
 
@@ -304,7 +321,7 @@ treepp (--no-indent | -i | /NI) [<PATH>]
 PS D:\Rust\tree++> treepp /F /NI
 Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
-D:\RUST\TREE++
+D:.
   Cargo.toml
   LICENSE
   OPTIONS-zh.md
@@ -321,9 +338,9 @@ D:\RUST\TREE++
     scan.rs
 ```
 
-### `/R`: Reverse Sort Order
+### `/R`: Reverse Sort
 
-**Function:** Reverse the current sort order. Can be combined with `/SO`.
+**Function:** Reverses the current sort order.
 
 **Syntax:**
 
@@ -337,7 +354,7 @@ treepp (--reverse | -r | /R) [<PATH>]
 PS D:\Rust\tree++> treepp /F /R
 Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
-D:\RUST\TREE++
+D:.
 │   README.md
 │   README-zh.md
 │   OPTIONS.md
@@ -357,7 +374,7 @@ D:\RUST\TREE++
 
 ### `/DT`: Show Last Modified Date
 
-**Function:** Append last modified time to each entry in `YYYY-MM-DD HH:MM:SS` format (local timezone).
+**Function:** Appends the last modification time of files/directories after each entry, formatted as `YYYY-MM-DD HH:MM:SS` (local timezone).
 
 **Syntax:**
 
@@ -371,7 +388,7 @@ treepp (--date | -d | /DT) [<PATH>]
 PS D:\Rust\tree++> treepp /F /DT
 Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
-D:\RUST\TREE++
+D:.
 │   Cargo.toml        2025-12-16 10:02:11
 │   LICENSE           2024-11-03 09:00:29
 │   OPTIONS-zh.md     2025-12-17 14:20:16
@@ -389,9 +406,9 @@ D:\RUST\TREE++
         scan.rs        2025-12-17 23:05:58
 ```
 
-### `/X`: Exclude Matching Items
+### `/X`: Exclude Matches
 
-**Function:** Ignore files or directories matching the pattern. Supports wildcards `*` and `?`. Can be specified multiple times.
+**Function:** Ignores files or directories matching the pattern. Supports wildcards `*` and `?`. Can be specified multiple times to exclude multiple patterns.
 
 **Syntax:**
 
@@ -405,7 +422,7 @@ treepp (--exclude | -I | /X) <PATTERN> [<PATH>]
 PS D:\Rust\tree++> treepp /F /X *.md
 Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
-D:\RUST\TREE++
+D:.
 │   Cargo.toml
 │   LICENSE
 │
@@ -427,7 +444,7 @@ PS D:\Rust\tree++> treepp /F /X *.md /X LICENSE
 
 ### `/L`: Limit Recursion Depth
 
-**Function:** Specify maximum recursion level. `0` shows only the root directory itself, `1` shows root and its direct children.
+**Function:** Specifies maximum recursion level. `0` shows only the root directory itself, `1` shows the root and its direct children.
 
 **Syntax:**
 
@@ -441,7 +458,7 @@ treepp (--level | -L | /L) <LEVEL> [<PATH>]
 PS D:\Rust\tree++> treepp /F /L 1
 Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
-D:\RUST\TREE++
+D:.
 │   Cargo.toml
 │   LICENSE
 │   OPTIONS-zh.md
@@ -452,9 +469,9 @@ D:\RUST\TREE++
 └─src
 ```
 
-### `/M`: Show Only Matching Items
+### `/M`: Show Only Matches
 
-**Function:** Keep only files matching the pattern (directories always shown to maintain structure). Supports wildcards. Can be specified multiple times.
+**Function:** Retains only file entries matching the pattern (directories are always shown to maintain structure). Supports wildcards. Can be specified multiple times.
 
 **Syntax:**
 
@@ -468,7 +485,7 @@ treepp (--include | -m | /M) <PATTERN> [<PATH>]
 PS D:\Rust\tree++> treepp /F /M *.rs
 Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
-D:\RUST\TREE++
+D:.
 │
 └─src
         cli.rs
@@ -482,9 +499,9 @@ D:\RUST\TREE++
 
 ### `/DU`: Show Cumulative Directory Size
 
-**Function:** Calculate cumulative disk usage for each directory (recursively summing all child file sizes). Often used with `/HR`.
+**Function:** Calculates cumulative disk usage for each directory (recursively sums all child file sizes). Often used with `/HR`.
 
-> **Note:** Enabling this option disables streaming output as it requires a complete tree scan to calculate cumulative sizes.
+> **Note:** This option requires batch mode (`/B`) because it needs to scan the complete tree before calculating cumulative sizes.
 
 **Syntax:**
 
@@ -495,41 +512,16 @@ treepp (--disk-usage | -u | /DU) [<PATH>]
 **Example:**
 
 ```powershell
-PS D:\Rust\tree++> treepp /DU /HR
+PS D:\Rust\tree++> treepp /B /DU /HR
 Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
-D:\RUST\TREE++
+D:.
 └─src        31.5 KB
 ```
 
-### `/IC`: Ignore Case in Matching
+### `/RP`: Show Summary Report
 
-**Function:** Make `/M`, `/X` and other matching options case-insensitive.
-
-**Syntax:**
-
-```powershell
-treepp (--ignore-case | -c | /IC) [<PATH>]
-```
-
-**Example (`/F /M *.MD /IC`):**
-
-```powershell
-PS D:\Rust\tree++> treepp /F /M *.MD /IC
-Folder PATH listing for volume Storage
-Volume serial number is 26E9-52C1
-D:\RUST\TREE++
-│   OPTIONS-zh.md
-│   OPTIONS.md
-│   README-zh.md
-│   README.md
-│
-└─src
-```
-
-### `/RP`: Show Summary Statistics
-
-**Function:** Append summary statistics at the end of output, including directory count, file count (if `/F` enabled), and scan time.
+**Function:** Appends summary statistics at the end of output, including directory count, file count (if `/F` is enabled), and scan duration.
 
 **Syntax:**
 
@@ -543,7 +535,7 @@ treepp (--report | -e | /RP) [<PATH>]
 PS D:\Rust\tree++> treepp /F /RP
 Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
-D:\RUST\TREE++
+D:.
 │   Cargo.toml
 │   LICENSE
 │   OPTIONS-zh.md
@@ -565,7 +557,7 @@ D:\RUST\TREE++
 
 ### `/P`: Prune Empty Directories
 
-**Function:** Hide directory nodes containing no files (recursive: directories containing only empty subdirectories are also considered empty).
+**Function:** Hides directory nodes that don't contain any files (recursive check: directories containing only empty subdirectories are also considered empty).
 
 **Syntax:**
 
@@ -579,7 +571,7 @@ treepp (--prune | -P | /P) [<PATH>]
 PS D:\Rust\tree++> treepp /P /F
 Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
-D:\RUST\TREE++
+D:.
 │   Cargo.toml
 │   LICENSE
 │   OPTIONS-zh.md
@@ -595,54 +587,11 @@ D:\RUST\TREE++
         output.rs
         render.rs
         scan.rs
-```
-
-### `/SO`: Specify Sort Method
-
-**Function:** Sort by specified field (case-insensitive). Can be combined with `/R` for descending order.
-
-**Syntax:**
-
-```powershell
-treepp (--sort | -S | /SO) <KEY> [<PATH>]
-```
-
-**Available Sort Fields:**
-
-| Field   | Description                                                    |
-|---------|----------------------------------------------------------------|
-| `name`  | Alphabetical ascending by filename (default, case-insensitive) |
-| `size`  | Ascending by file size (directories use cumulative size or 0)  |
-| `mtime` | Ascending by last modified time                                |
-| `ctime` | Ascending by creation time                                     |
-
-**Example (`/F /SO size /R`, descending by size):**
-
-```powershell
-PS D:\Rust\tree++> treepp /F /SO size /R
-Folder PATH listing for volume Storage
-Volume serial number is 26E9-52C1
-D:\RUST\TREE++
-│   README-zh.md
-│   README.md
-│   OPTIONS-zh.md
-│   OPTIONS.md
-│   LICENSE
-│   Cargo.toml
-│
-└─src
-        scan.rs
-        output.rs
-        cli.rs
-        render.rs
-        config.rs
-        error.rs
-        main.rs
 ```
 
 ### `/NB`: No Windows Banner
 
-**Function:** Omit the Windows native `tree` volume information and serial number output (first two lines).
+**Function:** Omits the Windows native `tree` volume information and serial number output (first two lines).
 
 **Syntax:**
 
@@ -654,7 +603,7 @@ treepp (--no-win-banner | -N | /NB) [<PATH>]
 
 ```powershell
 PS D:\Rust\tree++> treepp /F /NB
-D:\RUST\TREE++
+D:.
 │   Cargo.toml
 │   LICENSE
 │   OPTIONS-zh.md
@@ -672,13 +621,13 @@ D:\RUST\TREE++
         scan.rs
 ```
 
-> **Performance Note:** Banner information is obtained by executing the native `tree` command in the `X:\__tree++__` directory. Enabling this option is recommended for performance-sensitive scenarios.
+> **Performance Tip:** The banner information is obtained by executing the native `tree` command in the `X:\__tree++__` directory. Enabling this option is recommended in performance-sensitive scenarios.
 
-### `/SI`: Silent Terminal Output
+### `/SI`: Silent Mode
 
-**Function:** Suppress output to standard output.
+**Function:** Prevents writing results to standard output.
 
-> **Restriction:** Must be used with `/O`, otherwise an error will occur. Using silent mode alone has no meaning (no output is produced).
+> **Restriction:** Must be used with `/O`, otherwise an error will be reported. Using silent mode alone is meaningless (no output is produced).
 
 **Syntax:**
 
@@ -686,10 +635,10 @@ D:\RUST\TREE++
 treepp (--silent | -l | /SI) [<PATH>]
 ```
 
-**Example (`/F /O tree.json /SI`):**
+**Example (`/F /O tree.txt /SI`):**
 
 ```powershell
-PS D:\Rust\tree++> treepp /F /O tree.json /SI
+PS D:\Rust\tree++> treepp /F /O tree.txt /SI
 PS D:\Rust\tree++>
 ```
 
@@ -702,7 +651,7 @@ tree++: Config error: Option conflict: --silent and (no --output) cannot be used
 
 ### `/O`: Output to File
 
-**Function:** Persist results to a file. Supported formats are determined by file extension. By default, output is still displayed in the console; combine with `/SI` for silent mode.
+**Function:** Persists results to a file. Supported formats are determined by file extension. By default, still outputs to console; can be combined with `/SI` for silence.
 
 **Syntax:**
 
@@ -712,22 +661,22 @@ treepp (--output | -o | /O) <FILE> [<PATH>]
 
 **Supported Extensions:**
 
-| Extension      | Format     |
-|----------------|------------|
-| `.txt`         | Plain text |
-| `.json`        | JSON       |
-| `.yml` `.yaml` | YAML       |
-| `.toml`        | TOML       |
+| Extension      | Format     | Requires `/B` |
+|----------------|------------|---------------|
+| `.txt`         | Plain text | No            |
+| `.json`        | JSON       | Yes           |
+| `.yml` `.yaml` | YAML       | Yes           |
+| `.toml`        | TOML       | Yes           |
 
-> **Note:** Specifying an output file disables streaming output mode.
+> **Note:** Structured output formats (JSON/YAML/TOML) require batch mode (`/B`).
 
-**Example:**
+**Example (TXT format, no `/B` needed):**
 
 ```powershell
-PS D:\Rust\tree++> treepp /F /O tree.json
+PS D:\Rust\tree++> treepp /F /O tree.txt
 Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
-D:\RUST\TREE++
+D:.
 │   Cargo.toml
 │   LICENSE
 │   OPTIONS-zh.md
@@ -744,12 +693,20 @@ D:\RUST\TREE++
         render.rs
         scan.rs
 
-output: D:\Rust\tree++\tree.json
+output: D:\Rust\tree++\tree.txt
 ```
 
-### `/T`: Scan Thread Count
+**Example (JSON format, requires `/B`):**
 
-**Function:** Specify the number of scanning threads. Value must be a positive integer.
+```powershell
+PS D:\Rust\tree++> treepp /B /F /O tree.json
+```
+
+### `/T`: Scanning Thread Count
+
+**Function:** Specifies the number of scanning threads. Value must be a positive integer.
+
+> **Restriction:** This option requires batch mode (`/B`).
 
 **Syntax:**
 
@@ -757,17 +714,24 @@ output: D:\Rust\tree++\tree.json
 treepp (--thread | -t | /T) <N> [<PATH>]
 ```
 
-**Default:** 8
+**Default Value:** 8
 
 **Example:**
 
 ```powershell
-PS D:\Rust\tree++> treepp /F /T 16
+PS D:\Rust\tree++> treepp /B /F /T 16
 ```
 
-### `/G`: Respect `.gitignore`
+**Error Example (missing `/B`):**
 
-**Function:** Parse `.gitignore` files in each directory level and automatically ignore matching entries. Supports rule chain inheritance: subdirectories inherit parent rules while applying their own.
+```powershell
+PS D:\Rust\tree++> treepp /F /T 16
+tree++: CLI error: Option conflict: --thread and (no --batch) cannot be used together
+```
+
+### `/G`: Honor `.gitignore`
+
+**Function:** Parses `.gitignore` files in each directory level, automatically ignoring matching entries. Supports rule chain inheritance: subdirectories inherit parent directory rules while applying their own rules.
 
 **Syntax:**
 
@@ -781,7 +745,7 @@ treepp (--gitignore | -g | /G) [<PATH>]
 PS D:\Rust\tree++> treepp /F /G
 Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
-D:\RUST\TREE++
+D:.
 │   Cargo.toml
 │   LICENSE
 │   OPTIONS-zh.md
@@ -797,91 +761,23 @@ D:\RUST\TREE++
         output.rs
         render.rs
         scan.rs
-
 ```
 
-### `/Q`: Quote File Names
+## Option Restriction Summary
 
-**Function:** Wrap all file and directory names in double quotes in the output.
-
-**Syntax:**
-
-```powershell
-treepp (--quote | -q | /Q) [<PATH>]
-```
-
-**Example:**
-
-```powershell
-PS D:\Rust\tree++> treepp /F /Q
-Folder PATH listing for volume Storage
-Volume serial number is 26E9-52C1
-D:\RUST\TREE++
-│   "Cargo.toml"
-│   "LICENSE"
-│   "OPTIONS-zh.md"
-│   "OPTIONS.md"
-│   "README-zh.md"
-│   "README.md"
-│
-└─"src"
-        "cli.rs"
-        "config.rs"
-        "error.rs"
-        "main.rs"
-        "output.rs"
-        "render.rs"
-        "scan.rs"
-```
-
-### `/DF`: Directories First
-
-**Function:** In sorted results, directories always appear before files.
-
-**Syntax:**
-
-```powershell
-treepp (--dirs-first | -D | /DF) [<PATH>]
-```
-
-**Example:**
-
-```powershell
-PS D:\Rust\tree++> treepp /F /DF
-Folder PATH listing for volume Storage
-Volume serial number is 26E9-52C1
-D:\RUST\TREE++
-├─src
-│       cli.rs
-│       config.rs
-│       error.rs
-│       main.rs
-│       output.rs
-│       render.rs
-│       scan.rs
-│
-│   Cargo.toml
-│   LICENSE
-│   OPTIONS-zh.md
-│   OPTIONS.md
-│   README-zh.md
-│   README.md
-```
-
-## Option Restrictions Summary
-
-| Option | Restriction                                                    |
-|--------|----------------------------------------------------------------|
-| `/SI`  | Must be used with `/O`                                         |
-| `/T`   | Value must be a positive integer (≥1)                          |
-| `/L`   | Value must be a non-negative integer (≥0)                      |
-| `/O`   | Extension must be `.txt`, `.json`, `.yml`, `.yaml`, or `.toml` |
+| Option | Restriction Description                                                                         |
+|--------|-------------------------------------------------------------------------------------------------|
+| `/SI`  | Must be used with `/O`                                                                          |
+| `/T`   | Value must be a positive integer (≥1), and requires `/B`                                        |
+| `/L`   | Value must be a non-negative integer (≥0)                                                       |
+| `/DU`  | Requires `/B`                                                                                   |
+| `/O`   | Extension must be `.txt`, `.json`, `.yml`, `.yaml`, or `.toml`; structured formats require `/B` |
 
 ## Exit Codes
 
-| Code | Meaning        |
-|------|----------------|
-| 0    | Success        |
-| 1    | Argument error |
-| 2    | Scan error     |
-| 3    | Output error   |
+| Exit Code | Meaning        |
+|-----------|----------------|
+| 0         | Success        |
+| 1         | Argument error |
+| 2         | Scan error     |
+| 3         | Output error   |

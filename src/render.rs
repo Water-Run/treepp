@@ -382,19 +382,19 @@ fn format_entry_meta(node: &TreeNode, config: &Config) -> String {
     // 目录累计大小
     if config.render.show_disk_usage && node.kind == EntryKind::Directory
         && let Some(usage) = node.disk_usage {
-            let usage_str = if config.render.human_readable {
-                format_size_human(usage)
-            } else {
-                usage.to_string()
-            };
-            parts.push(usage_str);
-        }
+        let usage_str = if config.render.human_readable {
+            format_size_human(usage)
+        } else {
+            usage.to_string()
+        };
+        parts.push(usage_str);
+    }
 
     // 修改日期
     if config.render.show_date
         && let Some(ref modified) = node.metadata.modified {
-            parts.push(format_datetime(modified));
-        }
+        parts.push(format_datetime(modified));
+    }
 
     if parts.is_empty() {
         String::new()
@@ -788,11 +788,11 @@ pub fn render(stats: &ScanStats, config: &Config) -> RenderResult {
     // 无子目录提示（当目录没有子目录时显示，不考虑文件）
     if !tree_has_subdirectories(&stats.tree)
         && let Some(b) = &banner
-            && !b.no_subfolder.is_empty() {
-                output.push('\n');
-                output.push_str(&b.no_subfolder);
-                output.push('\n');
-            }
+        && !b.no_subfolder.is_empty() {
+        output.push('\n');
+        output.push_str(&b.no_subfolder);
+        output.push('\n');
+    }
 
     // 统计报告
     if config.render.show_report {
@@ -1794,5 +1794,118 @@ mod tests {
             dir_line.contains("├") || dir_line.contains("└"),
             "目录应该使用分支符"
         );
+    }
+
+    // ------------------------------------------------------------------------
+    // disk_usage 与 show_files 独立性渲染测试
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn test_render_disk_usage_without_show_files() {
+        // 创建包含文件的树结构
+        let mut root = TreeNode::new(
+            PathBuf::from("root"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+
+        let mut subdir = TreeNode::new(
+            PathBuf::from("root/subdir"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+
+        // 添加文件到子目录
+        subdir.children.push(TreeNode::new(
+            PathBuf::from("root/subdir/file.txt"),
+            EntryKind::File,
+            EntryMetadata {
+                size: 1024,
+                ..Default::default()
+            },
+        ));
+        subdir.disk_usage = Some(1024);
+
+        root.children.push(subdir);
+        root.disk_usage = Some(1024);
+
+        // 配置：显示 disk_usage 但不显示文件
+        let mut config = Config::with_root(PathBuf::from("root"));
+        config.render.no_win_banner = true;
+        config.batch_mode = true;
+        config.scan.show_files = false;
+        config.render.show_disk_usage = true;
+        config.render.show_size = true;
+
+        let stats = ScanStats {
+            tree: root,
+            duration: Duration::from_millis(100),
+            directory_count: 1,
+            file_count: 0, // 不显示文件时为 0
+        };
+
+        let result = render(&stats, &config);
+
+        // 验证输出包含目录的 disk_usage
+        assert!(result.content.contains("1024") || result.content.contains("1.0 KB"));
+        // 验证输出不包含文件名
+        assert!(!result.content.contains("file.txt"));
+        // 验证输出包含目录名
+        assert!(result.content.contains("subdir"));
+    }
+
+    #[test]
+    fn test_get_filtered_children_excludes_files_when_show_files_false() {
+        let mut root = TreeNode::new(
+            PathBuf::from("root"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+
+        root.children.push(TreeNode::new(
+            PathBuf::from("root/file.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+        root.children.push(TreeNode::new(
+            PathBuf::from("root/subdir"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        ));
+
+        let mut config = Config::default();
+        config.scan.show_files = false;
+
+        let filtered = get_filtered_children(&root, &config);
+
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].name, "subdir");
+    }
+
+    #[test]
+    fn test_get_filtered_children_includes_files_when_show_files_true() {
+        let mut root = TreeNode::new(
+            PathBuf::from("root"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+
+        root.children.push(TreeNode::new(
+            PathBuf::from("root/file.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+        root.children.push(TreeNode::new(
+            PathBuf::from("root/subdir"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        ));
+
+        let mut config = Config::default();
+        config.scan.show_files = true;
+
+        let filtered = get_filtered_children(&root, &config);
+
+        assert_eq!(filtered.len(), 2);
     }
 }

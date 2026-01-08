@@ -10,7 +10,7 @@
 PS D:\Rust\tree++> treepp /F
 卷 存储 的文件夹 PATH 列表
 卷序列号为 26E9-52C1
-D:\RUST\TREE++
+D:.
 │   Cargo.toml
 │   LICENSE
 │   OPTIONS-zh.md
@@ -41,16 +41,19 @@ treepp [<PATH>] [<OPTIONS>...]
 
 ## 输出模式说明
 
-### 流式输出
+`tree++` 支持两种输出模式：
 
-`tree++` 默认采用**流式输出**模式，边扫描边渲染边输出，实现实时滚动效果。
+### 流式输出（默认）
 
-以下情况将**回退到批处理模式**（完整扫描后再输出）：
+边扫描边渲染边输出，实现实时滚动效果。适用于大多数交互式场景。
 
-- 输出格式非 TXT（如 JSON、YAML、TOML）
-- 启用了 `/DU`（目录累计大小，需要完整树计算）
-- 指定了输出文件（`/O`）
-- 启用了静默模式（`/SI`）
+### 批处理模式
+
+通过 `--batch`（`-b` / `/B`）显式启用。完整扫描后再统一输出。以下功能**需要批处理模式**：
+
+- 结构化输出格式（JSON、YAML、TOML）
+- `/DU`（目录累计大小，需要完整树计算）
+- `/T`（多线程扫描）
 
 ## 指令的具体说明
 
@@ -76,6 +79,7 @@ Usage:
 Options:
   --help, -h, /?              Show help information
   --version, -v, /V           Show version information
+  --batch, -b, /B             Use batch processing mode
   --ascii, -a, /A             Draw the tree using ASCII characters
   --files, -f, /F             Show files
   --full-path, -p, /FP        Show full paths
@@ -87,18 +91,15 @@ Options:
   --exclude, -I, /X <PATTERN> Exclude files matching the pattern
   --level, -L, /L <N>         Limit recursion depth
   --include, -m, /M <PATTERN> Show only files matching the pattern
-  --disk-usage, -u, /DU       Show cumulative directory sizes
-  --ignore-case, -c, /IC      Case-insensitive matching
+  --disk-usage, -u, /DU       Show cumulative directory sizes (requires --batch)
   --report, -e, /RP           Show summary statistics at the end
   --prune, -P, /P             Prune empty directories
-  --sort, -S, /SO <KEY>       Set sort mode (name, size, mtime, ctime)
   --no-win-banner, -N, /NB    Do not show the Windows native tree banner/header
-  --silent, -l, /SI           Silent mode (use with --output)
+  --silent, -l, /SI           Silent mode (requires --output)
   --output, -o, /O <FILE>     Write output to a file (.txt, .json, .yml, .toml)
-  --thread, -t, /T <N>        Number of scanning threads (default: 8)
+                              Note: JSON/YAML/TOML formats require --batch
+  --thread, -t, /T <N>        Number of scanning threads (requires --batch, default: 8)
   --gitignore, -g, /G         Respect .gitignore
-  --quote, -q, /Q             Wrap file names in double quotes
-  --dirs-first, -D, /DF       List directories first
 
 More info: https://github.com/Water-Run/treepp
 ```
@@ -125,6 +126,22 @@ author: WaterRun
 link: https://github.com/Water-Run/treepp
 ```
 
+### `/B`: 批处理模式
+
+**功能：** 启用批处理模式，完整扫描后再统一输出。某些功能（如结构化输出、磁盘用量计算、多线程扫描）需要此模式。
+
+**语法：**
+
+```powershell
+treepp (--batch | -b | /B) [<PATH>]
+```
+
+**示例：**
+
+```powershell
+PS D:\Rust\tree++> treepp /B /F /DU
+```
+
 ### `/A`: 使用 ASCII 字符绘制树
 
 **功能：** 以 ASCII 树形字符输出，兼容 `tree /A`。
@@ -137,10 +154,10 @@ treepp (--ascii | -a | /A) [<PATH>]
 
 **树形符号对照：**
 
-| 模式      | 分支     | 最后分支   | 垂直线    | 缩进  |
-|---------|--------|--------|--------|-----|
-| Unicode | `├─`   | `└─`   | `│   ` | 4空格 |
-| ASCII   | `+---` | `\---` | `      | `   | 4空格  |
+| 模式      | 分支     | 最后分支   | 垂直线 | 缩进  |
+|---------|--------|--------|-----|-----|
+| Unicode | `├─`   | `└─`   | `│` | 4空格 |
+| ASCII   | `+---` | `\---` | `   | `   | 4空格 |
 
 **示例：**
 
@@ -236,7 +253,7 @@ treepp (--human-readable | -H | /HR) [<PATH>]
 PS D:\Rust\tree++> treepp /HR /F
 卷 存储 的文件夹 PATH 列表
 卷序列号为 26E9-52C1
-D:\RUST\TREE++
+D:.
 │   Cargo.toml        982 B
 │   LICENSE           1.0 KB
 │   OPTIONS-zh.md     7.9 KB
@@ -270,7 +287,7 @@ treepp (--size | -s | /S) [<PATH>]
 PS D:\Rust\tree++> treepp /S /F
 卷 存储 的文件夹 PATH 列表
 卷序列号为 26E9-52C1
-D:\RUST\TREE++
+D:.
 │   Cargo.toml        982
 │   LICENSE           1067
 │   OPTIONS-zh.md     8120
@@ -304,7 +321,7 @@ treepp (--no-indent | -i | /NI) [<PATH>]
 PS D:\Rust\tree++> treepp /F /NI
 卷 存储 的文件夹 PATH 列表
 卷序列号为 26E9-52C1
-D:\RUST\TREE++
+D:.
   Cargo.toml
   LICENSE
   OPTIONS-zh.md
@@ -323,7 +340,7 @@ D:\RUST\TREE++
 
 ### `/R`: 逆序排序
 
-**功能：** 将当前排序结果倒序输出，可与 `/SO` 组合。
+**功能：** 将当前排序结果倒序输出。
 
 **语法：**
 
@@ -337,7 +354,7 @@ treepp (--reverse | -r | /R) [<PATH>]
 PS D:\Rust\tree++> treepp /F /R
 卷 存储 的文件夹 PATH 列表
 卷序列号为 26E9-52C1
-D:\RUST\TREE++
+D:.
 │   README.md
 │   README-zh.md
 │   OPTIONS.md
@@ -371,7 +388,7 @@ treepp (--date | -d | /DT) [<PATH>]
 PS D:\Rust\tree++> treepp /F /DT
 卷 存储 的文件夹 PATH 列表
 卷序列号为 26E9-52C1
-D:\RUST\TREE++
+D:.
 │   Cargo.toml        2025-12-16 10:02:11
 │   LICENSE           2024-11-03 09:00:29
 │   OPTIONS-zh.md     2025-12-17 14:20:16
@@ -405,7 +422,7 @@ treepp (--exclude | -I | /X) <PATTERN> [<PATH>]
 PS D:\Rust\tree++> treepp /F /X *.md
 卷 存储 的文件夹 PATH 列表
 卷序列号为 26E9-52C1
-D:\RUST\TREE++
+D:.
 │   Cargo.toml
 │   LICENSE
 │
@@ -441,7 +458,7 @@ treepp (--level | -L | /L) <LEVEL> [<PATH>]
 PS D:\Rust\tree++> treepp /F /L 1
 卷 存储 的文件夹 PATH 列表
 卷序列号为 26E9-52C1
-D:\RUST\TREE++
+D:.
 │   Cargo.toml
 │   LICENSE
 │   OPTIONS-zh.md
@@ -468,7 +485,7 @@ treepp (--include | -m | /M) <PATTERN> [<PATH>]
 PS D:\Rust\tree++> treepp /F /M *.rs
 卷 存储 的文件夹 PATH 列表
 卷序列号为 26E9-52C1
-D:\RUST\TREE++
+D:.
 │
 └─src
         cli.rs
@@ -484,7 +501,7 @@ D:\RUST\TREE++
 
 **功能：** 统计每个目录的累计磁盘用量（递归计算所有子文件大小之和）。常与 `/HR` 配合使用。
 
-> **注意：** 启用此选项会禁用流式输出，因为需要完整扫描树后才能计算累计大小。
+> **注意：** 此选项需要批处理模式（`/B`），因为需要完整扫描树后才能计算累计大小。
 
 **语法：**
 
@@ -495,36 +512,11 @@ treepp (--disk-usage | -u | /DU) [<PATH>]
 **示例：**
 
 ```powershell
-PS D:\Rust\tree++> treepp /DU /HR
+PS D:\Rust\tree++> treepp /B /DU /HR
 卷 存储 的文件夹 PATH 列表
 卷序列号为 26E9-52C1
-D:\RUST\TREE++
+D:.
 └─src        31.5 KB
-```
-
-### `/IC`: 匹配时忽略大小写
-
-**功能：** 使 `/M`、`/X` 等匹配指令忽略大小写。
-
-**语法：**
-
-```powershell
-treepp (--ignore-case | -c | /IC) [<PATH>]
-```
-
-**示例（`/F /M *.MD /IC`）：**
-
-```powershell
-PS D:\Rust\tree++> treepp /F /M *.MD /IC
-卷 存储 的文件夹 PATH 列表
-卷序列号为 26E9-52C1
-D:\RUST\TREE++
-│   OPTIONS-zh.md
-│   OPTIONS.md
-│   README-zh.md
-│   README.md
-│
-└─src
 ```
 
 ### `/RP`: 显示末尾统计信息
@@ -543,7 +535,7 @@ treepp (--report | -e | /RP) [<PATH>]
 PS D:\Rust\tree++> treepp /F /RP
 卷 存储 的文件夹 PATH 列表
 卷序列号为 26E9-52C1
-D:\RUST\TREE++
+D:.
 │   Cargo.toml
 │   LICENSE
 │   OPTIONS-zh.md
@@ -579,7 +571,7 @@ treepp (--prune | -P | /P) [<PATH>]
 PS D:\Rust\tree++> treepp /P /F
 卷 存储 的文件夹 PATH 列表
 卷序列号为 26E9-52C1
-D:\RUST\TREE++
+D:.
 │   Cargo.toml
 │   LICENSE
 │   OPTIONS-zh.md
@@ -595,49 +587,6 @@ D:\RUST\TREE++
         output.rs
         render.rs
         scan.rs
-```
-
-### `/SO`: 指定排序方式
-
-**功能：** 依据指定字段进行排序（大小写不敏感），可与 `/R` 组合实现降序。
-
-**语法：**
-
-```powershell
-treepp (--sort | -S | /SO) <KEY> [<PATH>]
-```
-
-**可选的排序字段：**
-
-| 字段      | 说明                   |
-|---------|----------------------|
-| `name`  | 按文件名字母表升序（默认，大小写不敏感） |
-| `size`  | 按文件大小升序（目录使用累计大小或 0） |
-| `mtime` | 按最后修改时间升序            |
-| `ctime` | 按创建时间升序              |
-
-**示例（`/F /SO size /R`，按大小降序）：**
-
-```powershell
-PS D:\Rust\tree++> treepp /F /SO size /R
-卷 存储 的文件夹 PATH 列表
-卷序列号为 26E9-52C1
-D:\RUST\TREE++
-│   README-zh.md
-│   README.md
-│   OPTIONS-zh.md
-│   OPTIONS.md
-│   LICENSE
-│   Cargo.toml
-│
-└─src
-        scan.rs
-        output.rs
-        cli.rs
-        render.rs
-        config.rs
-        error.rs
-        main.rs
 ```
 
 ### `/NB`: 不显示 Windows 原生样板信息
@@ -654,7 +603,7 @@ treepp (--no-win-banner | -N | /NB) [<PATH>]
 
 ```powershell
 PS D:\Rust\tree++> treepp /F /NB
-D:\RUST\TREE++
+D:.
 │   Cargo.toml
 │   LICENSE
 │   OPTIONS-zh.md
@@ -686,10 +635,10 @@ D:\RUST\TREE++
 treepp (--silent | -l | /SI) [<PATH>]
 ```
 
-**示例（`/F /O tree.json /SI`）：**
+**示例（`/F /O tree.txt /SI`）：**
 
 ```powershell
-PS D:\Rust\tree++> treepp /F /O tree.json /SI
+PS D:\Rust\tree++> treepp /F /O tree.txt /SI
 PS D:\Rust\tree++>
 ```
 
@@ -697,7 +646,7 @@ PS D:\Rust\tree++>
 
 ```powershell
 PS D:\Rust\tree++> treepp /SI
-tree++: Config error: Option conflict: --silent and (无 --output) cannot be used together (Silent mode requires an output file; otherwise no output will be produced.)
+tree++: Config error: Option conflict: --silent and (no --output) cannot be used together (Silent mode requires an output file; otherwise no output will be produced.)
 ```
 
 ### `/O`: 输出到文件
@@ -712,22 +661,22 @@ treepp (--output | -o | /O) <FILE> [<PATH>]
 
 **支持的扩展名：**
 
-| 扩展名             | 格式   |
-|-----------------|------|
-| `.txt`          | 纯文本  |
-| `.json`         | JSON |
-| `.yml` `.yaml`  | YAML |
-| `.toml`         | TOML |
+| 扩展名             | 格式   | 是否需要 `/B` |
+|-----------------|------|-----------|
+| `.txt`          | 纯文本  | 否         |
+| `.json`         | JSON | 是         |
+| `.yml` `.yaml`  | YAML | 是         |
+| `.toml`         | TOML | 是         |
 
-> **注意：** 指定输出文件会禁用流式输出模式。
+> **注意：** 结构化输出格式（JSON/YAML/TOML）需要批处理模式（`/B`）。
 
-**示例：**
+**示例（TXT 格式，无需 `/B`）：**
 
 ```powershell
-PS D:\Rust\tree++> treepp /F /O tree.json
+PS D:\Rust\tree++> treepp /F /O tree.txt
 卷 存储 的文件夹 PATH 列表
 卷序列号为 26E9-52C1
-D:\RUST\TREE++
+D:.
 │   Cargo.toml
 │   LICENSE
 │   OPTIONS-zh.md
@@ -744,12 +693,20 @@ D:\RUST\TREE++
         render.rs
         scan.rs
 
-output: D:\Rust\tree++\tree.json
+output: D:\Rust\tree++\tree.txt
+```
+
+**示例（JSON 格式，需要 `/B`）：**
+
+```powershell
+PS D:\Rust\tree++> treepp /B /F /O tree.json
 ```
 
 ### `/T`: 扫描线程数
 
 **功能：** 指定扫描线程数量。值必须为正整数。
+
+> **限制：** 此选项需要批处理模式（`/B`）。
 
 **语法：**
 
@@ -762,7 +719,14 @@ treepp (--thread | -t | /T) <N> [<PATH>]
 **示例：**
 
 ```powershell
+PS D:\Rust\tree++> treepp /B /F /T 16
+```
+
+**错误示例（缺少 `/B`）：**
+
+```powershell
 PS D:\Rust\tree++> treepp /F /T 16
+tree++: CLI error: Option conflict: --thread and (no --batch) cannot be used together
 ```
 
 ### `/G`: 遵循 `.gitignore`
@@ -781,7 +745,7 @@ treepp (--gitignore | -g | /G) [<PATH>]
 PS D:\Rust\tree++> treepp /F /G
 卷 存储 的文件夹 PATH 列表
 卷序列号为 26E9-52C1
-D:\RUST\TREE++
+D:.
 │   Cargo.toml
 │   LICENSE
 │   OPTIONS-zh.md
@@ -797,85 +761,17 @@ D:\RUST\TREE++
         output.rs
         render.rs
         scan.rs
-
-```
-
-### `/Q`: 用双引号包裹文件名
-
-**功能：** 在输出中用双引号包裹所有文件和目录名称。
-
-**语法：**
-
-```powershell
-treepp (--quote | -q | /Q) [<PATH>]
-```
-
-**示例：**
-
-```powershell
-PS D:\Rust\tree++> treepp /F /Q
-卷 存储 的文件夹 PATH 列表
-卷序列号为 26E9-52C1
-D:\RUST\TREE++
-│   "Cargo.toml"
-│   "LICENSE"
-│   "OPTIONS-zh.md"
-│   "OPTIONS.md"
-│   "README-zh.md"
-│   "README.md"
-│
-└─"src"
-        "cli.rs"
-        "config.rs"
-        "error.rs"
-        "main.rs"
-        "output.rs"
-        "render.rs"
-        "scan.rs"
-```
-
-### `/DF`: 目录优先显示
-
-**功能：** 在排序结果中，目录始终排在文件之前。
-
-**语法：**
-
-```powershell
-treepp (--dirs-first | -D | /DF) [<PATH>]
-```
-
-**示例：**
-
-```powershell
-PS D:\Rust\tree++> treepp /F /DF
-卷 存储 的文件夹 PATH 列表
-卷序列号为 26E9-52C1
-D:\RUST\TREE++
-├─src
-│       cli.rs
-│       config.rs
-│       error.rs
-│       main.rs
-│       output.rs
-│       render.rs
-│       scan.rs
-│
-│   Cargo.toml
-│   LICENSE
-│   OPTIONS-zh.md
-│   OPTIONS.md
-│   README-zh.md
-│   README.md
 ```
 
 ## 参数限制汇总
 
-| 参数    | 限制说明                                           |
-|-------|------------------------------------------------|
-| `/SI` | 必须与 `/O` 搭配使用                                  |
-| `/T`  | 值必须为正整数（≥1）                                    |
-| `/L`  | 值必须为非负整数（≥0）                                   |
-| `/O`  | 扩展名必须为 `.txt`、`.json`、`.yml`、`.yaml` 或 `.toml` |
+| 参数    | 限制说明                                                        |
+|-------|-------------------------------------------------------------|
+| `/SI` | 必须与 `/O` 搭配使用                                               |
+| `/T`  | 值必须为正整数（≥1），且需要 `/B`                                        |
+| `/L`  | 值必须为非负整数（≥0）                                                |
+| `/DU` | 需要 `/B`                                                     |
+| `/O`  | 扩展名必须为 `.txt`、`.json`、`.yml`、`.yaml` 或 `.toml`；结构化格式需要 `/B` |
 
 ## 退出码
 

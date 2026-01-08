@@ -670,6 +670,8 @@ fn sort_entries(entries: &mut [(PathBuf, Metadata)], reverse: bool) {
 struct ScanContext {
     /// 是否显示文件
     show_files: bool,
+    /// 是否为大小计算收集文件（即使不显示文件）
+    collect_files_for_size: bool,
     /// 最大递归深度
     max_depth: Option<usize>,
     /// 是否遵循 gitignore
@@ -691,6 +693,8 @@ impl ScanContext {
     fn from_config(config: &Config) -> Result<Self, MatchError> {
         Ok(Self {
             show_files: config.scan.show_files,
+            // 当启用 disk_usage 时，即使不显示文件也需要收集文件信息用于大小计算
+            collect_files_for_size: config.render.show_disk_usage,
             max_depth: config.scan.max_depth,
             respect_gitignore: config.scan.respect_gitignore,
             rules: CompiledRules::compile(config)?,
@@ -713,8 +717,10 @@ impl ScanContext {
             return true;
         }
 
-        // 文件显示检查
-        if !is_dir && !self.show_files {
+        // 文件显示检查：
+        // - 如果需要收集文件用于大小计算（collect_files_for_size），则不过滤文件
+        // - 否则根据 show_files 决定
+        if !is_dir && !self.show_files && !self.collect_files_for_size {
             return true;
         }
 
@@ -754,8 +760,8 @@ fn scan_dir(
     // 深度限制检查：如果已达到最大深度，返回空目录节点（不处理子项）
     if let Some(max) = ctx.max_depth
         && depth >= max {
-            return Some(TreeNode::new(path.to_path_buf(), kind, metadata));
-        }
+        return Some(TreeNode::new(path.to_path_buf(), kind, metadata));
+    }
 
     // 构建当前目录的 gitignore 链
     let current_chain = if ctx.respect_gitignore {
@@ -966,14 +972,14 @@ where
         return Err(ScanError::PathNotFound {
             path: config.root_path.clone(),
         }
-        .into());
+            .into());
     }
 
     if !config.root_path.is_dir() {
         return Err(ScanError::NotADirectory {
             path: config.root_path.clone(),
         }
-        .into());
+            .into());
     }
 
     // 创建扫描上下文
@@ -2380,7 +2386,7 @@ mod tests {
             }
             Ok(())
         })
-        .expect("流式扫描失败");
+            .expect("流式扫描失败");
 
         assert_eq!(stats.directory_count, 3);
         assert_eq!(stats.file_count, 5);
@@ -2402,7 +2408,7 @@ mod tests {
             }
             Ok(())
         })
-        .expect("流式扫描失败");
+            .expect("流式扫描失败");
 
         assert_eq!(stats.directory_count, 3);
         assert_eq!(stats.file_count, 0);
@@ -2428,7 +2434,7 @@ mod tests {
             }
             Ok(())
         })
-        .expect("流式扫描失败");
+            .expect("流式扫描失败");
 
         // 验证 target 和 app.log 被忽略
         assert!(!names.contains(&"target".to_string()));
@@ -2449,7 +2455,7 @@ mod tests {
             }
             Ok(())
         })
-        .expect("流式扫描失败");
+            .expect("流式扫描失败");
 
         // 根目录下的条目应该是 depth=0
         let root_entries: Vec<_> = entries.iter().filter(|(_, d)| *d == 0).collect();
@@ -2481,7 +2487,7 @@ mod tests {
             }
             Ok(())
         })
-        .expect("流式扫描失败");
+            .expect("流式扫描失败");
 
         // 应该有 3 个条目
         assert_eq!(entries.len(), 3);
@@ -2514,7 +2520,7 @@ mod tests {
             }
             Ok(())
         })
-        .expect("流式扫描失败");
+            .expect("流式扫描失败");
 
         // 深度 1 应该包含根目录下的直接子项
         assert_eq!(stats.directory_count, 3);
@@ -2566,7 +2572,7 @@ mod tests {
             }
             Ok(())
         })
-        .expect("流式扫描失败");
+            .expect("流式扫描失败");
         stream_names.sort();
 
         // 流式扫描不包含根节点名称，所以需要去掉批处理的根节点
@@ -2714,5 +2720,121 @@ mod tests {
         // 这应该不会崩溃
         let result = scan_streaming(&config, |_| Ok(()));
         assert!(result.is_ok());
+    }
+
+    // ------------------------------------------------------------------------
+    // disk_usage 与 show_files 独立性测试
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn test_scan_collects_files_for_disk_usage_even_without_show_files() {
+        let dir = setup_test_dir();
+        let mut config = Config::with_root(dir.path().to_path_buf());
+        config.batch_mode = true;
+        config.scan.show_files = false; // 不显示文件
+        config.render.show_disk_usage = true; // 但需要计算累计大小
+
+        let stats = scan(&config).expect("扫描失败");
+
+        // 验证树中包含文件（用于 disk_usage 计算）
+        // 即使 show_files=false，扫描时也应该收集文件
+        // 注意：渲染时会过滤掉文件，但扫描阶段应该包含
+        assert!(stats.tree.disk_usage.is_some());
+        assert!(stats.tree.disk_usage.unwrap() > 0);
+    }
+
+    #[test]
+    fn test_scan_disk_usage_correct_without_show_files() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+
+        // 创建文件结构
+        fs::create_dir(root.join("subdir")).unwrap();
+        File::create(root.join("file1.txt"))
+            .unwrap()
+            .write_all(b"12345")
+            .unwrap(); // 5 bytes
+        File::create(root.join("subdir/file2.txt"))
+            .unwrap()
+            .write_all(b"1234567890")
+            .unwrap(); // 10 bytes
+
+        let mut config = Config::with_root(root.to_path_buf());
+        config.batch_mode = true;
+        config.scan.show_files = false;
+        config.render.show_disk_usage = true;
+
+        let stats = scan(&config).expect("扫描失败");
+
+        // 验证根目录累计大小 = 5 + 10 = 15
+        assert_eq!(stats.tree.disk_usage, Some(15));
+    }
+
+    #[test]
+    fn test_scan_no_files_collected_when_neither_show_files_nor_disk_usage() {
+        let dir = setup_test_dir();
+        let mut config = Config::with_root(dir.path().to_path_buf());
+        config.scan.show_files = false;
+        config.render.show_disk_usage = false;
+        // batch_mode 默认为 false
+
+        let stats = scan(&config).expect("扫描失败");
+
+        // 验证文件计数为 0
+        assert_eq!(stats.file_count, 0);
+
+        // 验证树中没有文件节点
+        fn count_files_in_tree(node: &TreeNode) -> usize {
+            let self_count = if node.kind == EntryKind::File { 1 } else { 0 };
+            self_count + node.children.iter().map(count_files_in_tree).sum::<usize>()
+        }
+        assert_eq!(count_files_in_tree(&stats.tree), 0);
+    }
+
+    #[test]
+    fn test_scan_context_collect_files_for_size_enabled_when_disk_usage() {
+        let mut config = Config::default();
+        config.batch_mode = true;
+        config.render.show_disk_usage = true;
+        config.scan.show_files = false;
+
+        let ctx = ScanContext::from_config(&config).unwrap();
+
+        assert!(!ctx.show_files);
+        assert!(ctx.collect_files_for_size);
+    }
+
+    #[test]
+    fn test_scan_context_collect_files_for_size_disabled_by_default() {
+        let config = Config::default();
+
+        let ctx = ScanContext::from_config(&config).unwrap();
+
+        assert!(!ctx.show_files);
+        assert!(!ctx.collect_files_for_size);
+    }
+
+    #[test]
+    fn test_should_filter_includes_files_when_collect_for_size() {
+        let mut config = Config::default();
+        config.batch_mode = true;
+        config.render.show_disk_usage = true;
+        config.scan.show_files = false;
+
+        let ctx = ScanContext::from_config(&config).unwrap();
+
+        // 文件不应被过滤（因为需要收集用于大小计算）
+        assert!(!ctx.should_filter("test.txt", false));
+    }
+
+    #[test]
+    fn test_should_filter_excludes_files_when_no_show_no_collect() {
+        let config = Config::default();
+        // show_files = false, show_disk_usage = false
+
+        let ctx = ScanContext::from_config(&config).unwrap();
+
+        // 文件应被过滤
+        assert!(ctx.should_filter("test.txt", false));
     }
 }

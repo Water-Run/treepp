@@ -375,6 +375,7 @@ pub struct OutputOptions {
 /// let mut config = Config::default();
 /// config.root_path = PathBuf::from("C:\\Windows");
 /// config.scan.show_files = true;
+/// config.batch_mode = true;
 /// config.scan.thread_count = NonZeroUsize::new(16).unwrap();
 /// config.output.output_path = Some(PathBuf::from("tree.json"));
 ///
@@ -391,6 +392,8 @@ pub struct Config {
     pub show_help: bool,
     /// 是否显示版本信息
     pub show_version: bool,
+    /// 是否使用批处理模式（默认 false，使用流式模式）
+    pub batch_mode: bool,
     /// 扫描选项
     pub scan: ScanOptions,
     /// 匹配选项
@@ -408,6 +411,7 @@ impl Default for Config {
             path_explicitly_set: false,
             show_help: false,
             show_version: false,
+            batch_mode: false,
             scan: ScanOptions::default(),
             matching: MatchOptions::default(),
             render: RenderOptions::default(),
@@ -461,6 +465,7 @@ impl Config {
     /// use treepp::config::{Config, OutputFormat};
     ///
     /// let mut config = Config::default();
+    /// config.batch_mode = true;
     /// config.output.output_path = Some(PathBuf::from("result.json"));
     ///
     /// let validated = config.validate().unwrap();
@@ -478,13 +483,10 @@ impl Config {
     /// assert!(matches!(err, ConfigError::UnknownOutputFormat { .. }));
     /// ```
     pub fn validate(mut self) -> ConfigResult<Self> {
-        // 1. 选项冲突检查
-        self.check_conflicts()?;
-
-        // 2. 根路径验证与规范化
+        // 1. 根路径验证与规范化（先于冲突检查，确保路径有效）
         self.validate_and_canonicalize_root_path()?;
 
-        // 3. 派生字段：从输出路径推导格式
+        // 2. 派生字段：从输出路径推导格式
         if let Some(ref path) = self.output.output_path {
             if let Some(format) = OutputFormat::from_extension(path) {
                 self.output.format = format;
@@ -492,6 +494,9 @@ impl Config {
                 return Err(ConfigError::UnknownOutputFormat { path: path.clone() });
             }
         }
+
+        // 3. 选项冲突检查（在格式推导之后，以便检查格式相关冲突）
+        self.check_conflicts()?;
 
         // 4. 隐含依赖：human_readable 隐含 show_size
         if self.render.human_readable {
@@ -540,16 +545,44 @@ impl Config {
     }
 
     /// 检查选项冲突
+    ///
+    /// 注意：`thread` 冲突检查在 CLI 层面进行，因为需要追踪用户是否显式设置了该参数。
+    /// 默认值 8 不应触发冲突，只有显式指定 `--thread` 时才需要配合 `--batch`。
     fn check_conflicts(&self) -> ConfigResult<()> {
         // 冲突：silent 必须配合 output_path 使用
         if self.output.silent && self.output.output_path.is_none() {
             return Err(ConfigError::ConflictingOptions {
                 opt_a: "--silent".to_string(),
-                opt_b: "(Without --output)".to_string(),
-                reason:
-                    "Silent mode requires an output file; otherwise no output will be produced."
-                        .to_string(),
+                opt_b: "(no --output)".to_string(),
+                reason: "Silent mode requires an output file; otherwise no output will be produced."
+                    .to_string(),
             });
+        }
+
+        // 冲突：disk-usage 必须配合 batch 使用
+        if self.render.show_disk_usage && !self.batch_mode {
+            return Err(ConfigError::ConflictingOptions {
+                opt_a: "--disk-usage".to_string(),
+                opt_b: "(no --batch)".to_string(),
+                reason: "Disk usage calculation requires batch mode (--batch).".to_string(),
+            });
+        }
+
+        // 冲突：结构化输出格式（JSON/YAML/TOML）必须配合 batch 使用
+        if self.output.output_path.is_some() {
+            let format = &self.output.format;
+            let requires_batch = matches!(
+                format,
+                OutputFormat::Json | OutputFormat::Yaml | OutputFormat::Toml
+            );
+            if requires_batch && !self.batch_mode {
+                return Err(ConfigError::ConflictingOptions {
+                    opt_a: format!("--output (format: {:?})", format),
+                    opt_b: "(no --batch)".to_string(),
+                    reason: "Structured output formats (JSON/YAML/TOML) require batch mode (--batch)."
+                        .to_string(),
+                });
+            }
         }
 
         Ok(())
@@ -611,39 +644,6 @@ impl Config {
     #[must_use]
     pub const fn needs_time_info(&self) -> bool {
         self.render.show_date
-    }
-
-    /// 判断是否应使用流式输出模式
-    ///
-    /// 满足以下所有条件时使用流式输出：
-    /// - 输出格式为 TXT
-    /// - 未指定输出文件（仅终端输出）
-    /// - 未启用 disk_usage（需要完整树计算）
-    /// - 非静默模式
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use treepp::config::Config;
-    ///
-    /// let config = Config::default();
-    /// assert!(config.should_stream());
-    /// ```
-    ///
-    /// ```
-    /// use std::path::PathBuf;
-    /// use treepp::config::Config;
-    ///
-    /// let mut config = Config::default();
-    /// config.output.output_path = Some(PathBuf::from("tree.txt"));
-    /// assert!(!config.should_stream());
-    /// ```
-    #[must_use]
-    pub fn should_stream(&self) -> bool {
-        self.output.output_path.is_none()
-            && self.output.format == OutputFormat::Txt
-            && !self.render.show_disk_usage
-            && !self.output.silent
     }
 }
 
@@ -909,44 +909,6 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // Config::should_stream 测试
-    // ------------------------------------------------------------------------
-
-    #[test]
-    fn config_should_stream_should_return_true_by_default() {
-        let config = Config::default();
-        assert!(config.should_stream());
-    }
-
-    #[test]
-    fn config_should_stream_should_return_false_when_output_path_set() {
-        let mut config = Config::default();
-        config.output.output_path = Some(PathBuf::from("output.txt"));
-        assert!(!config.should_stream());
-    }
-
-    #[test]
-    fn config_should_stream_should_return_false_when_format_is_json() {
-        let mut config = Config::default();
-        config.output.format = OutputFormat::Json;
-        assert!(!config.should_stream());
-    }
-
-    #[test]
-    fn config_should_stream_should_return_false_when_show_disk_usage() {
-        let mut config = Config::default();
-        config.render.show_disk_usage = true;
-        assert!(!config.should_stream());
-    }
-
-    #[test]
-    fn config_should_stream_should_return_false_when_silent() {
-        let mut config = Config::default();
-        config.output.silent = true;
-        assert!(!config.should_stream());
-    }
-
-    // ------------------------------------------------------------------------
     // Config::validate 测试
     // ------------------------------------------------------------------------
 
@@ -996,6 +958,7 @@ mod tests {
     #[test]
     fn config_validate_should_infer_json_format_from_extension() {
         let mut config = Config::default();
+        config.batch_mode = true; // JSON 格式需要批处理模式
         config.output.output_path = Some(PathBuf::from("tree.json"));
         let validated = config.validate().unwrap();
         assert_eq!(validated.output.format, OutputFormat::Json);
@@ -1004,6 +967,7 @@ mod tests {
     #[test]
     fn config_validate_should_infer_yaml_format_from_yml_extension() {
         let mut config = Config::default();
+        config.batch_mode = true; // YAML 格式需要批处理模式
         config.output.output_path = Some(PathBuf::from("tree.yml"));
         let validated = config.validate().unwrap();
         assert_eq!(validated.output.format, OutputFormat::Yaml);
@@ -1012,6 +976,7 @@ mod tests {
     #[test]
     fn config_validate_should_infer_yaml_format_from_yaml_extension() {
         let mut config = Config::default();
+        config.batch_mode = true; // YAML 格式需要批处理模式
         config.output.output_path = Some(PathBuf::from("tree.yaml"));
         let validated = config.validate().unwrap();
         assert_eq!(validated.output.format, OutputFormat::Yaml);
@@ -1020,6 +985,7 @@ mod tests {
     #[test]
     fn config_validate_should_infer_toml_format_from_extension() {
         let mut config = Config::default();
+        config.batch_mode = true; // TOML 格式需要批处理模式
         config.output.output_path = Some(PathBuf::from("tree.toml"));
         let validated = config.validate().unwrap();
         assert_eq!(validated.output.format, OutputFormat::Toml);
@@ -1150,6 +1116,7 @@ mod tests {
     #[test]
     fn config_with_all_options_enabled_should_validate() {
         let mut config = Config::default();
+        config.batch_mode = true; // 需要批处理模式以支持 disk_usage 和 JSON 输出
         config.scan.show_files = true;
         config.scan.max_depth = Some(10);
         config.scan.respect_gitignore = true;
@@ -1192,5 +1159,120 @@ mod tests {
         let debug_str = format!("{:?}", config);
         assert!(debug_str.contains("Config"));
         assert!(debug_str.contains("root_path"));
+    }
+
+    // ------------------------------------------------------------------------
+    // batch_mode 测试
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn config_batch_mode_default_is_false() {
+        let config = Config::default();
+        assert!(!config.batch_mode);
+    }
+
+    #[test]
+    fn config_validate_should_fail_disk_usage_without_batch() {
+        let mut config = Config::default();
+        config.render.show_disk_usage = true;
+        // batch_mode 默认为 false
+
+        let result = config.validate();
+        assert!(result.is_err());
+
+        if let Err(ConfigError::ConflictingOptions { opt_a, opt_b, .. }) = result {
+            assert!(opt_a.contains("disk-usage"));
+            assert!(opt_b.contains("batch"));
+        } else {
+            panic!("期望 ConflictingOptions 错误");
+        }
+    }
+
+    #[test]
+    fn config_validate_should_succeed_disk_usage_with_batch() {
+        let mut config = Config::default();
+        config.render.show_disk_usage = true;
+        config.batch_mode = true;
+
+        let result = config.validate();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn config_validate_should_fail_json_output_without_batch() {
+        let mut config = Config::default();
+        config.output.output_path = Some(PathBuf::from("tree.json"));
+        // batch_mode 默认为 false
+
+        let result = config.validate();
+        assert!(result.is_err());
+
+        if let Err(ConfigError::ConflictingOptions { opt_a, reason, .. }) = result {
+            assert!(opt_a.contains("Json") || opt_a.contains("json"));
+            assert!(reason.contains("batch"));
+        } else {
+            panic!("期望 ConflictingOptions 错误");
+        }
+    }
+
+    #[test]
+    fn config_validate_should_fail_yaml_output_without_batch() {
+        let mut config = Config::default();
+        config.output.output_path = Some(PathBuf::from("tree.yml"));
+
+        let result = config.validate();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn config_validate_should_fail_toml_output_without_batch() {
+        let mut config = Config::default();
+        config.output.output_path = Some(PathBuf::from("tree.toml"));
+
+        let result = config.validate();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn config_validate_should_succeed_txt_output_without_batch() {
+        let mut config = Config::default();
+        config.output.output_path = Some(PathBuf::from("tree.txt"));
+        // batch_mode 默认为 false，TXT 格式不需要 batch
+
+        let result = config.validate();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn config_validate_should_succeed_json_output_with_batch() {
+        let mut config = Config::default();
+        config.output.output_path = Some(PathBuf::from("tree.json"));
+        config.batch_mode = true;
+
+        let result = config.validate();
+        assert!(result.is_ok());
+        if let Ok(validated) = result {
+            assert_eq!(validated.output.format, OutputFormat::Json);
+        }
+    }
+
+    #[test]
+    fn config_validate_should_succeed_yaml_output_with_batch() {
+        let mut config = Config::default();
+        config.output.output_path = Some(PathBuf::from("tree.yaml"));
+        config.batch_mode = true;
+
+        let result = config.validate();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn config_validate_should_succeed_toml_output_with_batch() {
+        let mut config = Config::default();
+        config.output.output_path = Some(PathBuf::from("tree.toml"));
+        config.batch_mode = true;
+
+        let result = config.validate();
+        assert!(result.is_ok());
     }
 }

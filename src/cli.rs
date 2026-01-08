@@ -25,7 +25,7 @@
 //!
 //! 文件: src/cli.rs
 //! 作者: WaterRun
-//! 更新于: 2026-01-06
+//! 更新于: 2026-01-08
 
 #![forbid(unsafe_code)]
 
@@ -244,6 +244,14 @@ const ARG_DEFINITIONS: &[ArgDef] = &[
         short_patterns: &["-o"],
         long_patterns: &["--output"],
     },
+    // 模式类
+    ArgDef {
+        canonical: "batch",
+        kind: ArgKind::Flag,
+        cmd_patterns: &["/B"],
+        short_patterns: &["-b"],
+        long_patterns: &["--batch"],
+    },
     // 性能类
     ArgDef {
         canonical: "thread",
@@ -299,6 +307,8 @@ pub struct CliParser {
     position: usize,
     /// 已使用的规范名称集合（用于重复检测）
     seen_canonical_names: HashSet<String>,
+    /// 是否显式设置了线程数
+    thread_explicitly_set: bool,
 }
 
 impl CliParser {
@@ -321,6 +331,7 @@ impl CliParser {
             args,
             position: 0,
             seen_canonical_names: HashSet::new(),
+            thread_explicitly_set: false,
         }
     }
 
@@ -364,6 +375,7 @@ impl CliParser {
     /// - `CliError::InvalidValue` - 参数值无效
     /// - `CliError::DuplicateOption` - 参数重复
     /// - `CliError::MultiplePaths` - 指定了多个路径
+    /// - `CliError::ConflictingOptions` - 参数冲突（如 --thread 未配合 --batch）
     ///
     /// # Examples
     ///
@@ -415,6 +427,14 @@ impl CliParser {
 
         // 验证并设置路径
         self.validate_paths(&collected_paths, &mut config)?;
+
+        // CLI 层面的冲突检查：thread 必须配合 batch
+        if self.thread_explicitly_set && !config.batch_mode {
+            return Err(CliError::ConflictingOptions {
+                opt_a: "--thread".to_string(),
+                opt_b: "(no --batch)".to_string(),
+            });
+        }
 
         // 调用 Config::validate() 进行配置验证
         let validated_config = config.validate().map_err(|e| CliError::ParseError {
@@ -534,13 +554,16 @@ impl CliParser {
     }
 
     /// 将匹配的参数应用到配置
-    fn apply_to_config(&self, config: &mut Config, matched: &MatchedArg) -> Result<(), CliError> {
+    fn apply_to_config(&mut self, config: &mut Config, matched: &MatchedArg) -> Result<(), CliError> {
         let canonical = matched.definition.canonical;
 
         match canonical {
             // 信息显示类
             "help" => config.show_help = true,
             "version" => config.show_version = true,
+
+            // 模式类
+            "batch" => config.batch_mode = true,
 
             // 扫描选项
             "files" => config.scan.show_files = true,
@@ -567,6 +590,7 @@ impl CliParser {
                         value: value.clone(),
                         reason: "线程数必须大于 0".to_string(),
                     })?;
+                self.thread_explicitly_set = true;
             }
 
             // 匹配选项
@@ -653,6 +677,7 @@ Usage:
 Options:
   --help, -h, /?              Show help information
   --version, -v, /V           Show version information
+  --batch, -b, /B             Use batch processing mode
   --ascii, -a, /A             Draw the tree using ASCII characters
   --files, -f, /F             Show files
   --full-path, -p, /FP        Show full paths
@@ -664,13 +689,14 @@ Options:
   --exclude, -I, /X <PATTERN> Exclude files matching the pattern
   --level, -L, /L <N>         Limit recursion depth
   --include, -m, /M <PATTERN> Show only files matching the pattern
-  --disk-usage, -u, /DU       Show cumulative directory sizes
+  --disk-usage, -u, /DU       Show cumulative directory sizes (requires --batch)
   --report, -e, /RP           Show summary statistics at the end
   --prune, -P, /P             Prune empty directories
   --no-win-banner, -N, /NB    Do not show the Windows native tree banner/header
-  --silent, -l, /SI           Silent mode (use with --output)
+  --silent, -l, /SI           Silent mode (requires --output)
   --output, -o, /O <FILE>     Write output to a file (.txt, .json, .yml, .toml)
-  --thread, -t, /T <N>        Number of scanning threads (default: 8)
+                              Note: JSON/YAML/TOML formats require --batch
+  --thread, -t, /T <N>        Number of scanning threads (requires --batch, default: 8)
   --gitignore, -g, /G         Respect .gitignore
 
 More info: https://github.com/Water-Run/treepp"#
@@ -1070,10 +1096,11 @@ mod tests {
 
     #[test]
     fn should_parse_equals_syntax_for_output() {
-        let parser = CliParser::new(vec!["--output=tree.json".to_string()]);
+        // txt 格式不需要 --batch
+        let parser = CliParser::new(vec!["--output=tree.txt".to_string()]);
 
         if let Ok(ParseResult::Config(config)) = parser.parse() {
-            assert_eq!(config.output.output_path, Some(PathBuf::from("tree.json")));
+            assert_eq!(config.output.output_path, Some(PathBuf::from("tree.txt")));
         } else {
             panic!("解析失败");
         }
@@ -1205,7 +1232,11 @@ mod tests {
 
     #[test]
     fn should_parse_thread_count() {
-        let parser = CliParser::new(vec!["--thread".to_string(), "16".to_string()]);
+        let parser = CliParser::new(vec![
+            "--batch".to_string(),
+            "--thread".to_string(),
+            "16".to_string(),
+        ]);
 
         if let Ok(ParseResult::Config(config)) = parser.parse() {
             assert_eq!(config.scan.thread_count.get(), 16);
@@ -1216,7 +1247,11 @@ mod tests {
 
     #[test]
     fn should_parse_thread_count_one() {
-        let parser = CliParser::new(vec!["--thread".to_string(), "1".to_string()]);
+        let parser = CliParser::new(vec![
+            "--batch".to_string(),
+            "--thread".to_string(),
+            "1".to_string(),
+        ]);
 
         if let Ok(ParseResult::Config(config)) = parser.parse() {
             assert_eq!(config.scan.thread_count.get(), 1);
@@ -1227,21 +1262,33 @@ mod tests {
 
     #[test]
     fn should_fail_on_zero_thread_count() {
-        let parser = CliParser::new(vec!["--thread".to_string(), "0".to_string()]);
+        let parser = CliParser::new(vec![
+            "--batch".to_string(),
+            "--thread".to_string(),
+            "0".to_string(),
+        ]);
         let result = parser.parse();
         assert!(matches!(result, Err(CliError::InvalidValue { .. })));
     }
 
     #[test]
     fn should_fail_on_invalid_thread_count() {
-        let parser = CliParser::new(vec!["--thread".to_string(), "abc".to_string()]);
+        let parser = CliParser::new(vec![
+            "--batch".to_string(),
+            "--thread".to_string(),
+            "abc".to_string(),
+        ]);
         let result = parser.parse();
         assert!(matches!(result, Err(CliError::InvalidValue { .. })));
     }
 
     #[test]
     fn should_parse_thread_with_cmd_style() {
-        let parser = CliParser::new(vec!["/T".to_string(), "4".to_string()]);
+        let parser = CliParser::new(vec![
+            "/B".to_string(),
+            "/T".to_string(),
+            "4".to_string(),
+        ]);
 
         if let Ok(ParseResult::Config(config)) = parser.parse() {
             assert_eq!(config.scan.thread_count.get(), 4);
@@ -1256,10 +1303,11 @@ mod tests {
 
     #[test]
     fn should_parse_output_path() {
-        let parser = CliParser::new(vec!["--output".to_string(), "tree.json".to_string()]);
+        // txt 格式不需要 --batch
+        let parser = CliParser::new(vec!["--output".to_string(), "tree.txt".to_string()]);
 
         if let Ok(ParseResult::Config(config)) = parser.parse() {
-            assert_eq!(config.output.output_path, Some(PathBuf::from("tree.json")));
+            assert_eq!(config.output.output_path, Some(PathBuf::from("tree.txt")));
         } else {
             panic!("解析失败");
         }
@@ -1267,38 +1315,51 @@ mod tests {
 
     #[test]
     fn should_parse_output_with_various_extensions() {
-        let cases = vec![
-            ("tree.txt", OutputFormat::Txt),
+        // txt 格式不需要 --batch
+        let txt_parser = CliParser::new(vec!["--output".to_string(), "tree.txt".to_string()]);
+        if let Ok(ParseResult::Config(config)) = txt_parser.parse() {
+            assert_eq!(config.output.format, OutputFormat::Txt, "测试 tree.txt 格式推断");
+        } else {
+            panic!("解析 --output tree.txt 失败");
+        }
+
+        // 结构化格式需要 --batch
+        let structured_cases = vec![
             ("tree.json", OutputFormat::Json),
             ("tree.yml", OutputFormat::Yaml),
             ("tree.yaml", OutputFormat::Yaml),
             ("tree.toml", OutputFormat::Toml),
         ];
 
-        for (filename, expected_format) in cases {
-            let parser = CliParser::new(vec!["--output".to_string(), filename.to_string()]);
+        for (filename, expected_format) in structured_cases {
+            let parser = CliParser::new(vec![
+                "--batch".to_string(),
+                "--output".to_string(),
+                filename.to_string(),
+            ]);
             if let Ok(ParseResult::Config(config)) = parser.parse() {
                 assert_eq!(
                     config.output.format, expected_format,
                     "测试 {filename} 格式推断"
                 );
             } else {
-                panic!("解析 --output {filename} 失败");
+                panic!("解析 --batch --output {filename} 失败");
             }
         }
     }
 
     #[test]
     fn should_parse_output_with_path() {
+        // txt 格式不需要 --batch
         let parser = CliParser::new(vec![
             "--output".to_string(),
-            "C:\\output\\tree.json".to_string(),
+            "C:\\output\\tree.txt".to_string(),
         ]);
 
         if let Ok(ParseResult::Config(config)) = parser.parse() {
             assert_eq!(
                 config.output.output_path,
-                Some(PathBuf::from("C:\\output\\tree.json"))
+                Some(PathBuf::from("C:\\output\\tree.txt"))
             );
         } else {
             panic!("解析失败");
@@ -1425,7 +1486,12 @@ mod tests {
 
     #[test]
     fn should_infer_output_format_from_extension() {
-        let parser = CliParser::new(vec!["--output".to_string(), "tree.json".to_string()]);
+        // JSON 格式需要 --batch
+        let parser = CliParser::new(vec![
+            "--batch".to_string(),
+            "--output".to_string(),
+            "tree.json".to_string(),
+        ]);
 
         if let Ok(ParseResult::Config(config)) = parser.parse() {
             assert_eq!(config.output.format, OutputFormat::Json);
@@ -1495,12 +1561,14 @@ mod tests {
 
     #[test]
     fn should_parse_disk_usage() {
+        // disk-usage 需要 --batch
         for flag in &["--disk-usage", "-u", "/DU", "/du"] {
-            let parser = CliParser::new(vec![flag.to_string()]);
+            let parser = CliParser::new(vec!["--batch".to_string(), flag.to_string()]);
             if let Ok(ParseResult::Config(config)) = parser.parse() {
                 assert!(config.render.show_disk_usage, "测试 {flag}");
+                assert!(config.batch_mode, "测试 {flag} 应启用 batch 模式");
             } else {
-                panic!("解析 {flag} 失败");
+                panic!("解析 --batch {flag} 失败");
             }
         }
     }
@@ -1561,6 +1629,7 @@ mod tests {
     fn should_contain_all_options_in_help() {
         let help = help_text();
         assert!(help.contains("--help"));
+        assert!(help.contains("--batch"));
         assert!(help.contains("--files"));
         assert!(help.contains("--ascii"));
         assert!(help.contains("--level"));
@@ -1580,6 +1649,8 @@ mod tests {
         assert!(help.contains("--full-path"));
         assert!(help.contains("--no-indent"));
         assert!(help.contains("--report"));
+        // 验证依赖说明
+        assert!(help.contains("requires --batch"));
     }
 
     #[test]
@@ -1713,6 +1784,7 @@ mod tests {
         let parser = parser_with_temp_dir(
             &temp_dir,
             vec![
+                "/B", // 需要批处理模式以支持 /DU 和 /T
                 "/F",
                 "-a",
                 "--level",
@@ -1730,10 +1802,12 @@ mod tests {
                 "-N",
                 "--thread",
                 "4",
+                "--disk-usage",
             ],
         );
 
         if let Ok(ParseResult::Config(config)) = parser.parse() {
+            assert!(config.batch_mode);
             assert!(config.scan.show_files);
             assert_eq!(config.render.charset, CharsetMode::Ascii);
             assert_eq!(config.scan.max_depth, Some(5));
@@ -1747,6 +1821,7 @@ mod tests {
             assert!(config.render.show_report);
             assert!(config.render.no_win_banner);
             assert_eq!(config.scan.thread_count.get(), 4);
+            assert!(config.render.show_disk_usage);
         } else {
             panic!("复杂命令行解析失败");
         }
@@ -1759,10 +1834,17 @@ mod tests {
 
         let parser = parser_with_temp_dir(
             &temp_dir,
-            vec!["--output", output_file.to_str().unwrap(), "--silent", "/F"],
+            vec![
+                "--batch", // JSON 输出需要批处理模式
+                "--output",
+                output_file.to_str().unwrap(),
+                "--silent",
+                "/F",
+            ],
         );
 
         if let Ok(ParseResult::Config(config)) = parser.parse() {
+            assert!(config.batch_mode);
             assert!(config.output.silent);
             assert!(config.output.output_path.is_some());
             assert_eq!(config.output.format, OutputFormat::Json);
@@ -1842,6 +1924,164 @@ mod tests {
             assert!(config.path_explicitly_set);
         } else {
             panic!("解析应成功");
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // batch 模式测试
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn should_parse_batch_flag_cmd_style() {
+        let parser = CliParser::new(vec!["/B".to_string()]);
+        if let Ok(ParseResult::Config(config)) = parser.parse() {
+            assert!(config.batch_mode);
+        } else {
+            panic!("解析失败");
+        }
+    }
+
+    #[test]
+    fn should_parse_batch_flag_cmd_style_lowercase() {
+        let parser = CliParser::new(vec!["/b".to_string()]);
+        if let Ok(ParseResult::Config(config)) = parser.parse() {
+            assert!(config.batch_mode);
+        } else {
+            panic!("解析失败");
+        }
+    }
+
+    #[test]
+    fn should_parse_batch_flag_short_style() {
+        let parser = CliParser::new(vec!["-b".to_string()]);
+        if let Ok(ParseResult::Config(config)) = parser.parse() {
+            assert!(config.batch_mode);
+        } else {
+            panic!("解析失败");
+        }
+    }
+
+    #[test]
+    fn should_parse_batch_flag_long_style() {
+        let parser = CliParser::new(vec!["--batch".to_string()]);
+        if let Ok(ParseResult::Config(config)) = parser.parse() {
+            assert!(config.batch_mode);
+        } else {
+            panic!("解析失败");
+        }
+    }
+
+    #[test]
+    fn should_fail_thread_without_batch() {
+        let parser = CliParser::new(vec!["--thread".to_string(), "4".to_string()]);
+        let result = parser.parse();
+        assert!(result.is_err());
+
+        if let Err(CliError::ConflictingOptions { opt_a, opt_b }) = result {
+            assert!(opt_a.contains("thread"));
+            assert!(opt_b.contains("batch"));
+        } else {
+            panic!("期望 ConflictingOptions 错误");
+        }
+    }
+
+    #[test]
+    fn should_succeed_thread_with_batch() {
+        let parser = CliParser::new(vec![
+            "--batch".to_string(),
+            "--thread".to_string(),
+            "4".to_string(),
+        ]);
+        let result = parser.parse();
+        assert!(result.is_ok());
+
+        if let Ok(ParseResult::Config(config)) = result {
+            assert!(config.batch_mode);
+            assert_eq!(config.scan.thread_count.get(), 4);
+        }
+    }
+
+    #[test]
+    fn should_fail_disk_usage_without_batch() {
+        let parser = CliParser::new(vec!["--disk-usage".to_string()]);
+        let result = parser.parse();
+        assert!(result.is_err());
+        // 错误来自 Config::validate()，包装为 ParseError
+    }
+
+    #[test]
+    fn should_succeed_disk_usage_with_batch() {
+        let parser = CliParser::new(vec!["--batch".to_string(), "--disk-usage".to_string()]);
+        let result = parser.parse();
+        assert!(result.is_ok());
+
+        if let Ok(ParseResult::Config(config)) = result {
+            assert!(config.batch_mode);
+            assert!(config.render.show_disk_usage);
+        }
+    }
+
+    #[test]
+    fn should_fail_json_output_without_batch() {
+        let parser = CliParser::new(vec!["--output".to_string(), "tree.json".to_string()]);
+        let result = parser.parse();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn should_succeed_json_output_with_batch() {
+        let parser = CliParser::new(vec![
+            "--batch".to_string(),
+            "--output".to_string(),
+            "tree.json".to_string(),
+        ]);
+        let result = parser.parse();
+        assert!(result.is_ok());
+
+        if let Ok(ParseResult::Config(config)) = result {
+            assert!(config.batch_mode);
+            assert_eq!(config.output.format, OutputFormat::Json);
+        }
+    }
+
+    #[test]
+    fn should_succeed_txt_output_without_batch() {
+        let parser = CliParser::new(vec!["--output".to_string(), "tree.txt".to_string()]);
+        let result = parser.parse();
+        assert!(result.is_ok());
+
+        if let Ok(ParseResult::Config(config)) = result {
+            assert!(!config.batch_mode);
+            assert_eq!(config.output.format, OutputFormat::Txt);
+        }
+    }
+
+    #[test]
+    fn should_parse_batch_with_multiple_options() {
+        let temp_dir = create_temp_dir();
+        let parser = parser_with_temp_dir(
+            &temp_dir,
+            vec!["/B", "/F", "/DU", "-t", "16", "-o", "tree.json"],
+        );
+
+        if let Ok(ParseResult::Config(config)) = parser.parse() {
+            assert!(config.batch_mode);
+            assert!(config.scan.show_files);
+            assert!(config.render.show_disk_usage);
+            assert_eq!(config.scan.thread_count.get(), 16);
+            assert_eq!(config.output.format, OutputFormat::Json);
+        } else {
+            panic!("解析失败");
+        }
+    }
+
+    #[test]
+    fn should_default_to_stream_mode() {
+        let parser = CliParser::new(vec!["/F".to_string()]);
+        if let Ok(ParseResult::Config(config)) = parser.parse() {
+            assert!(!config.batch_mode);
+        } else {
+            panic!("解析失败");
         }
     }
 }

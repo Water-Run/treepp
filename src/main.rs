@@ -34,9 +34,7 @@ mod scan;
 use std::process::ExitCode;
 
 use cli::{CliError, CliParser, ParseResult};
-use config::OutputFormat;
 use error::TreeppError;
-use output::StreamWriter;
 use render::{StreamRenderConfig, StreamRenderer};
 
 /// 退出码：成功
@@ -62,7 +60,7 @@ fn main() -> ExitCode {
     }
 }
 
-/// 执行主流程：能流式则流式，否则回退批处理。
+/// 执行主流程：根据 batch_mode 选择批处理或流式模式。
 fn run() -> Result<(), TreeppError> {
     // 1. CLI 解析
     let parser = CliParser::from_env();
@@ -80,14 +78,10 @@ fn run() -> Result<(), TreeppError> {
         }
         ParseResult::Config(config) => {
             // 配置已在 parse() 中 validate
-            let streaming_eligible = config.output.format == OutputFormat::Txt
-                && !config.render.show_disk_usage
-                && config.output.output_path.is_none()
-                && !config.output.silent;
-            if streaming_eligible {
-                stream_mode(&config)
-            } else {
+            if config.batch_mode {
                 batch_mode(&config)
+            } else {
+                stream_mode(&config)
             }
         }
     }
@@ -101,25 +95,71 @@ fn batch_mode(config: &config::Config) -> Result<(), TreeppError> {
     Ok(())
 }
 
-/// 流式管线：边扫描边渲染边输出（仅 TXT、未开启 /DU、无输出文件且非静默时）。
+/// 流式管线：边扫描边渲染边输出。
+///
+/// 在流式模式下：
+/// - 始终输出 TXT 格式（JSON/YAML/TOML 需要批处理模式）
+/// - 如果指定了输出文件，同时写入文件和 stdout（除非 silent）
+/// - disk_usage 不可用（需要批处理模式）
 fn stream_mode(config: &config::Config) -> Result<(), TreeppError> {
     use crate::error::ScanError;
     use render::WinBanner;
     use scan::StreamEvent;
+    use std::fs::File;
+    use std::io::{BufWriter, Write};
 
-    // 静默模式已在 streaming_eligible 中被排除，这里仍防御性处理
-    if config.output.silent {
-        let _ = scan::scan_streaming(config, |_| Ok(()))?;
-        return Ok(());
+    // 准备文件写入器（如果有输出路径）
+    let mut file_writer: Option<BufWriter<File>> = if let Some(ref path) = config.output.output_path
+    {
+        let file = File::create(path).map_err(|e| {
+            crate::error::OutputError::FileCreateFailed {
+                path: path.clone(),
+                source: e,
+            }
+        })?;
+        Some(BufWriter::new(file))
+    } else {
+        None
+    };
+
+    // 辅助宏：同时写入 stdout 和文件
+    macro_rules! write_output {
+        ($content:expr) => {
+            if !config.output.silent {
+                print!("{}", $content);
+            }
+            if let Some(ref mut writer) = file_writer {
+                write!(writer, "{}", $content).map_err(|e| {
+                    crate::error::OutputError::WriteFailed {
+                        path: config.output.output_path.clone().unwrap(),
+                        source: e,
+                    }
+                })?;
+            }
+        };
+    }
+
+    macro_rules! writeln_output {
+        ($content:expr) => {
+            if !config.output.silent {
+                println!("{}", $content);
+            }
+            if let Some(ref mut writer) = file_writer {
+                writeln!(writer, "{}", $content).map_err(|e| {
+                    crate::error::OutputError::WriteFailed {
+                        path: config.output.output_path.clone().unwrap(),
+                        source: e,
+                    }
+                })?;
+            }
+        };
     }
 
     let mut renderer = StreamRenderer::new(StreamRenderConfig::from_config(config));
-    let stdout = std::io::stdout();
-    let mut writer = StreamWriter::new(&stdout);
 
     // 头部（可含 banner）立即输出
     let header = renderer.render_header(&config.root_path, config.path_explicitly_set);
-    writer.write(&header)?;
+    write_output!(header);
 
     // 流式扫描 + 渲染
     let stats = scan::scan_streaming(config, |event| {
@@ -128,10 +168,15 @@ fn stream_mode(config: &config::Config) -> Result<(), TreeppError> {
                 let line = renderer.render_entry(&entry);
                 // 可能包含多行（如空行分隔）
                 for l in line.lines() {
-                    writer.write_line(l).map_err(|e| ScanError::WalkError {
-                        message: e.to_string(),
-                        path: None,
-                    })?;
+                    if !config.output.silent {
+                        println!("{}", l);
+                    }
+                    if let Some(ref mut writer) = file_writer {
+                        writeln!(writer, "{}", l).map_err(|e| ScanError::WalkError {
+                            message: e.to_string(),
+                            path: None,
+                        })?;
+                    }
                 }
             }
             StreamEvent::EnterDir { is_last } => {
@@ -149,8 +194,8 @@ fn stream_mode(config: &config::Config) -> Result<(), TreeppError> {
         if let Some(drive) = drive_letter_from_path(&config.root_path) {
             if let Ok(banner) = WinBanner::fetch_for_drive(drive) {
                 if !banner.no_subfolder.is_empty() {
-                    writer.write_line("")?;
-                    writer.write_line(&banner.no_subfolder)?;
+                    writeln_output!("");
+                    writeln_output!(banner.no_subfolder);
                 }
             }
         }
@@ -160,7 +205,24 @@ fn stream_mode(config: &config::Config) -> Result<(), TreeppError> {
     if config.render.show_report {
         let report =
             renderer.render_report(stats.directory_count, stats.file_count, stats.duration);
-        writer.write(&report)?;
+        write_output!(report);
+    }
+
+    // 刷新文件写入器
+    if let Some(ref mut writer) = file_writer {
+        writer.flush().map_err(|e| {
+            crate::error::OutputError::WriteFailed {
+                path: config.output.output_path.clone().unwrap(),
+                source: e,
+            }
+        })?;
+    }
+
+    // 打印文件写入提示
+    if let Some(ref path) = config.output.output_path {
+        if !config.output.silent {
+            println!("\nOutput written to: {}", path.display());
+        }
     }
 
     Ok(())

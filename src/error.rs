@@ -13,7 +13,7 @@
 //!
 //! 文件: src/error.rs
 //! 作者: WaterRun
-//! 更新于: 2026-01-07
+//! 更新于: 2026-01-08
 
 #![forbid(unsafe_code)]
 

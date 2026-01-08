@@ -387,11 +387,11 @@ pub fn write_file(content: &str, path: &Path) -> Result<(), OutputError> {
     // 确保父目录存在
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty() && !parent.exists() {
-            fs::create_dir_all(parent).map_err(|e| OutputError::FileCreateFailed {
-                path: path.to_path_buf(),
-                source: e,
-            })?;
-        }
+        fs::create_dir_all(parent).map_err(|e| OutputError::FileCreateFailed {
+            path: path.to_path_buf(),
+            source: e,
+        })?;
+    }
 
     // 创建文件并写入
     let file = File::create(path).map_err(|e| OutputError::FileCreateFailed {
@@ -639,11 +639,11 @@ pub fn validate_output_path(path: &Path) -> Result<(), OutputError> {
     // 检查父目录
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty() && parent.exists() && !parent.is_dir() {
-            return Err(OutputError::InvalidOutputPath {
-                path: path.to_path_buf(),
-                reason: "Parent path is not a directory.".to_string(),
-            });
-        }
+        return Err(OutputError::InvalidOutputPath {
+            path: path.to_path_buf(),
+            reason: "Parent path is not a directory.".to_string(),
+        });
+    }
 
     Ok(())
 }
@@ -710,6 +710,7 @@ mod tests {
     fn test_serialize_json_with_files() {
         let tree = create_test_tree();
         let mut config = Config::default();
+        config.batch_mode = true; // JSON 序列化需要批处理模式
         config.scan.show_files = true;
         config.render.show_size = true;
 
