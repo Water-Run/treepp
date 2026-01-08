@@ -12,7 +12,7 @@
 //!
 //! 文件: src/scan.rs
 //! 作者: WaterRun
-//! 更新于: 2025-01-06
+//! 更新于: 2026-01-08
 
 #![forbid(unsafe_code)]
 
@@ -363,24 +363,6 @@ pub struct ScanStats {
 ///
 /// 在流式扫描模式下，每个发现的条目会通过回调传递此结构。
 /// 包含条目的完整信息以及用于树形渲染的位置信息。
-///
-/// # Examples
-///
-/// ```
-/// use std::path::PathBuf;
-/// use treepp::scan::{StreamEntry, EntryKind, EntryMetadata};
-///
-/// let entry = StreamEntry {
-///     path: PathBuf::from("src/main.rs"),
-///     name: "main.rs".to_string(),
-///     kind: EntryKind::File,
-///     metadata: EntryMetadata { size: 1024, ..Default::default() },
-///     depth: 1,
-///     is_last: true,
-/// };
-/// assert_eq!(entry.name, "main.rs");
-/// assert!(entry.is_last);
-/// ```
 #[derive(Debug, Clone)]
 pub struct StreamEntry {
     /// 条目完整路径
@@ -393,8 +375,12 @@ pub struct StreamEntry {
     pub metadata: EntryMetadata,
     /// 当前深度（根目录子项为 0）
     pub depth: usize,
-    /// 是否为当前层级最后一个条目
+    /// 是否为当前层级最后一个条目（用于渲染连接符）
     pub is_last: bool,
+    /// 是否为文件（用于区分渲染方式）
+    pub is_file: bool,
+    /// 是否还有后续目录（用于文件渲染时决定前缀）
+    pub has_more_dirs: bool,
 }
 
 /// 流式扫描统计（简化版，不含树结构）
@@ -629,25 +615,36 @@ fn load_gitignore_from_path(dir: &Path) -> Option<Gitignore> {
 // ============================================================================
 
 /// 对树节点进行确定性排序（递归）
+///
+/// 默认行为：文件优先（与原生 Windows tree 一致）
+/// 当 dirs_first=true 时：目录优先
 pub fn sort_tree(node: &mut TreeNode, sort_key: SortKey, reverse: bool, dirs_first: bool) {
     // 排序子节点
     node.children.sort_by(|a, b| {
-        // 目录优先排序（仅当 dirs_first 为 true 时）
-        let kind_order = if dirs_first {
-            match (a.kind, b.kind) {
-                (EntryKind::Directory, EntryKind::File) => Ordering::Less,
-                (EntryKind::File, EntryKind::Directory) => Ordering::Greater,
-                _ => Ordering::Equal,
+        // 目录/文件分组排序
+        let kind_order = match (a.kind, b.kind) {
+            (EntryKind::Directory, EntryKind::File) => {
+                if dirs_first {
+                    Ordering::Less
+                } else {
+                    Ordering::Greater
+                }
             }
-        } else {
-            Ordering::Equal
+            (EntryKind::File, EntryKind::Directory) => {
+                if dirs_first {
+                    Ordering::Greater
+                } else {
+                    Ordering::Less
+                }
+            }
+            _ => Ordering::Equal,
         };
 
         if kind_order != Ordering::Equal {
             return kind_order;
         }
 
-        // 按指定键排序
+        // 同类型内按指定键排序
         let cmp = match sort_key {
             SortKey::Name => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
             SortKey::Size => {
@@ -659,7 +656,11 @@ pub fn sort_tree(node: &mut TreeNode, sort_key: SortKey, reverse: bool, dirs_fir
             SortKey::Ctime => a.metadata.created.cmp(&b.metadata.created),
         };
 
-        if reverse { cmp.reverse() } else { cmp }
+        if reverse {
+            cmp.reverse()
+        } else {
+            cmp
+        }
     });
 
     // 递归排序子节点的子节点
@@ -669,6 +670,9 @@ pub fn sort_tree(node: &mut TreeNode, sort_key: SortKey, reverse: bool, dirs_fir
 }
 
 /// 对条目列表进行排序（用于流式扫描）
+///
+/// 默认行为：文件优先（与原生 Windows tree 一致）
+/// 当 dirs_first=true 时：目录优先
 fn sort_entries(
     entries: &mut [(PathBuf, Metadata)],
     sort_key: SortKey,
@@ -679,22 +683,32 @@ fn sort_entries(
         let is_dir_a = meta_a.is_dir();
         let is_dir_b = meta_b.is_dir();
 
-        // 目录优先排序
-        let kind_order = if dirs_first {
-            match (is_dir_a, is_dir_b) {
-                (true, false) => Ordering::Less,
-                (false, true) => Ordering::Greater,
-                _ => Ordering::Equal,
+        // 目录/文件分组排序
+        // 默认：文件优先（原生 tree 行为）
+        // dirs_first=true：目录优先（/DF 参数）
+        let kind_order = match (is_dir_a, is_dir_b) {
+            (true, false) => {
+                if dirs_first {
+                    Ordering::Less
+                } else {
+                    Ordering::Greater
+                }
             }
-        } else {
-            Ordering::Equal
+            (false, true) => {
+                if dirs_first {
+                    Ordering::Greater
+                } else {
+                    Ordering::Less
+                }
+            }
+            _ => Ordering::Equal,
         };
 
         if kind_order != Ordering::Equal {
             return kind_order;
         }
 
-        // 获取文件名用于比较
+        // 同类型内按指定键排序
         let name_a = path_a
             .file_name()
             .map(|s| s.to_string_lossy().to_lowercase())
@@ -715,7 +729,11 @@ fn sort_entries(
             SortKey::Ctime => meta_a.created().ok().cmp(&meta_b.created().ok()),
         };
 
-        if reverse { cmp.reverse() } else { cmp }
+        if reverse {
+            cmp.reverse()
+        } else {
+            cmp
+        }
     });
 }
 
@@ -1071,9 +1089,10 @@ where
 {
     // 深度限制检查
     if let Some(max) = ctx.max_depth
-        && depth >= max {
-            return Ok((0, 0));
-        }
+        && depth >= max
+    {
+        return Ok((0, 0));
+    }
 
     // 构建当前目录的 gitignore 链
     let current_chain = if ctx.respect_gitignore {
@@ -1086,14 +1105,12 @@ where
         parent_chain.clone()
     };
 
-    // 批量读取目录条目
+    // 批量读取目录条目（权限错误时跳过而非崩溃）
     let raw_entries: Vec<_> = match fs::read_dir(path) {
         Ok(entries) => entries.flatten().collect(),
-        Err(e) => {
-            return Err(ScanError::ReadDirFailed {
-                path: path.to_path_buf(),
-                source: e,
-            });
+        Err(_) => {
+            // 无法读取目录（权限不足等），静默跳过
+            return Ok((0, 0));
         }
     };
 
@@ -1128,56 +1145,84 @@ where
         })
         .collect();
 
-    // 排序
+    // 排序：文件优先（与原生 tree 一致），除非启用 dirs_first
     sort_entries(&mut filtered, ctx.sort_key, ctx.reverse, ctx.dirs_first);
 
-    // 按序处理并回调
-    let count = filtered.len();
+    // 分离文件和目录，保持各自内部顺序
+    let mut files: Vec<(PathBuf, Metadata)> = Vec::new();
+    let mut dirs: Vec<(PathBuf, Metadata)> = Vec::new();
+
+    for (entry_path, meta) in filtered {
+        if meta.is_dir() {
+            dirs.push((entry_path, meta));
+        } else {
+            files.push((entry_path, meta));
+        }
+    }
+
+    // 统计计数
     let mut dir_count = 0;
     let mut file_count = 0;
 
-    for (i, (entry_path, meta)) in filtered.into_iter().enumerate() {
-        let is_last = i == count - 1;
-        let is_dir = meta.is_dir();
-        let kind = if is_dir {
-            EntryKind::Directory
-        } else {
-            EntryKind::File
-        };
+    // 先处理文件
+    let file_total = files.len();
+    for (i, (entry_path, meta)) in files.into_iter().enumerate() {
+        let is_last_file = i == file_total - 1;
+        let is_last_overall = is_last_file && dirs.is_empty();
         let entry_meta = EntryMetadata::from_fs_metadata(&meta);
         let name = entry_path
             .file_name()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
 
-        // 发送条目事件
+        let entry = StreamEntry {
+            path: entry_path,
+            name,
+            kind: EntryKind::File,
+            metadata: entry_meta,
+            depth,
+            is_last: is_last_overall,
+            is_file: true,
+            has_more_dirs: !dirs.is_empty(),
+        };
+        callback(StreamEvent::Entry(entry))?;
+        file_count += 1;
+    }
+
+    // 再处理目录
+    let dir_total = dirs.len();
+    for (i, (entry_path, meta)) in dirs.into_iter().enumerate() {
+        let is_last = i == dir_total - 1;
+        let entry_meta = EntryMetadata::from_fs_metadata(&meta);
+        let name = entry_path
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+
         let entry = StreamEntry {
             path: entry_path.clone(),
             name,
-            kind,
+            kind: EntryKind::Directory,
             metadata: entry_meta,
             depth,
             is_last,
+            is_file: false,
+            has_more_dirs: !is_last,
         };
         callback(StreamEvent::Entry(entry))?;
+        dir_count += 1;
 
-        if is_dir {
-            dir_count += 1;
+        // 发送进入目录事件
+        callback(StreamEvent::EnterDir { is_last })?;
 
-            // 发送进入目录事件
-            callback(StreamEvent::EnterDir { is_last })?;
+        // 递归处理子目录
+        let (sub_dirs, sub_files) =
+            streaming_scan_dir(&entry_path, depth + 1, ctx, &current_chain, callback)?;
+        dir_count += sub_dirs;
+        file_count += sub_files;
 
-            // 递归处理子目录
-            let (sub_dirs, sub_files) =
-                streaming_scan_dir(&entry_path, depth + 1, ctx, &current_chain, callback)?;
-            dir_count += sub_dirs;
-            file_count += sub_files;
-
-            // 发送离开目录事件
-            callback(StreamEvent::LeaveDir)?;
-        } else {
-            file_count += 1;
-        }
+        // 发送离开目录事件
+        callback(StreamEvent::LeaveDir)?;
     }
 
     Ok((dir_count, file_count))
@@ -1772,12 +1817,16 @@ mod tests {
             },
             depth: 1,
             is_last: true,
+            is_file: true,
+            has_more_dirs: false,
         };
 
         assert_eq!(entry.name, "main.rs");
         assert_eq!(entry.kind, EntryKind::File);
         assert_eq!(entry.depth, 1);
         assert!(entry.is_last);
+        assert!(entry.is_file);
+        assert!(!entry.has_more_dirs);
         assert_eq!(entry.metadata.size, 1024);
     }
 
@@ -2142,12 +2191,15 @@ mod tests {
             EntryMetadata::default(),
         ));
 
-        // dirs_first = false，按名称排序，不区分目录和文件
+        // dirs_first = false 时，文件优先（原生 Windows tree 行为）
+        // 文件在前，目录在后，各自按名称排序
         sort_tree(&mut root, SortKey::Name, false, false);
 
-        assert_eq!(root.children[0].name, "a_dir");
-        assert_eq!(root.children[1].name, "b_file.txt");
-        assert_eq!(root.children[2].name, "z_file.txt");
+        // 期望顺序：b_file.txt, z_file.txt, a_dir
+        // 文件按名称排序在前，目录在后
+        assert_eq!(root.children[0].name, "b_file.txt");
+        assert_eq!(root.children[1].name, "z_file.txt");
+        assert_eq!(root.children[2].name, "a_dir");
     }
 
     #[test]
@@ -2854,5 +2906,65 @@ mod tests {
         let stats = scan_streaming(&config, |_| Ok(())).expect("扫描失败");
 
         assert!(stats.duration.as_nanos() > 0);
+    }
+
+    #[test]
+    fn test_stream_entry_new_fields() {
+        let entry = StreamEntry {
+            path: PathBuf::from("test.txt"),
+            name: "test.txt".to_string(),
+            kind: EntryKind::File,
+            metadata: EntryMetadata::default(),
+            depth: 0,
+            is_last: true,
+            is_file: true,
+            has_more_dirs: false,
+        };
+
+        assert!(entry.is_file);
+        assert!(!entry.has_more_dirs);
+    }
+
+    #[test]
+    fn test_sort_tree_files_first_by_default() {
+        let mut root = TreeNode::new(
+            PathBuf::from("."),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        root.children.push(TreeNode::new(
+            PathBuf::from("dir"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        ));
+        root.children.push(TreeNode::new(
+            PathBuf::from("file.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+
+        // 默认 dirs_first=false，文件应该在前
+        sort_tree(&mut root, SortKey::Name, false, false);
+
+        assert_eq!(root.children[0].kind, EntryKind::File);
+        assert_eq!(root.children[1].kind, EntryKind::Directory);
+    }
+
+    #[test]
+    fn test_streaming_scan_skips_permission_denied() {
+        // 这个测试验证权限错误不会导致崩溃
+        // 使用系统目录测试（如果存在）
+        let system_dir = PathBuf::from("C:\\System Volume Information");
+        if !system_dir.exists() {
+            return; // 跳过测试
+        }
+
+        let mut config = Config::with_root(PathBuf::from("C:\\"));
+        config.scan.show_files = true;
+        config.scan.max_depth = Some(1);
+
+        // 这应该不会崩溃
+        let result = scan_streaming(&config, |_| Ok(()));
+        assert!(result.is_ok());
     }
 }

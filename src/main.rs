@@ -17,7 +17,7 @@
 //!
 //! 文件: src/main.rs
 //! 作者: WaterRun
-//! 更新于: 2026-01-07
+//! 更新于: 2026-01-08
 
 #![forbid(unsafe_code)]
 #![deny(warnings)]
@@ -109,7 +109,6 @@ fn stream_mode(config: &config::Config) -> Result<(), TreeppError> {
 
     // 静默模式已在 streaming_eligible 中被排除，这里仍防御性处理
     if config.output.silent {
-        // 静默且无输出文件时，直接扫描即可（无终端输出）
         let _ = scan::scan_streaming(config, |_| Ok(()))?;
         return Ok(());
     }
@@ -127,12 +126,13 @@ fn stream_mode(config: &config::Config) -> Result<(), TreeppError> {
         match event {
             StreamEvent::Entry(entry) => {
                 let line = renderer.render_entry(&entry);
-                writer
-                    .write_line(&line)
-                    .map_err(|e| ScanError::WalkError {
+                // 可能包含多行（如空行分隔）
+                for l in line.lines() {
+                    writer.write_line(l).map_err(|e| ScanError::WalkError {
                         message: e.to_string(),
                         path: None,
                     })?;
+                }
             }
             StreamEvent::EnterDir { is_last } => {
                 renderer.push_level(!is_last);
@@ -144,11 +144,12 @@ fn stream_mode(config: &config::Config) -> Result<(), TreeppError> {
         Ok(())
     })?;
 
-    // 空目录时，按原生 tree 行为输出“没有子文件夹”（仅在未禁用 banner 且获取成功时）
+    // 空目录时，按原生 tree 行为输出"没有子文件夹"
     if stats.directory_count == 0 && !config.render.no_win_banner {
         if let Some(drive) = drive_letter_from_path(&config.root_path) {
             if let Ok(banner) = WinBanner::fetch_for_drive(drive) {
                 if !banner.no_subfolder.is_empty() {
+                    writer.write_line("")?;
                     writer.write_line(&banner.no_subfolder)?;
                 }
             }
@@ -157,7 +158,8 @@ fn stream_mode(config: &config::Config) -> Result<(), TreeppError> {
 
     // 末尾统计
     if config.render.show_report {
-        let report = renderer.render_report(stats.directory_count, stats.file_count, stats.duration);
+        let report =
+            renderer.render_report(stats.directory_count, stats.file_count, stats.duration);
         writer.write(&report)?;
     }
 

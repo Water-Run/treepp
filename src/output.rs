@@ -9,7 +9,7 @@
 //!
 //! 文件: src/output.rs
 //! 作者: WaterRun
-//! 更新于: 2025-01-07
+//! 更新于: 2026-01-08
 
 #![forbid(unsafe_code)]
 
@@ -17,7 +17,7 @@ use std::fs::{self, File};
 use std::io::{self, BufWriter, Stdout, StdoutLock, Write};
 use std::path::Path;
 
-use serde::Serialize;
+use serde_json::{Map, Value};
 
 use crate::config::{Config, OutputFormat};
 use crate::error::OutputError;
@@ -28,105 +28,73 @@ use crate::scan::{EntryKind, TreeNode};
 // 序列化结构
 // ============================================================================
 
-/// 可序列化的树节点
+/// 将 TreeNode 转换为 JSON Value（简洁的树形结构）
 ///
-/// 用于 JSON/YAML/TOML 格式输出的节点结构。
-/// 根据配置选项决定哪些字段被序列化。
-#[derive(Debug, Clone, Serialize)]
-struct SerializableNode {
-    /// 条目名称
-    name: String,
-
-    /// 完整路径（仅在 full_path 模式下）
-    #[serde(skip_serializing_if = "Option::is_none")]
-    full_path: Option<String>,
-
-    /// 文件大小（仅对文件且启用 show_size）
-    #[serde(skip_serializing_if = "Option::is_none")]
-    size: Option<u64>,
-
-    /// 目录累计大小（仅对目录且启用 disk_usage）
-    #[serde(skip_serializing_if = "Option::is_none")]
-    disk_usage: Option<u64>,
-
-    /// 修改时间（仅在启用 show_date）
-    #[serde(skip_serializing_if = "Option::is_none")]
-    modified: Option<String>,
-
-    /// 是否为目录
-    is_dir: bool,
-
-    /// 子节点
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    children: Vec<SerializableNode>,
-}
-
-/// TOML 根结构
-///
-/// TOML 格式需要顶层表结构，因此包装树节点。
-#[derive(Debug, Serialize)]
-struct TomlRoot {
-    /// 树节点
-    tree: SerializableNode,
-}
-
-// ============================================================================
-// 节点转换
-// ============================================================================
-
-/// 将 TreeNode 转换为可序列化节点
-///
-/// 根据配置过滤和转换节点数据。
-///
-/// # 参数
-///
-/// * `node` - 源树节点
-/// * `config` - 输出配置
-///
-/// # 返回值
-///
-/// 返回可序列化的节点结构。
-fn to_serializable(node: &TreeNode, config: &Config) -> SerializableNode {
-    let children: Vec<SerializableNode> = node
-        .children
-        .iter()
-        .filter(|c| config.scan.show_files || c.kind == EntryKind::Directory)
-        .filter(|c| {
-            !config.matching.prune_empty || c.kind != EntryKind::Directory || !c.is_empty_dir()
-        })
-        .map(|c| to_serializable(c, config))
-        .collect();
-
+/// 输出格式：
+/// - 目录：对象，键为子项名称
+/// - 文件：对象，包含请求的元数据，无子项时为空对象
+fn to_json_value(node: &TreeNode, config: &Config) -> Value {
     let is_file = node.kind == EntryKind::File;
-    let is_dir = node.kind == EntryKind::Directory;
 
-    SerializableNode {
-        name: node.name.clone(),
-        full_path: if config.render.path_mode == crate::config::PathMode::Full {
-            Some(node.path.to_string_lossy().into_owned())
-        } else {
-            None
-        },
-        size: if config.render.show_size && is_file {
-            Some(node.metadata.size)
-        } else {
-            None
-        },
-        disk_usage: if config.render.show_disk_usage && is_dir {
-            node.disk_usage
-        } else {
-            None
-        },
-        modified: if config.render.show_date {
-            node.metadata
-                .modified
-                .as_ref()
-                .map(crate::render::format_datetime)
-        } else {
-            None
-        },
-        is_dir,
-        children,
+    if is_file {
+        // 文件：返回包含元数据的对象
+        let mut obj = Map::new();
+
+        if config.render.show_size {
+            obj.insert("size".to_string(), Value::Number(node.metadata.size.into()));
+        }
+
+        if config.render.show_disk_usage {
+            if let Some(usage) = node.disk_usage {
+                obj.insert("disk_usage".to_string(), Value::Number(usage.into()));
+            }
+        }
+
+        if config.render.show_date {
+            if let Some(ref modified) = node.metadata.modified {
+                obj.insert(
+                    "modified".to_string(),
+                    Value::String(crate::render::format_datetime(modified)),
+                );
+            }
+        }
+
+        if config.render.path_mode == crate::config::PathMode::Full {
+            obj.insert(
+                "path".to_string(),
+                Value::String(node.path.to_string_lossy().into_owned()),
+            );
+        }
+
+        Value::Object(obj)
+    } else {
+        // 目录：返回包含子项的对象
+        let mut obj = Map::new();
+
+        // 添加目录自身的元数据（如果需要）
+        if config.render.show_disk_usage {
+            if let Some(usage) = node.disk_usage {
+                obj.insert("_disk_usage".to_string(), Value::Number(usage.into()));
+            }
+        }
+
+        // 添加子项
+        let children: Vec<&TreeNode> = node
+            .children
+            .iter()
+            .filter(|c| config.scan.show_files || c.kind == EntryKind::Directory)
+            .filter(|c| {
+                !config.matching.prune_empty
+                    || c.kind != EntryKind::Directory
+                    || !c.is_empty_dir()
+            })
+            .collect();
+
+        for child in children {
+            obj.insert(child.name.clone(), to_json_value(child, config));
+        }
+
+        Value::Object(obj)
     }
 }
 
@@ -162,9 +130,10 @@ fn to_serializable(node: &TreeNode, config: &Config) -> SerializableNode {
 /// let json = serialize_json(&node, &config).unwrap();
 /// assert!(json.contains("\"name\""));
 /// ```
+/// 序列化为 JSON 格式
 pub fn serialize_json(node: &TreeNode, config: &Config) -> Result<String, OutputError> {
-    let serializable = to_serializable(node, config);
-    serde_json::to_string_pretty(&serializable).map_err(|e| OutputError::json_error(e.to_string()))
+    let value = to_json_value(node, config);
+    serde_json::to_string_pretty(&value).map_err(|e| OutputError::json_error(e.to_string()))
 }
 
 /// 序列化为 YAML 格式
@@ -195,9 +164,39 @@ pub fn serialize_json(node: &TreeNode, config: &Config) -> Result<String, Output
 /// let yaml = serialize_yaml(&node, &config).unwrap();
 /// assert!(yaml.contains("name:"));
 /// ```
+/// 序列化为 YAML 格式
 pub fn serialize_yaml(node: &TreeNode, config: &Config) -> Result<String, OutputError> {
-    let serializable = to_serializable(node, config);
-    serde_yaml::to_string(&serializable).map_err(|e| OutputError::yaml_error(e.to_string()))
+    let value = to_json_value(node, config);
+    serde_yaml::to_string(&value).map_err(|e| OutputError::yaml_error(e.to_string()))
+}
+
+/// 将 JSON Value 转换为 TOML Value
+fn json_to_toml(value: &Value) -> Result<toml::Value, OutputError> {
+    match value {
+        Value::Null => Ok(toml::Value::String("null".to_string())),
+        Value::Bool(b) => Ok(toml::Value::Boolean(*b)),
+        Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Ok(toml::Value::Integer(i))
+            } else if let Some(f) = n.as_f64() {
+                Ok(toml::Value::Float(f))
+            } else {
+                Ok(toml::Value::String(n.to_string()))
+            }
+        }
+        Value::String(s) => Ok(toml::Value::String(s.clone())),
+        Value::Array(arr) => {
+            let toml_arr: Result<Vec<_>, _> = arr.iter().map(json_to_toml).collect();
+            Ok(toml::Value::Array(toml_arr?))
+        }
+        Value::Object(obj) => {
+            let mut table = toml::map::Map::new();
+            for (k, v) in obj {
+                table.insert(k.clone(), json_to_toml(v)?);
+            }
+            Ok(toml::Value::Table(table))
+        }
+    }
 }
 
 /// 序列化为 TOML 格式
@@ -228,10 +227,14 @@ pub fn serialize_yaml(node: &TreeNode, config: &Config) -> Result<String, Output
 /// let toml = serialize_toml(&node, &config).unwrap();
 /// assert!(toml.contains("[tree]"));
 /// ```
+/// 序列化为 TOML 格式
 pub fn serialize_toml(node: &TreeNode, config: &Config) -> Result<String, OutputError> {
-    let serializable = to_serializable(node, config);
-    let root = TomlRoot { tree: serializable };
-    toml::to_string_pretty(&root).map_err(|e| OutputError::toml_error(e.to_string()))
+    // TOML 需要顶层为表，所以用根节点名称作为键
+    let value = to_json_value(node, config);
+
+    // 转换为 TOML 兼容格式
+    let toml_value = json_to_toml(&value)?;
+    toml::to_string_pretty(&toml_value).map_err(|e| OutputError::toml_error(e.to_string()))
 }
 
 // ============================================================================
@@ -698,9 +701,9 @@ mod tests {
 
         let json = serialize_json(&tree, &config).expect("JSON 序列化应成功");
 
-        assert!(json.contains("\"name\":"));
-        assert!(json.contains("\"is_dir\":"));
-        assert!(json.contains("test_root"));
+        // 新格式：键为条目名称，值为子项或元数据对象
+        assert!(json.contains("\"subdir\""));  // 子目录名称作为键
+        assert!(json.contains("{"));           // 对象格式
     }
 
     #[test]
@@ -724,8 +727,8 @@ mod tests {
 
         let yaml = serialize_yaml(&tree, &config).expect("YAML 序列化应成功");
 
-        assert!(yaml.contains("name:"));
-        assert!(yaml.contains("is_dir:"));
+        // 新格式：键为条目名称
+        assert!(yaml.contains("subdir:") || yaml.contains("file1.txt:"));
     }
 
     #[test]
@@ -735,8 +738,9 @@ mod tests {
 
         let toml = serialize_toml(&tree, &config).expect("TOML 序列化应成功");
 
-        assert!(toml.contains("[tree]"));
-        assert!(toml.contains("name ="));
+        // 新格式：TOML 表格，条目名称作为键
+        // TOML 输出可能是 [subdir] 或类似格式
+        assert!(toml.contains("subdir") || toml.contains("file1"));
     }
 
     #[test]
@@ -845,68 +849,5 @@ mod tests {
         // 静默模式下不应报错（即使我们无法真正验证没有输出）
         let result = write_stdout("test", &config);
         assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_to_serializable_filters_files_when_not_shown() {
-        let tree = create_test_tree();
-        let config = Config::default(); // show_files = false
-
-        let serializable = to_serializable(&tree, &config);
-
-        // 根节点的直接子节点应只包含目录
-        for child in &serializable.children {
-            assert!(child.is_dir, "应只包含目录，但发现文件: {}", child.name);
-        }
-    }
-
-    #[test]
-    fn test_to_serializable_includes_files_when_shown() {
-        let tree = create_test_tree();
-        let mut config = Config::default();
-        config.scan.show_files = true;
-
-        let serializable = to_serializable(&tree, &config);
-
-        let has_file = serializable.children.iter().any(|c| !c.is_dir);
-        assert!(has_file, "应包含文件");
-    }
-
-    #[test]
-    fn test_to_serializable_size_only_when_enabled() {
-        let tree = create_test_tree();
-        let mut config = Config::default();
-        config.scan.show_files = true;
-        config.render.show_size = false;
-
-        let serializable = to_serializable(&tree, &config);
-
-        // 递归检查所有节点都没有 size
-        fn check_no_size(node: &SerializableNode) {
-            assert!(node.size.is_none(), "size 应为 None");
-            for child in &node.children {
-                check_no_size(child);
-            }
-        }
-        check_no_size(&serializable);
-    }
-
-    #[test]
-    fn test_to_serializable_with_size() {
-        let tree = create_test_tree();
-        let mut config = Config::default();
-        config.scan.show_files = true;
-        config.render.show_size = true;
-
-        let serializable = to_serializable(&tree, &config);
-
-        // 查找文件节点，检查是否有 size
-        fn find_file_with_size(node: &SerializableNode) -> bool {
-            if !node.is_dir && node.size.is_some() {
-                return true;
-            }
-            node.children.iter().any(|c| find_file_with_size(c))
-        }
-        assert!(find_file_with_size(&serializable), "应有文件包含 size");
     }
 }

@@ -798,7 +798,6 @@ D:\RUST\TREE++
         render.rs
         scan.rs
 
-.gitignore rules applied
 ```
 
 ### `/Q`: Quote File Names

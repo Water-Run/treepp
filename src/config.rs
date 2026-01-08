@@ -6,7 +6,7 @@
 //!
 //! 文件: src/config.rs
 //! 作者: WaterRun
-//! 更新于: 2025-01-07
+//! 更新于: 2026-01-08
 
 #![forbid(unsafe_code)]
 
@@ -569,10 +569,10 @@ impl Config {
             self.render.show_size = true;
         }
 
-        // 5. 隐含依赖：show_disk_usage 需要 show_size 语义支持
-        // （但 show_disk_usage 是目录级别统计，与 show_size 不冲突）
-
-        // 6. 线程数下限校验（NonZeroUsize 已保证 >= 1，无需额外检查）
+        // 5. 隐含依赖：show_disk_usage 隐含 show_size（目录显示累计大小）
+        if self.render.show_disk_usage {
+            self.render.show_size = true;
+        }
 
         Ok(self)
     }
@@ -616,19 +616,12 @@ impl Config {
         if self.output.silent && self.output.output_path.is_none() {
             return Err(ConfigError::ConflictingOptions {
                 opt_a: "--silent".to_string(),
-                opt_b: "(无 --output)".to_string(),
+                opt_b: "(Without --output)".to_string(),
                 reason:
                     "Silent mode requires an output file; otherwise no output will be produced."
                         .to_string(),
             });
         }
-
-        // 冲突：no_indent 与 charset 的视觉效果说明（非阻断性，允许组合）
-        // 此处不阻断，仅作为设计说明
-
-        // 冲突：human_readable 无意义时的提示（非阻断）
-        // 当 show_size 和 show_disk_usage 均为 false 时，human_readable 无效
-        // validate() 会自动开启 show_size，故此处无需检查
 
         Ok(())
     }

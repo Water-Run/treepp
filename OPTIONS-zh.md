@@ -798,7 +798,6 @@ D:\RUST\TREE++
         render.rs
         scan.rs
 
-.gitignore rules applied
 ```
 
 ### `/Q`: 用双引号包裹文件名
