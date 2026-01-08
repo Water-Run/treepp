@@ -16,7 +16,6 @@
 
 #![forbid(unsafe_code)]
 
-use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fs::{self, Metadata};
 use std::path::{Path, PathBuf};
@@ -28,7 +27,7 @@ use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use rayon::ThreadPoolBuilder;
 use rayon::prelude::*;
 
-use crate::config::{Config, SortKey};
+use crate::config::Config;
 use crate::error::{MatchError, ScanError, TreeppResult};
 
 // ============================================================================
@@ -428,39 +427,42 @@ pub enum StreamEvent {
 // 匹配规则
 // ============================================================================
 
+/// 编译单个通配符模式
+fn compile_pattern(pattern: &str) -> Result<Pattern, MatchError> {
+    Pattern::new(pattern).map_err(|e| MatchError::InvalidPattern {
+        pattern: pattern.to_string(),
+        reason: e.msg.to_string(),
+    })
+}
+
 /// 编译后的匹配规则集
 struct CompiledRules {
     /// 包含模式
     include_patterns: Vec<Pattern>,
     /// 排除模式
     exclude_patterns: Vec<Pattern>,
-    /// 是否忽略大小写（已在编译时处理）
-    ignore_case: bool,
 }
 
 impl CompiledRules {
     /// 从配置编译匹配规则
     fn compile(config: &Config) -> Result<Self, MatchError> {
-        let ignore_case = config.matching.ignore_case;
-
         let include_patterns = config
             .matching
             .include_patterns
             .iter()
-            .map(|p| compile_pattern(p, ignore_case))
+            .map(|p| compile_pattern(p))
             .collect::<Result<Vec<_>, _>>()?;
 
         let exclude_patterns = config
             .matching
             .exclude_patterns
             .iter()
-            .map(|p| compile_pattern(p, ignore_case))
+            .map(|p| compile_pattern(p))
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(Self {
             include_patterns,
             exclude_patterns,
-            ignore_case,
         })
     }
 
@@ -476,13 +478,7 @@ impl CompiledRules {
             return true;
         }
 
-        let match_name = if self.ignore_case {
-            name.to_lowercase()
-        } else {
-            name.to_string()
-        };
-
-        self.include_patterns.iter().any(|p| p.matches(&match_name))
+        self.include_patterns.iter().any(|p| p.matches(name))
     }
 
     /// 检查名称是否应被排除
@@ -491,28 +487,8 @@ impl CompiledRules {
             return false;
         }
 
-        let match_name = if self.ignore_case {
-            name.to_lowercase()
-        } else {
-            name.to_string()
-        };
-
-        self.exclude_patterns.iter().any(|p| p.matches(&match_name))
+        self.exclude_patterns.iter().any(|p| p.matches(name))
     }
-}
-
-/// 编译单个通配符模式
-fn compile_pattern(pattern: &str, ignore_case: bool) -> Result<Pattern, MatchError> {
-    let pat = if ignore_case {
-        pattern.to_lowercase()
-    } else {
-        pattern.to_string()
-    };
-
-    Pattern::new(&pat).map_err(|e| MatchError::InvalidPattern {
-        pattern: pattern.to_string(),
-        reason: e.msg.to_string(),
-    })
 }
 
 // ============================================================================
@@ -616,45 +592,23 @@ fn load_gitignore_from_path(dir: &Path) -> Option<Gitignore> {
 
 /// 对树节点进行确定性排序（递归）
 ///
-/// 默认行为：文件优先（与原生 Windows tree 一致）
-/// 当 dirs_first=true 时：目录优先
-pub fn sort_tree(node: &mut TreeNode, sort_key: SortKey, reverse: bool, dirs_first: bool) {
+/// 按名称排序，文件优先（与原生 Windows tree 一致）。
+pub fn sort_tree(node: &mut TreeNode, reverse: bool) {
     // 排序子节点
     node.children.sort_by(|a, b| {
-        // 目录/文件分组排序
+        // 文件优先（与原生 Windows tree 一致）
         let kind_order = match (a.kind, b.kind) {
-            (EntryKind::Directory, EntryKind::File) => {
-                if dirs_first {
-                    Ordering::Less
-                } else {
-                    Ordering::Greater
-                }
-            }
-            (EntryKind::File, EntryKind::Directory) => {
-                if dirs_first {
-                    Ordering::Greater
-                } else {
-                    Ordering::Less
-                }
-            }
-            _ => Ordering::Equal,
+            (EntryKind::Directory, EntryKind::File) => std::cmp::Ordering::Greater,
+            (EntryKind::File, EntryKind::Directory) => std::cmp::Ordering::Less,
+            _ => std::cmp::Ordering::Equal,
         };
 
-        if kind_order != Ordering::Equal {
+        if kind_order != std::cmp::Ordering::Equal {
             return kind_order;
         }
 
-        // 同类型内按指定键排序
-        let cmp = match sort_key {
-            SortKey::Name => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-            SortKey::Size => {
-                let size_a = a.disk_usage.unwrap_or(a.metadata.size);
-                let size_b = b.disk_usage.unwrap_or(b.metadata.size);
-                size_a.cmp(&size_b)
-            }
-            SortKey::Mtime => a.metadata.modified.cmp(&b.metadata.modified),
-            SortKey::Ctime => a.metadata.created.cmp(&b.metadata.created),
-        };
+        // 同类型内按名称排序
+        let cmp = a.name.to_lowercase().cmp(&b.name.to_lowercase());
 
         if reverse {
             cmp.reverse()
@@ -665,50 +619,30 @@ pub fn sort_tree(node: &mut TreeNode, sort_key: SortKey, reverse: bool, dirs_fir
 
     // 递归排序子节点的子节点
     for child in &mut node.children {
-        sort_tree(child, sort_key, reverse, dirs_first);
+        sort_tree(child, reverse);
     }
 }
 
 /// 对条目列表进行排序（用于流式扫描）
 ///
-/// 默认行为：文件优先（与原生 Windows tree 一致）
-/// 当 dirs_first=true 时：目录优先
-fn sort_entries(
-    entries: &mut [(PathBuf, Metadata)],
-    sort_key: SortKey,
-    reverse: bool,
-    dirs_first: bool,
-) {
+/// 按名称排序，文件优先（与原生 Windows tree 一致）。
+fn sort_entries(entries: &mut [(PathBuf, Metadata)], reverse: bool) {
     entries.sort_by(|(path_a, meta_a), (path_b, meta_b)| {
         let is_dir_a = meta_a.is_dir();
         let is_dir_b = meta_b.is_dir();
 
-        // 目录/文件分组排序
-        // 默认：文件优先（原生 tree 行为）
-        // dirs_first=true：目录优先（/DF 参数）
+        // 文件优先（与原生 Windows tree 一致）
         let kind_order = match (is_dir_a, is_dir_b) {
-            (true, false) => {
-                if dirs_first {
-                    Ordering::Less
-                } else {
-                    Ordering::Greater
-                }
-            }
-            (false, true) => {
-                if dirs_first {
-                    Ordering::Greater
-                } else {
-                    Ordering::Less
-                }
-            }
-            _ => Ordering::Equal,
+            (true, false) => std::cmp::Ordering::Greater,
+            (false, true) => std::cmp::Ordering::Less,
+            _ => std::cmp::Ordering::Equal,
         };
 
-        if kind_order != Ordering::Equal {
+        if kind_order != std::cmp::Ordering::Equal {
             return kind_order;
         }
 
-        // 同类型内按指定键排序
+        // 同类型内按名称排序
         let name_a = path_a
             .file_name()
             .map(|s| s.to_string_lossy().to_lowercase())
@@ -718,16 +652,7 @@ fn sort_entries(
             .map(|s| s.to_string_lossy().to_lowercase())
             .unwrap_or_default();
 
-        let cmp = match sort_key {
-            SortKey::Name => name_a.cmp(&name_b),
-            SortKey::Size => {
-                let size_a = if meta_a.is_file() { meta_a.len() } else { 0 };
-                let size_b = if meta_b.is_file() { meta_b.len() } else { 0 };
-                size_a.cmp(&size_b)
-            }
-            SortKey::Mtime => meta_a.modified().ok().cmp(&meta_b.modified().ok()),
-            SortKey::Ctime => meta_a.created().ok().cmp(&meta_b.created().ok()),
-        };
+        let cmp = name_a.cmp(&name_b);
 
         if reverse {
             cmp.reverse()
@@ -751,12 +676,8 @@ struct ScanContext {
     respect_gitignore: bool,
     /// 编译后的匹配规则
     rules: CompiledRules,
-    /// 排序键
-    sort_key: SortKey,
     /// 是否逆序
     reverse: bool,
-    /// 是否目录优先
-    dirs_first: bool,
     /// 是否修剪空目录
     prune_empty: bool,
     /// 是否需要大小信息
@@ -773,9 +694,7 @@ impl ScanContext {
             max_depth: config.scan.max_depth,
             respect_gitignore: config.scan.respect_gitignore,
             rules: CompiledRules::compile(config)?,
-            sort_key: config.render.sort_key,
             reverse: config.render.reverse_sort,
-            dirs_first: config.render.dirs_first,
             prune_empty: config.matching.prune_empty,
             needs_size: config.needs_size_info(),
             gitignore_cache: Arc::new(GitignoreCache::new()),
@@ -934,14 +853,14 @@ pub fn scan(config: &Config) -> TreeppResult<ScanStats> {
         return Err(ScanError::PathNotFound {
             path: config.root_path.clone(),
         }
-        .into());
+            .into());
     }
 
     if !config.root_path.is_dir() {
         return Err(ScanError::NotADirectory {
             path: config.root_path.clone(),
         }
-        .into());
+            .into());
     }
 
     // 创建扫描上下文
@@ -980,7 +899,7 @@ pub fn scan(config: &Config) -> TreeppResult<ScanStats> {
     }
 
     // 排序
-    sort_tree(&mut tree, ctx.sort_key, ctx.reverse, ctx.dirs_first);
+    sort_tree(&mut tree, ctx.reverse);
 
     let duration = start.elapsed();
     let directory_count = tree.count_directories();
@@ -1145,8 +1064,8 @@ where
         })
         .collect();
 
-    // 排序：文件优先（与原生 tree 一致），除非启用 dirs_first
-    sort_entries(&mut filtered, ctx.sort_key, ctx.reverse, ctx.dirs_first);
+    // 排序：文件优先（与原生 tree 一致）
+    sort_entries(&mut filtered, ctx.reverse);
 
     // 分离文件和目录，保持各自内部顺序
     let mut files: Vec<(PathBuf, Metadata)> = Vec::new();
@@ -1944,36 +1863,169 @@ mod tests {
         assert!(inner.contains_key(dir.path()));
     }
 
+    #[test]
+    fn test_sort_tree_by_name() {
+        let mut root = TreeNode::new(
+            PathBuf::from("."),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        root.children.push(TreeNode::new(
+            PathBuf::from("zebra.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+        root.children.push(TreeNode::new(
+            PathBuf::from("alpha.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+        root.children.push(TreeNode::new(
+            PathBuf::from("beta.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+
+        sort_tree(&mut root, false);
+
+        assert_eq!(root.children[0].name, "alpha.txt");
+        assert_eq!(root.children[1].name, "beta.txt");
+        assert_eq!(root.children[2].name, "zebra.txt");
+    }
+
+    #[test]
+    fn test_sort_tree_reverse() {
+        let mut root = TreeNode::new(
+            PathBuf::from("."),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        root.children.push(TreeNode::new(
+            PathBuf::from("a.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+        root.children.push(TreeNode::new(
+            PathBuf::from("b.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+        root.children.push(TreeNode::new(
+            PathBuf::from("c.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+
+        sort_tree(&mut root, true);
+
+        assert_eq!(root.children[0].name, "c.txt");
+        assert_eq!(root.children[1].name, "b.txt");
+        assert_eq!(root.children[2].name, "a.txt");
+    }
+
+    #[test]
+    fn test_sort_tree_files_before_dirs() {
+        let mut root = TreeNode::new(
+            PathBuf::from("."),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        root.children.push(TreeNode::new(
+            PathBuf::from("dir"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        ));
+        root.children.push(TreeNode::new(
+            PathBuf::from("file.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+
+        sort_tree(&mut root, false);
+
+        // 文件应该在目录之前
+        assert_eq!(root.children[0].kind, EntryKind::File);
+        assert_eq!(root.children[1].kind, EntryKind::Directory);
+    }
+
+    #[test]
+    fn test_sort_tree_recursive() {
+        let mut root = TreeNode::new(
+            PathBuf::from("."),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+
+        let mut subdir = TreeNode::new(
+            PathBuf::from("sub"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        subdir.children.push(TreeNode::new(
+            PathBuf::from("z.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+        subdir.children.push(TreeNode::new(
+            PathBuf::from("a.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+
+        root.children.push(subdir);
+
+        sort_tree(&mut root, false);
+
+        // 验证子目录内容也被排序
+        assert_eq!(root.children[0].children[0].name, "a.txt");
+        assert_eq!(root.children[0].children[1].name, "z.txt");
+    }
+
+    #[test]
+    fn test_sort_entries_by_name() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+
+        // 创建文件
+        File::create(root.join("zebra.txt")).unwrap();
+        File::create(root.join("alpha.txt")).unwrap();
+        File::create(root.join("beta.txt")).unwrap();
+
+        let mut entries: Vec<(PathBuf, Metadata)> = fs::read_dir(root)
+            .unwrap()
+            .flatten()
+            .filter_map(|e| {
+                let path = e.path();
+                let meta = e.metadata().ok()?;
+                Some((path, meta))
+            })
+            .collect();
+
+        sort_entries(&mut entries, false);
+
+        let names: Vec<_> = entries
+            .iter()
+            .map(|(p, _)| p.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+
+        assert_eq!(names, vec!["alpha.txt", "beta.txt", "zebra.txt"]);
+    }
+
     // ------------------------------------------------------------------------
     // 匹配规则测试
     // ------------------------------------------------------------------------
 
     #[test]
     fn test_compile_pattern_basic() {
-        let pattern = compile_pattern("*.rs", false).expect("编译失败");
+        let pattern = compile_pattern("*.rs").expect("编译失败");
         assert!(pattern.matches("main.rs"));
         assert!(pattern.matches("lib.rs"));
         assert!(!pattern.matches("main.txt"));
     }
 
     #[test]
-    fn test_compile_pattern_case_sensitive() {
-        let pattern = compile_pattern("*.RS", false).expect("编译失败");
-        assert!(pattern.matches("main.RS"));
-        assert!(!pattern.matches("main.rs"));
-    }
-
-    #[test]
-    fn test_compile_pattern_ignore_case() {
-        let pattern = compile_pattern("*.RS", true).expect("编译失败");
-        // 忽略大小写时模式被转为小写
-        assert!(pattern.matches("main.rs"));
-        assert!(pattern.matches("lib.rs"));
-    }
-
-    #[test]
     fn test_compile_pattern_invalid() {
-        let result = compile_pattern("[invalid", false);
+        let result = compile_pattern("[invalid");
         assert!(result.is_err());
 
         if let Err(MatchError::InvalidPattern { pattern, .. }) = result {
@@ -1981,15 +2033,6 @@ mod tests {
         } else {
             panic!("期望 InvalidPattern 错误");
         }
-    }
-
-    #[test]
-    fn test_compiled_rules_should_include_no_patterns() {
-        let config = Config::default();
-        let rules = CompiledRules::compile(&config).unwrap();
-
-        assert!(rules.should_include("any.rs", false));
-        assert!(rules.should_include("any.txt", false));
     }
 
     #[test]
@@ -2001,6 +2044,15 @@ mod tests {
 
         assert!(rules.should_include("main.rs", false));
         assert!(!rules.should_include("main.txt", false));
+    }
+
+    #[test]
+    fn test_compiled_rules_should_include_no_patterns() {
+        let config = Config::default();
+        let rules = CompiledRules::compile(&config).unwrap();
+
+        assert!(rules.should_include("any.rs", false));
+        assert!(rules.should_include("any.txt", false));
     }
 
     #[test]
@@ -2033,266 +2085,6 @@ mod tests {
 
         assert!(rules.should_exclude("app.log"));
         assert!(!rules.should_exclude("app.txt"));
-    }
-
-    // ------------------------------------------------------------------------
-    // 排序测试
-    // ------------------------------------------------------------------------
-
-    #[test]
-    fn test_sort_tree_by_name() {
-        let mut root = TreeNode::new(
-            PathBuf::from("."),
-            EntryKind::Directory,
-            EntryMetadata::default(),
-        );
-        root.children.push(TreeNode::new(
-            PathBuf::from("zebra.txt"),
-            EntryKind::File,
-            EntryMetadata::default(),
-        ));
-        root.children.push(TreeNode::new(
-            PathBuf::from("alpha.txt"),
-            EntryKind::File,
-            EntryMetadata::default(),
-        ));
-        root.children.push(TreeNode::new(
-            PathBuf::from("beta.txt"),
-            EntryKind::File,
-            EntryMetadata::default(),
-        ));
-
-        sort_tree(&mut root, SortKey::Name, false, false);
-
-        assert_eq!(root.children[0].name, "alpha.txt");
-        assert_eq!(root.children[1].name, "beta.txt");
-        assert_eq!(root.children[2].name, "zebra.txt");
-    }
-
-    #[test]
-    fn test_sort_tree_by_name_case_insensitive() {
-        let mut root = TreeNode::new(
-            PathBuf::from("."),
-            EntryKind::Directory,
-            EntryMetadata::default(),
-        );
-        root.children.push(TreeNode::new(
-            PathBuf::from("Zebra.txt"),
-            EntryKind::File,
-            EntryMetadata::default(),
-        ));
-        root.children.push(TreeNode::new(
-            PathBuf::from("alpha.txt"),
-            EntryKind::File,
-            EntryMetadata::default(),
-        ));
-        root.children.push(TreeNode::new(
-            PathBuf::from("Beta.txt"),
-            EntryKind::File,
-            EntryMetadata::default(),
-        ));
-
-        sort_tree(&mut root, SortKey::Name, false, false);
-
-        assert_eq!(root.children[0].name, "alpha.txt");
-        assert_eq!(root.children[1].name, "Beta.txt");
-        assert_eq!(root.children[2].name, "Zebra.txt");
-    }
-
-    #[test]
-    fn test_sort_tree_by_size() {
-        let mut root = TreeNode::new(
-            PathBuf::from("."),
-            EntryKind::Directory,
-            EntryMetadata::default(),
-        );
-        root.children.push(TreeNode::new(
-            PathBuf::from("large.txt"),
-            EntryKind::File,
-            EntryMetadata {
-                size: 1000,
-                ..Default::default()
-            },
-        ));
-        root.children.push(TreeNode::new(
-            PathBuf::from("small.txt"),
-            EntryKind::File,
-            EntryMetadata {
-                size: 100,
-                ..Default::default()
-            },
-        ));
-        root.children.push(TreeNode::new(
-            PathBuf::from("medium.txt"),
-            EntryKind::File,
-            EntryMetadata {
-                size: 500,
-                ..Default::default()
-            },
-        ));
-
-        sort_tree(&mut root, SortKey::Size, false, false);
-
-        assert_eq!(root.children[0].name, "small.txt");
-        assert_eq!(root.children[1].name, "medium.txt");
-        assert_eq!(root.children[2].name, "large.txt");
-    }
-
-    #[test]
-    fn test_sort_tree_reverse() {
-        let mut root = TreeNode::new(
-            PathBuf::from("."),
-            EntryKind::Directory,
-            EntryMetadata::default(),
-        );
-        root.children.push(TreeNode::new(
-            PathBuf::from("a.txt"),
-            EntryKind::File,
-            EntryMetadata::default(),
-        ));
-        root.children.push(TreeNode::new(
-            PathBuf::from("b.txt"),
-            EntryKind::File,
-            EntryMetadata::default(),
-        ));
-        root.children.push(TreeNode::new(
-            PathBuf::from("c.txt"),
-            EntryKind::File,
-            EntryMetadata::default(),
-        ));
-
-        sort_tree(&mut root, SortKey::Name, true, false);
-
-        assert_eq!(root.children[0].name, "c.txt");
-        assert_eq!(root.children[1].name, "b.txt");
-        assert_eq!(root.children[2].name, "a.txt");
-    }
-
-    #[test]
-    fn test_sort_tree_dirs_first_disabled() {
-        let mut root = TreeNode::new(
-            PathBuf::from("."),
-            EntryKind::Directory,
-            EntryMetadata::default(),
-        );
-        root.children.push(TreeNode::new(
-            PathBuf::from("z_file.txt"),
-            EntryKind::File,
-            EntryMetadata::default(),
-        ));
-        root.children.push(TreeNode::new(
-            PathBuf::from("a_dir"),
-            EntryKind::Directory,
-            EntryMetadata::default(),
-        ));
-        root.children.push(TreeNode::new(
-            PathBuf::from("b_file.txt"),
-            EntryKind::File,
-            EntryMetadata::default(),
-        ));
-
-        // dirs_first = false 时，文件优先（原生 Windows tree 行为）
-        // 文件在前，目录在后，各自按名称排序
-        sort_tree(&mut root, SortKey::Name, false, false);
-
-        // 期望顺序：b_file.txt, z_file.txt, a_dir
-        // 文件按名称排序在前，目录在后
-        assert_eq!(root.children[0].name, "b_file.txt");
-        assert_eq!(root.children[1].name, "z_file.txt");
-        assert_eq!(root.children[2].name, "a_dir");
-    }
-
-    #[test]
-    fn test_sort_tree_dirs_before_files() {
-        let mut root = TreeNode::new(
-            PathBuf::from("."),
-            EntryKind::Directory,
-            EntryMetadata::default(),
-        );
-        root.children.push(TreeNode::new(
-            PathBuf::from("file.txt"),
-            EntryKind::File,
-            EntryMetadata::default(),
-        ));
-        root.children.push(TreeNode::new(
-            PathBuf::from("dir"),
-            EntryKind::Directory,
-            EntryMetadata::default(),
-        ));
-        root.children.push(TreeNode::new(
-            PathBuf::from("another.txt"),
-            EntryKind::File,
-            EntryMetadata::default(),
-        ));
-
-        sort_tree(&mut root, SortKey::Name, false, true);
-
-        assert_eq!(root.children[0].kind, EntryKind::Directory);
-        assert_eq!(root.children[1].kind, EntryKind::File);
-        assert_eq!(root.children[2].kind, EntryKind::File);
-    }
-
-    #[test]
-    fn test_sort_tree_recursive() {
-        let mut root = TreeNode::new(
-            PathBuf::from("."),
-            EntryKind::Directory,
-            EntryMetadata::default(),
-        );
-
-        let mut subdir = TreeNode::new(
-            PathBuf::from("sub"),
-            EntryKind::Directory,
-            EntryMetadata::default(),
-        );
-        subdir.children.push(TreeNode::new(
-            PathBuf::from("z.txt"),
-            EntryKind::File,
-            EntryMetadata::default(),
-        ));
-        subdir.children.push(TreeNode::new(
-            PathBuf::from("a.txt"),
-            EntryKind::File,
-            EntryMetadata::default(),
-        ));
-
-        root.children.push(subdir);
-
-        sort_tree(&mut root, SortKey::Name, false, true);
-
-        // 验证子目录内容也被排序
-        assert_eq!(root.children[0].children[0].name, "a.txt");
-        assert_eq!(root.children[0].children[1].name, "z.txt");
-    }
-
-    #[test]
-    fn test_sort_entries_by_name() {
-        let dir = TempDir::new().unwrap();
-        let root = dir.path();
-
-        // 创建文件
-        File::create(root.join("zebra.txt")).unwrap();
-        File::create(root.join("alpha.txt")).unwrap();
-        File::create(root.join("beta.txt")).unwrap();
-
-        let mut entries: Vec<(PathBuf, Metadata)> = fs::read_dir(root)
-            .unwrap()
-            .flatten()
-            .filter_map(|e| {
-                let path = e.path();
-                let meta = e.metadata().ok()?;
-                Some((path, meta))
-            })
-            .collect();
-
-        sort_entries(&mut entries, SortKey::Name, false, false);
-
-        let names: Vec<_> = entries
-            .iter()
-            .map(|(p, _)| p.file_name().unwrap().to_string_lossy().to_string())
-            .collect();
-
-        assert_eq!(names, vec!["alpha.txt", "beta.txt", "zebra.txt"]);
     }
 
     // ------------------------------------------------------------------------
@@ -2851,25 +2643,6 @@ mod tests {
         assert!(has_node_with_name(&stats.tree, "deep.txt"));
     }
 
-    #[test]
-    fn test_scan_with_ignore_case() {
-        let dir = TempDir::new().unwrap();
-        let root = dir.path();
-
-        File::create(root.join("Test.RS")).unwrap();
-        File::create(root.join("other.txt")).unwrap();
-
-        let mut config = Config::with_root(root.to_path_buf());
-        config.scan.show_files = true;
-        config.matching.include_patterns = vec!["*.rs".to_string()];
-        config.matching.ignore_case = true;
-
-        let stats = scan(&config).expect("扫描失败");
-
-        assert_eq!(stats.file_count, 1);
-        assert!(has_node_with_name(&stats.tree, "Test.RS"));
-    }
-
     // ------------------------------------------------------------------------
     // 统计信息测试
     // ------------------------------------------------------------------------
@@ -2923,31 +2696,6 @@ mod tests {
 
         assert!(entry.is_file);
         assert!(!entry.has_more_dirs);
-    }
-
-    #[test]
-    fn test_sort_tree_files_first_by_default() {
-        let mut root = TreeNode::new(
-            PathBuf::from("."),
-            EntryKind::Directory,
-            EntryMetadata::default(),
-        );
-        root.children.push(TreeNode::new(
-            PathBuf::from("dir"),
-            EntryKind::Directory,
-            EntryMetadata::default(),
-        ));
-        root.children.push(TreeNode::new(
-            PathBuf::from("file.txt"),
-            EntryKind::File,
-            EntryMetadata::default(),
-        ));
-
-        // 默认 dirs_first=false，文件应该在前
-        sort_tree(&mut root, SortKey::Name, false, false);
-
-        assert_eq!(root.children[0].kind, EntryKind::File);
-        assert_eq!(root.children[1].kind, EntryKind::Directory);
     }
 
     #[test]

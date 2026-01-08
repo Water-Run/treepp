@@ -80,68 +80,6 @@ pub enum ConfigError {
 /// 配置验证结果类型
 pub type ConfigResult<T> = Result<T, ConfigError>;
 
-// ============================================================================
-// 枚举类型定义
-// ============================================================================
-
-/// 排序键
-///
-/// 指定目录树条目的排序依据。
-///
-/// # Examples
-///
-/// ```
-/// use treepp::config::SortKey;
-///
-/// let key = SortKey::from_str_loose("SIZE");
-/// assert_eq!(key, Some(SortKey::Size));
-///
-/// let key = SortKey::from_str_loose("unknown");
-/// assert_eq!(key, None);
-/// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum SortKey {
-    /// 按名称字母序排序（默认）
-    #[default]
-    Name,
-    /// 按文件大小排序
-    Size,
-    /// 按最后修改时间排序
-    Mtime,
-    /// 按创建时间排序
-    Ctime,
-}
-
-impl SortKey {
-    /// 从字符串松散解析排序键（大小写不敏感）
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use treepp::config::SortKey;
-    ///
-    /// assert_eq!(SortKey::from_str_loose("name"), Some(SortKey::Name));
-    /// assert_eq!(SortKey::from_str_loose("MTIME"), Some(SortKey::Mtime));
-    /// assert_eq!(SortKey::from_str_loose("invalid"), None);
-    /// ```
-    #[must_use]
-    pub fn from_str_loose(s: &str) -> Option<Self> {
-        match s.to_ascii_lowercase().as_str() {
-            "name" => Some(Self::Name),
-            "size" => Some(Self::Size),
-            "mtime" => Some(Self::Mtime),
-            "ctime" => Some(Self::Ctime),
-            _ => None,
-        }
-    }
-
-    /// 获取所有有效的排序键名称
-    #[must_use]
-    pub const fn valid_keys() -> &'static [&'static str] {
-        &["name", "size", "mtime", "ctime"]
-    }
-}
-
 /// 输出格式
 ///
 /// 指定结果输出的文件格式。
@@ -337,7 +275,6 @@ impl Default for ScanOptions {
 /// let opts = MatchOptions::default();
 /// assert!(opts.include_patterns.is_empty());
 /// assert!(opts.exclude_patterns.is_empty());
-/// assert!(!opts.ignore_case);
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct MatchOptions {
@@ -345,8 +282,6 @@ pub struct MatchOptions {
     pub include_patterns: Vec<String>,
     /// 排除模式列表（忽略匹配项）
     pub exclude_patterns: Vec<String>,
-    /// 匹配时是否忽略大小写
-    pub ignore_case: bool,
     /// 是否修剪空目录
     pub prune_empty: bool,
 }
@@ -358,7 +293,7 @@ pub struct MatchOptions {
 /// # Examples
 ///
 /// ```
-/// use treepp::config::{RenderOptions, CharsetMode, PathMode, SortKey};
+/// use treepp::config::{RenderOptions, CharsetMode, PathMode};
 ///
 /// let opts = RenderOptions::default();
 /// assert_eq!(opts.charset, CharsetMode::Unicode);
@@ -381,18 +316,12 @@ pub struct RenderOptions {
     pub show_disk_usage: bool,
     /// 是否不显示树形连接线（仅缩进）
     pub no_indent: bool,
-    /// 排序键
-    pub sort_key: SortKey,
     /// 是否逆序排序
     pub reverse_sort: bool,
     /// 是否显示末尾统计报告
     pub show_report: bool,
     /// 是否隐藏 Windows 原生样板信息
     pub no_win_banner: bool,
-    /// 是否用双引号包裹文件名
-    pub quote_names: bool,
-    /// 是否目录优先显示
-    pub dirs_first: bool,
 }
 
 /// 输出选项
@@ -666,22 +595,22 @@ impl Config {
 
     /// 判断是否需要计算时间信息
     ///
-    /// 当 show_date 启用或排序依据为时间相关键时返回 true。
+    /// 当 show_date 启用时返回 true。
     ///
     /// # Examples
     ///
     /// ```
-    /// use treepp::config::{Config, SortKey};
+    /// use treepp::config::Config;
     ///
     /// let mut config = Config::default();
     /// assert!(!config.needs_time_info());
     ///
-    /// config.render.sort_key = SortKey::Mtime;
+    /// config.render.show_date = true;
     /// assert!(config.needs_time_info());
     /// ```
     #[must_use]
     pub const fn needs_time_info(&self) -> bool {
-        self.render.show_date || matches!(self.render.sort_key, SortKey::Mtime | SortKey::Ctime)
+        self.render.show_date
     }
 
     /// 判断是否应使用流式输出模式
@@ -725,46 +654,6 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ------------------------------------------------------------------------
-    // SortKey 测试
-    // ------------------------------------------------------------------------
-
-    #[test]
-    fn sort_key_from_str_loose_should_parse_valid_keys() {
-        assert_eq!(SortKey::from_str_loose("name"), Some(SortKey::Name));
-        assert_eq!(SortKey::from_str_loose("NAME"), Some(SortKey::Name));
-        assert_eq!(SortKey::from_str_loose("Name"), Some(SortKey::Name));
-        assert_eq!(SortKey::from_str_loose("size"), Some(SortKey::Size));
-        assert_eq!(SortKey::from_str_loose("SIZE"), Some(SortKey::Size));
-        assert_eq!(SortKey::from_str_loose("mtime"), Some(SortKey::Mtime));
-        assert_eq!(SortKey::from_str_loose("MTIME"), Some(SortKey::Mtime));
-        assert_eq!(SortKey::from_str_loose("ctime"), Some(SortKey::Ctime));
-        assert_eq!(SortKey::from_str_loose("CTIME"), Some(SortKey::Ctime));
-    }
-
-    #[test]
-    fn sort_key_from_str_loose_should_return_none_for_invalid_keys() {
-        assert_eq!(SortKey::from_str_loose(""), None);
-        assert_eq!(SortKey::from_str_loose("invalid"), None);
-        assert_eq!(SortKey::from_str_loose("date"), None);
-        assert_eq!(SortKey::from_str_loose("time"), None);
-    }
-
-    #[test]
-    fn sort_key_default_should_be_name() {
-        assert_eq!(SortKey::default(), SortKey::Name);
-    }
-
-    #[test]
-    fn sort_key_valid_keys_should_contain_all_variants() {
-        let keys = SortKey::valid_keys();
-        assert!(keys.contains(&"name"));
-        assert!(keys.contains(&"size"));
-        assert!(keys.contains(&"mtime"));
-        assert!(keys.contains(&"ctime"));
-        assert_eq!(keys.len(), 4);
-    }
 
     // ------------------------------------------------------------------------
     // OutputFormat 测试
@@ -893,7 +782,6 @@ mod tests {
         let opts = MatchOptions::default();
         assert!(opts.include_patterns.is_empty());
         assert!(opts.exclude_patterns.is_empty());
-        assert!(!opts.ignore_case);
         assert!(!opts.prune_empty);
     }
 
@@ -911,12 +799,9 @@ mod tests {
         assert!(!opts.show_date);
         assert!(!opts.show_disk_usage);
         assert!(!opts.no_indent);
-        assert_eq!(opts.sort_key, SortKey::Name);
         assert!(!opts.reverse_sort);
         assert!(!opts.show_report);
         assert!(!opts.no_win_banner);
-        assert!(!opts.quote_names);
-        assert!(!opts.dirs_first);
     }
 
     // ------------------------------------------------------------------------
@@ -1021,34 +906,6 @@ mod tests {
         let mut config = Config::default();
         config.render.show_date = true;
         assert!(config.needs_time_info());
-    }
-
-    #[test]
-    fn config_needs_time_info_should_return_true_when_sort_by_mtime() {
-        let mut config = Config::default();
-        config.render.sort_key = SortKey::Mtime;
-        assert!(config.needs_time_info());
-    }
-
-    #[test]
-    fn config_needs_time_info_should_return_true_when_sort_by_ctime() {
-        let mut config = Config::default();
-        config.render.sort_key = SortKey::Ctime;
-        assert!(config.needs_time_info());
-    }
-
-    #[test]
-    fn config_needs_time_info_should_return_false_when_sort_by_name() {
-        let mut config = Config::default();
-        config.render.sort_key = SortKey::Name;
-        assert!(!config.needs_time_info());
-    }
-
-    #[test]
-    fn config_needs_time_info_should_return_false_when_sort_by_size() {
-        let mut config = Config::default();
-        config.render.sort_key = SortKey::Size;
-        assert!(!config.needs_time_info());
     }
 
     // ------------------------------------------------------------------------
@@ -1298,7 +1155,6 @@ mod tests {
         config.scan.respect_gitignore = true;
         config.matching.include_patterns = vec!["*.rs".to_string()];
         config.matching.exclude_patterns = vec!["target".to_string()];
-        config.matching.ignore_case = true;
         config.matching.prune_empty = true;
         config.render.charset = CharsetMode::Ascii;
         config.render.path_mode = PathMode::Full;
@@ -1306,11 +1162,8 @@ mod tests {
         config.render.human_readable = true;
         config.render.show_date = true;
         config.render.show_disk_usage = true;
-        config.render.sort_key = SortKey::Mtime;
         config.render.reverse_sort = true;
         config.render.show_report = true;
-        config.render.dirs_first = true;
-        config.render.quote_names = true;
         config.output.output_path = Some(PathBuf::from("tree.json"));
 
         let result = config.validate();

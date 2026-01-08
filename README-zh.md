@@ -1,4 +1,4 @@
-# `tree++`: 好的多的Windows`tree`命令
+# `tree++`: 更好的Windows`tree`命令
 
 *[English](./README.md)*
 
@@ -67,16 +67,12 @@ treepp /f
 | `--level` `-L` `/L`           | 限制递归深度                                     |
 | `--include` `-m` `/M`         | 仅显示匹配的文件                                   |
 | `--disk-usage` `-u` `/DU`     | 显示目录累计大小                                   |
-| `--ignore-case` `-c` `/IC`    | 匹配时忽略大小写                                   |
 | `--report` `-e` `/RP`         | 显示末尾统计信息                                   |
 | `--prune` `-P` `/P`           | 修剪空目录                                      |
-| `--sort` `-S` `/SO`           | 指定排序方式(`name`、`size`、`mtime` 等)            |
 | `--no-win-banner` `-N` `/NB`  | 不显示 Windows 原生 tree 的样板信息                  |
 | `--silent` `-l` `/SI`         | 终端静默(结合`output`指令使用)                       |
 | `--output` `-o` `/O`          | 将结果输出至文件(`.txt`, `.json`, `.yml`, `.toml`) |
 | `--thread` `-t` `/T`          | 扫描线程数(默认为8)                                |
 | `--gitignore` `-g` `/G`       | 遵循`.gitignore`                             |
-| `--quote` `-q` `/Q`           | 用双引号包裹文件名                                  |
-| `--dirs-first` `-D` `/DF`     | 目录优先显示                                     |
 
 > 完整参数集参阅: [tree++参数集文档](./OPTIONS-zh.md)

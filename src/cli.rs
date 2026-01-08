@@ -34,7 +34,7 @@ use std::env;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
-use crate::config::{CharsetMode, Config, PathMode, SortKey};
+use crate::config::{CharsetMode, Config, PathMode};
 pub(crate) use crate::error::CliError;
 
 // ============================================================================
@@ -173,33 +173,11 @@ const ARG_DEFINITIONS: &[ArgDef] = &[
         long_patterns: &["--no-indent"],
     },
     ArgDef {
-        canonical: "quote",
-        kind: ArgKind::Flag,
-        cmd_patterns: &["/Q"],
-        short_patterns: &["-q"],
-        long_patterns: &["--quote"],
-    },
-    // 排序类
-    ArgDef {
-        canonical: "sort",
-        kind: ArgKind::Value,
-        cmd_patterns: &["/SO"],
-        short_patterns: &["-S"],
-        long_patterns: &["--sort"],
-    },
-    ArgDef {
         canonical: "reverse",
         kind: ArgKind::Flag,
         cmd_patterns: &["/R"],
         short_patterns: &["-r"],
         long_patterns: &["--reverse"],
-    },
-    ArgDef {
-        canonical: "dirs-first",
-        kind: ArgKind::Flag,
-        cmd_patterns: &["/DF"],
-        short_patterns: &["-D"],
-        long_patterns: &["--dirs-first"],
     },
     // 过滤类
     ArgDef {
@@ -222,13 +200,6 @@ const ARG_DEFINITIONS: &[ArgDef] = &[
         cmd_patterns: &["/X"],
         short_patterns: &["-I"],
         long_patterns: &["--exclude"],
-    },
-    ArgDef {
-        canonical: "ignore-case",
-        kind: ArgKind::Flag,
-        cmd_patterns: &["/IC"],
-        short_patterns: &["-c"],
-        long_patterns: &["--ignore-case"],
     },
     ArgDef {
         canonical: "prune",
@@ -609,7 +580,6 @@ impl CliParser {
                     config.matching.exclude_patterns.push(value);
                 }
             }
-            "ignore-case" => config.matching.ignore_case = true,
             "prune" => config.matching.prune_empty = true,
 
             // 渲染选项
@@ -623,17 +593,6 @@ impl CliParser {
             "reverse" => config.render.reverse_sort = true,
             "report" => config.render.show_report = true,
             "no-win-banner" => config.render.no_win_banner = true,
-            "quote" => config.render.quote_names = true,
-            "dirs-first" => config.render.dirs_first = true,
-            "sort" => {
-                let value = matched.value.as_ref().expect("sort 参数需要值");
-                config.render.sort_key =
-                    SortKey::from_str_loose(value).ok_or_else(|| CliError::InvalidValue {
-                        option: canonical.to_string(),
-                        value: value.clone(),
-                        reason: format!("有效值: {}", SortKey::valid_keys().join(", ")),
-                    })?;
-            }
 
             // 输出选项
             "output" => {
@@ -681,7 +640,7 @@ impl CliParser {
 /// use treepp::cli::help_text;
 ///
 /// let help = help_text();
-/// assert!(help.contFains("tree++"));
+/// assert!(help.contains("tree++"));
 /// assert!(help.contains("--help"));
 /// ```
 #[must_use]
@@ -706,17 +665,13 @@ Options:
   --level, -L, /L <N>         Limit recursion depth
   --include, -m, /M <PATTERN> Show only files matching the pattern
   --disk-usage, -u, /DU       Show cumulative directory sizes
-  --ignore-case, -c, /IC      Case-insensitive matching
   --report, -e, /RP           Show summary statistics at the end
   --prune, -P, /P             Prune empty directories
-  --sort, -S, /SO <KEY>       Set sort mode (name, size, mtime, ctime)
   --no-win-banner, -N, /NB    Do not show the Windows native tree banner/header
   --silent, -l, /SI           Silent mode (use with --output)
   --output, -o, /O <FILE>     Write output to a file (.txt, .json, .yml, .toml)
   --thread, -t, /T <N>        Number of scanning threads (default: 8)
   --gitignore, -g, /G         Respect .gitignore
-  --quote, -q, /Q             Wrap file names in double quotes
-  --dirs-first, -D, /DF       List directories first
 
 More info: https://github.com/Water-Run/treepp"#
 }
@@ -817,7 +772,6 @@ mod tests {
             assert!(!config.scan.respect_gitignore);
             assert!(config.matching.include_patterns.is_empty());
             assert!(config.matching.exclude_patterns.is_empty());
-            assert!(!config.matching.ignore_case);
             assert!(!config.matching.prune_empty);
             assert_eq!(config.render.charset, CharsetMode::Unicode);
             assert_eq!(config.render.path_mode, PathMode::Relative);
@@ -829,9 +783,6 @@ mod tests {
             assert!(!config.render.reverse_sort);
             assert!(!config.render.show_report);
             assert!(!config.render.no_win_banner);
-            assert!(!config.render.quote_names);
-            assert!(!config.render.dirs_first);
-            assert_eq!(config.render.sort_key, SortKey::Name);
             assert!(config.output.output_path.is_none());
             assert!(!config.output.silent);
         } else {
@@ -1010,8 +961,6 @@ mod tests {
                 "/HR",
                 "-d",
                 "--reverse",
-                "/Q",
-                "-D",
                 "--prune",
             ],
         );
@@ -1023,8 +972,6 @@ mod tests {
             assert!(config.render.human_readable);
             assert!(config.render.show_date);
             assert!(config.render.reverse_sort);
-            assert!(config.render.quote_names);
-            assert!(config.render.dirs_first);
             assert!(config.matching.prune_empty);
         } else {
             panic!("解析失败");
@@ -1122,17 +1069,6 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_equals_syntax_for_sort() {
-        let parser = CliParser::new(vec!["--sort=size".to_string()]);
-
-        if let Ok(ParseResult::Config(config)) = parser.parse() {
-            assert_eq!(config.render.sort_key, SortKey::Size);
-        } else {
-            panic!("解析失败");
-        }
-    }
-
-    #[test]
     fn should_parse_equals_syntax_for_output() {
         let parser = CliParser::new(vec!["--output=tree.json".to_string()]);
 
@@ -1192,45 +1128,6 @@ mod tests {
         } else {
             panic!("解析失败");
         }
-    }
-
-    // ------------------------------------------------------------------------
-    // 排序键测试
-    // ------------------------------------------------------------------------
-
-    #[test]
-    fn should_parse_sort_key() {
-        for (input, expected) in [
-            ("name", SortKey::Name),
-            ("size", SortKey::Size),
-            ("mtime", SortKey::Mtime),
-            ("ctime", SortKey::Ctime),
-            ("NAME", SortKey::Name),
-            ("Size", SortKey::Size),
-            ("MTIME", SortKey::Mtime),
-            ("Ctime", SortKey::Ctime),
-        ] {
-            let parser = CliParser::new(vec!["--sort".to_string(), input.to_string()]);
-            if let Ok(ParseResult::Config(config)) = parser.parse() {
-                assert_eq!(config.render.sort_key, expected, "测试 {input}");
-            } else {
-                panic!("解析 sort={input} 失败");
-            }
-        }
-    }
-
-    #[test]
-    fn should_fail_on_invalid_sort_key() {
-        let parser = CliParser::new(vec!["--sort".to_string(), "invalid".to_string()]);
-        let result = parser.parse();
-        assert!(matches!(result, Err(CliError::InvalidValue { .. })));
-    }
-
-    #[test]
-    fn should_fail_on_empty_sort_key() {
-        let parser = CliParser::new(vec!["--sort=".to_string()]);
-        let result = parser.parse();
-        assert!(matches!(result, Err(CliError::InvalidValue { .. })));
     }
 
     // ------------------------------------------------------------------------
@@ -1492,18 +1389,6 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_ignore_case() {
-        for flag in &["--ignore-case", "-c", "/IC", "/ic"] {
-            let parser = CliParser::new(vec![flag.to_string()]);
-            if let Ok(ParseResult::Config(config)) = parser.parse() {
-                assert!(config.matching.ignore_case, "测试 {flag}");
-            } else {
-                panic!("解析 {flag} 失败");
-            }
-        }
-    }
-
-    #[test]
     fn should_parse_prune() {
         for flag in &["--prune", "-P", "/P"] {
             let parser = CliParser::new(vec![flag.to_string()]);
@@ -1668,30 +1553,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn should_parse_quote_option() {
-        for flag in &["--quote", "-q", "/Q", "/q"] {
-            let parser = CliParser::new(vec![flag.to_string()]);
-            if let Ok(ParseResult::Config(config)) = parser.parse() {
-                assert!(config.render.quote_names, "测试 {flag}");
-            } else {
-                panic!("解析 {flag} 失败");
-            }
-        }
-    }
-
-    #[test]
-    fn should_parse_dirs_first_option() {
-        for flag in &["--dirs-first", "-D", "/DF", "/df"] {
-            let parser = CliParser::new(vec![flag.to_string()]);
-            if let Ok(ParseResult::Config(config)) = parser.parse() {
-                assert!(config.render.dirs_first, "测试 {flag}");
-            } else {
-                panic!("解析 {flag} 失败");
-            }
-        }
-    }
-
     // ------------------------------------------------------------------------
     // 帮助文本测试
     // ------------------------------------------------------------------------
@@ -1706,13 +1567,19 @@ mod tests {
         assert!(help.contains("--output"));
         assert!(help.contains("--thread"));
         assert!(help.contains("--gitignore"));
-        assert!(help.contains("--quote"));
-        assert!(help.contains("--dirs-first"));
         assert!(help.contains("--include"));
         assert!(help.contains("--exclude"));
-        assert!(help.contains("--sort"));
         assert!(help.contains("--silent"));
         assert!(help.contains("--prune"));
+        assert!(help.contains("--reverse"));
+        assert!(help.contains("--no-win-banner"));
+        assert!(help.contains("--disk-usage"));
+        assert!(help.contains("--human-readable"));
+        assert!(help.contains("--date"));
+        assert!(help.contains("--size"));
+        assert!(help.contains("--full-path"));
+        assert!(help.contains("--no-indent"));
+        assert!(help.contains("--report"));
     }
 
     #[test]
@@ -1852,18 +1719,13 @@ mod tests {
                 "5",
                 "-s",
                 "-H",
-                "--sort",
-                "size",
                 "-r",
                 "--include",
                 "*.rs",
                 "--exclude",
                 "target",
-                "-c",
                 "--prune",
                 "-g",
-                "--quote",
-                "-D",
                 "--report",
                 "-N",
                 "--thread",
@@ -1877,15 +1739,11 @@ mod tests {
             assert_eq!(config.scan.max_depth, Some(5));
             assert!(config.render.show_size);
             assert!(config.render.human_readable);
-            assert_eq!(config.render.sort_key, SortKey::Size);
             assert!(config.render.reverse_sort);
             assert_eq!(config.matching.include_patterns, vec!["*.rs"]);
             assert_eq!(config.matching.exclude_patterns, vec!["target"]);
-            assert!(config.matching.ignore_case);
             assert!(config.matching.prune_empty);
             assert!(config.scan.respect_gitignore);
-            assert!(config.render.quote_names);
-            assert!(config.render.dirs_first);
             assert!(config.render.show_report);
             assert!(config.render.no_win_banner);
             assert_eq!(config.scan.thread_count.get(), 4);
