@@ -6,7 +6,7 @@
 //!
 //! 文件: src/config.rs
 //! 作者: WaterRun
-//! 更新于: 2026-01-08
+//! 更新于: 2026-01-09
 
 #![forbid(unsafe_code)]
 
@@ -190,21 +190,21 @@ impl CharsetMode {
         }
     }
 
-    /// 获取纵向连接线符号
+    /// 获取纵向连接线符号（包含后续空格，总宽度4字符）
     #[must_use]
     pub const fn vertical(&self) -> &'static str {
         match self {
-            Self::Unicode => "│   ",
-            Self::Ascii => "|   ",
+            Self::Unicode => "│   ",  // 竖线 + 3空格 = 4字符
+            Self::Ascii => "|   ",    // | + 3空格 = 4字符
         }
     }
 
-    /// 获取空白缩进
+    /// 获取空白缩进（4字符宽度）
     #[must_use]
     pub const fn indent(&self) -> &'static str {
         match self {
-            Self::Unicode => "    ",
-            Self::Ascii => "    ",
+            Self::Unicode => "    ",  // 4空格
+            Self::Ascii => "    ",    // 4空格
         }
     }
 }
@@ -733,8 +733,8 @@ mod tests {
         let mode = CharsetMode::Unicode;
         assert_eq!(mode.branch(), "├─");
         assert_eq!(mode.last_branch(), "└─");
-        assert_eq!(mode.vertical(), "│   ");
-        assert_eq!(mode.indent(), "    ");
+        assert_eq!(mode.vertical(), "│   ");  // 竖线 + 3空格 = 4字符
+        assert_eq!(mode.indent(), "    ");    // 4空格
     }
 
     #[test]

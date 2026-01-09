@@ -12,7 +12,7 @@
 //!
 //! 文件: src/scan.rs
 //! 作者: WaterRun
-//! 更新于: 2026-01-08
+//! 更新于: 2026-01-09
 
 #![forbid(unsafe_code)]
 
@@ -757,9 +757,13 @@ fn scan_dir(
         return Some(TreeNode::new(path.to_path_buf(), kind, metadata));
     }
 
-    // 深度限制检查：如果已达到最大深度，返回空目录节点（不处理子项）
+    // 深度限制：
+    // - 普通模式遵守 /L（max_depth）
+    // - /DU（collect_files_for_size=true）时忽略 /L，确保完整统计大小
     if let Some(max) = ctx.max_depth
-        && depth >= max {
+        && depth >= max
+        && !ctx.collect_files_for_size
+    {
         return Some(TreeNode::new(path.to_path_buf(), kind, metadata));
     }
 
@@ -2836,5 +2840,31 @@ mod tests {
 
         // 文件应被过滤
         assert!(ctx.should_filter("test.txt", false));
+    }
+
+    #[test]
+    fn test_scan_disk_usage_with_max_depth_collects_full_size() {
+        use std::io::Write;
+
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("a/b")).unwrap();
+        File::create(root.join("a/b/deep.txt"))
+            .unwrap()
+            .write_all(b"1234567")
+            .unwrap(); // 7 bytes
+
+        let mut config = Config::with_root(root.to_path_buf());
+        config.batch_mode = true;
+        config.render.show_disk_usage = true;
+        config.scan.show_files = false;   // 只展示目录，但要统计大小
+        config.scan.max_depth = Some(1);  // 限制显示深度
+
+        let stats = scan(&config).expect("扫描失败");
+
+        // 深度受限，但统计应包含更深层文件
+        assert_eq!(stats.tree.disk_usage, Some(7));
+        let dir_a = stats.tree.children.iter().find(|c| c.name == "a").unwrap();
+        assert_eq!(dir_a.disk_usage, Some(7));
     }
 }

@@ -12,7 +12,7 @@
 //!
 //! 文件: src/render.rs
 //! 作者: WaterRun
-//! 更新于: 2026-01-08
+//! 更新于: 2026-01-09
 
 #![forbid(unsafe_code)]
 
@@ -185,6 +185,16 @@ impl WinBanner {
     }
 }
 
+#[inline]
+fn depth_within_limit(depth: usize, max_depth: Option<usize>) -> bool {
+    max_depth.map_or(true, |m| depth <= m)
+}
+
+#[inline]
+fn can_recurse(depth: usize, max_depth: Option<usize>) -> bool {
+    max_depth.map_or(true, |m| depth < m)
+}
+
 // ============================================================================
 // 根路径格式化
 // ============================================================================
@@ -289,20 +299,22 @@ impl TreeChars {
     /// 格式与 Windows tree 命令保持一致：
     /// - Unicode: ├─, └─, │   (│后3空格), 4空格
     /// - ASCII: +---, \---, |   (|后3空格), 4空格
+    ///
+    /// 两种模式的缩进宽度都是4字符。
     #[must_use]
     pub fn from_charset(charset: CharsetMode) -> Self {
         match charset {
             CharsetMode::Unicode => Self {
                 branch: "├─",
                 last_branch: "└─",
-                vertical: "│   ",
-                space: "    ",
+                vertical: "│   ",  // 竖线 + 3空格 = 4字符宽度
+                space: "    ",     // 4空格
             },
             CharsetMode::Ascii => Self {
                 branch: "+---",
                 last_branch: "\\---",
-                vertical: "|   ",
-                space: "    ",
+                vertical: "|   ",  // | + 3空格 = 4字符宽度
+                space: "    ",     // 4空格
             },
         }
     }
@@ -543,10 +555,13 @@ impl StreamRenderer {
 
         let mut output = String::new();
 
-        // 检查是否需要插入空行（从文件切换到目录）
+        // 检查是否需要插入分隔行（从文件切换到目录）
         if self.last_was_file && !entry.is_file {
             let prefix = self.build_prefix();
-            let separator = self.chars.vertical.trim_end();
+            let separator = match self.config.charset {
+                CharsetMode::Unicode => "│",
+                CharsetMode::Ascii => "|",
+            };
             let _ = writeln!(output, "{}{}", prefix, separator);
         }
 
@@ -713,7 +728,6 @@ impl StreamRenderer {
         if self.config.show_report {
             let time_str = format!(" in {:.3}s", duration.as_secs_f64());
 
-            output.push('\n');
             if self.config.show_files {
                 let _ = writeln!(
                     output,
@@ -780,17 +794,22 @@ pub fn render(stats: &ScanStats, config: &Config) -> RenderResult {
 
     // 渲染子节点
     if config.render.no_indent {
-        render_children_no_indent(&mut output, &stats.tree, config, 0);
+        // 根的直接子项视为 depth = 1
+        render_children_no_indent(&mut output, &stats.tree, config, 1);
     } else {
-        render_children(&mut output, &stats.tree, &chars, config, "");
+        // 根的直接子项视为 depth = 1
+        render_children(&mut output, &stats.tree, &chars, config, "", 1);
     }
 
     // 无子目录提示（当目录没有子目录时显示，不考虑文件）
-    if !tree_has_subdirectories(&stats.tree)
-        && let Some(b) = &banner
-        && !b.no_subfolder.is_empty() {
-        output.push('\n');
-        output.push_str(&b.no_subfolder);
+    if !tree_has_subdirectories(&stats.tree) {
+        if let Some(b) = &banner {
+            if !b.no_subfolder.is_empty() {
+                output.push_str(&b.no_subfolder);
+                output.push('\n');
+            }
+        }
+        // 只有在没有子目录时才输出末尾空行
         output.push('\n');
     }
 
@@ -798,7 +817,6 @@ pub fn render(stats: &ScanStats, config: &Config) -> RenderResult {
     if config.render.show_report {
         let time_str = format!(" in {:.3}s", stats.duration.as_secs_f64());
 
-        output.push('\n');
         if config.scan.show_files {
             let _ = writeln!(
                 output,
@@ -819,17 +837,20 @@ pub fn render(stats: &ScanStats, config: &Config) -> RenderResult {
 
 /// 渲染子节点 (带树形连接符)
 ///
-/// 渲染规则：
-/// - 文件：使用缩进（│   或空格），不使用分支符
-/// - 目录：使用分支符（├─ 或 └─）
-/// - 文件优先显示（与原生 Windows tree 一致）
+/// `depth` 为当前即将渲染的子节点深度（根的直接子项 depth = 1）
 fn render_children(
     output: &mut String,
     node: &TreeNode,
     chars: &TreeChars,
     config: &Config,
     prefix: &str,
+    depth: usize,
 ) {
+    // 如果当前层级本身已超出显示深度，直接返回（仍然保留统计，不影响 /DU）
+    if !depth_within_limit(depth, config.scan.max_depth) {
+        return;
+    }
+
     // 分离文件和目录（保持排序后的相对顺序）
     let (files, dirs): (Vec<_>, Vec<_>) = get_filtered_children(node, config)
         .into_iter()
@@ -839,9 +860,13 @@ fn render_children(
     let has_dirs = !dirs.is_empty();
 
     // 文件优先模式（与原生 Windows tree 一致）
-
-    // 渲染文件（使用缩进，不使用分支符）
     for file in &files {
+        // 文件仅在显示深度内才输出
+        if !depth_within_limit(depth, config.scan.max_depth) {
+            continue;
+        }
+
+        // 文件行前缀：如果后面还有目录，用竖线；否则用空格
         let file_prefix = if has_dirs {
             format!("{}{}", prefix, chars.vertical)
         } else {
@@ -853,14 +878,23 @@ fn render_children(
         let _ = writeln!(output, "{}{}{}", file_prefix, name, meta);
     }
 
-    // 文件和目录之间的空行
-    if has_files && has_dirs {
-        let _ = writeln!(output, "{}{}", prefix, chars.vertical.trim_end());
+    // 文件和目录之间的分隔行（仅当两者都存在且有显示内容时）
+    if has_files && has_dirs && depth_within_limit(depth, config.scan.max_depth) {
+        let separator = match config.render.charset {
+            CharsetMode::Unicode => "│",
+            CharsetMode::Ascii => "|",
+        };
+        let _ = writeln!(output, "{}{}", prefix, separator);
     }
 
     // 渲染目录（使用分支符）
     let dir_count = dirs.len();
     for (i, dir) in dirs.iter().enumerate() {
+        // 目录自身是否在显示深度内
+        if !depth_within_limit(depth, config.scan.max_depth) {
+            continue;
+        }
+
         let is_last = i == dir_count - 1;
         let connector = if is_last {
             chars.last_branch
@@ -872,41 +906,50 @@ fn render_children(
         let meta = format_entry_meta(dir, config);
         let _ = writeln!(output, "{}{}{}{}", prefix, connector, name, meta);
 
-        // 递归渲染子目录
-        if !dir.children.is_empty() {
+        // 递归渲染子目录：仅当下一层仍在显示深度内
+        if !dir.children.is_empty() && can_recurse(depth, config.scan.max_depth) {
             let new_prefix = if is_last {
                 format!("{}{}", prefix, chars.space)
             } else {
                 format!("{}{}", prefix, chars.vertical)
             };
-            render_children(output, dir, chars, config, &new_prefix);
+            render_children(output, dir, chars, config, &new_prefix, depth + 1);
         }
     }
 }
 
 /// 渲染子节点 (无树形连接符，仅缩进)
+///
+/// `depth` 为当前即将渲染的子节点深度（根的直接子项 depth = 1）
 fn render_children_no_indent(output: &mut String, node: &TreeNode, config: &Config, depth: usize) {
-    // 分离文件和目录
+    if !depth_within_limit(depth, config.scan.max_depth) {
+        return;
+    }
+
     let (files, dirs): (Vec<_>, Vec<_>) = get_filtered_children(node, config)
         .into_iter()
         .partition(|c| c.kind == EntryKind::File);
 
     let indent = "  ".repeat(depth);
 
-    // 文件优先（与原生 Windows tree 一致）：先渲染文件
     for file in &files {
+        if !depth_within_limit(depth, config.scan.max_depth) {
+            continue;
+        }
         let name = format_entry_name(file, config);
         let meta = format_entry_meta(file, config);
         let _ = writeln!(output, "{}{}{}", indent, name, meta);
     }
 
-    // 再渲染目录
     for dir in &dirs {
+        if !depth_within_limit(depth, config.scan.max_depth) {
+            continue;
+        }
         let name = format_entry_name(dir, config);
         let meta = format_entry_meta(dir, config);
         let _ = writeln!(output, "{}{}{}", indent, name, meta);
 
-        if !dir.children.is_empty() {
+        if !dir.children.is_empty() && can_recurse(depth, config.scan.max_depth) {
             render_children_no_indent(output, dir, config, depth + 1);
         }
     }
@@ -923,8 +966,6 @@ fn get_filtered_children<'a>(node: &'a TreeNode, config: &Config) -> Vec<&'a Tre
         .collect()
 }
 
-/// 仅渲染树形文本，不包含 banner 和统计信息
-#[must_use]
 pub fn render_tree_only(node: &TreeNode, config: &Config) -> String {
     let mut output = String::new();
     let chars = TreeChars::from_charset(config.render.charset);
@@ -934,9 +975,9 @@ pub fn render_tree_only(node: &TreeNode, config: &Config) -> String {
     let _ = writeln!(output, "{root_name}{root_meta}");
 
     if config.render.no_indent {
-        render_children_no_indent(&mut output, node, config, 0);
+        render_children_no_indent(&mut output, node, config, 1);
     } else {
-        render_children(&mut output, node, &chars, config, "");
+        render_children(&mut output, node, &chars, config, "", 1);
     }
 
     output
@@ -1180,8 +1221,8 @@ mod tests {
         let chars = TreeChars::from_charset(CharsetMode::Unicode);
         assert_eq!(chars.branch, "├─");
         assert_eq!(chars.last_branch, "└─");
-        assert_eq!(chars.vertical, "│   ");
-        assert_eq!(chars.space, "    ");
+        assert_eq!(chars.vertical, "│   ");  // 竖线 + 3空格 = 4字符
+        assert_eq!(chars.space, "    ");     // 4空格
     }
 
     #[test]
@@ -1413,7 +1454,7 @@ mod tests {
 
         let line = renderer.render_entry(&entry);
         assert!(!line.contains("│"));
-        assert!(line.starts_with("    "));
+        assert!(line.starts_with("    "));  // 4空格
     }
 
     #[test]
@@ -1907,5 +1948,64 @@ mod tests {
         let filtered = get_filtered_children(&root, &config);
 
         assert_eq!(filtered.len(), 2);
+    }
+
+    #[test]
+    fn test_render_disk_usage_respects_display_depth() {
+        // 构建手动树：root/dir1/dir2/file (5 bytes)
+        let mut dir2 = TreeNode::new(
+            PathBuf::from("root/dir1/dir2"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        dir2.children.push(TreeNode::new(
+            PathBuf::from("root/dir1/dir2/file.txt"),
+            EntryKind::File,
+            EntryMetadata { size: 5, ..Default::default() },
+        ));
+
+        let mut dir1 = TreeNode::new(
+            PathBuf::from("root/dir1"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        dir1.children.push(dir2);
+
+        let mut root = TreeNode::new(
+            PathBuf::from("root"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        root.children.push(dir1);
+
+        // 计算累计大小
+        root.compute_disk_usage();
+        let directory_count = root.count_directories();
+        let file_count = root.count_files();
+        let stats = ScanStats {
+            tree: root,
+            duration: Duration::from_millis(1),
+            directory_count,
+            file_count,
+        };
+
+        let mut config = Config::with_root(PathBuf::from("root"));
+        config.batch_mode = true;
+        config.render.no_win_banner = true;
+        config.render.show_disk_usage = true;
+        config.render.show_size = true;
+        config.render.human_readable = false;
+        config.scan.show_files = false;      // 只显示目录
+        config.scan.max_depth = Some(1);     // 只显示到 dir1 层
+
+        let rendered = render(&stats, &config).content;
+
+        // 目录 dir1 应显示，dir2 / file.txt 不应显示
+        assert!(rendered.contains("dir1"));
+        assert!(!rendered.contains("dir2"));
+        assert!(!rendered.contains("file.txt"));
+
+        // 磁盘占用应显示聚合的 5 字节
+        assert!(rendered.contains("5"));
     }
 }

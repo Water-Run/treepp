@@ -152,13 +152,6 @@ PS D:\Rust\tree++> treepp /B /F /DU
 treepp (--ascii | -a | /A) [<PATH>]
 ```
 
-**Tree Symbol Comparison:**
-
-| Mode    | Branch | Last Branch | Vertical | Indent   |
-|---------|--------|-------------|----------|----------|
-| Unicode | `├─`   | `└─`        | `│`      | 4 spaces |
-| ASCII   | `+---` | `\---`      | `        | `        | 4 spaces |
-
 **Example:**
 
 ```powershell

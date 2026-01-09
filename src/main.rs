@@ -17,7 +17,7 @@
 //!
 //! 文件: src/main.rs
 //! 作者: WaterRun
-//! 更新于: 2026-01-08
+//! 更新于: 2026-01-09
 
 #![forbid(unsafe_code)]
 #![deny(warnings)]
@@ -161,12 +161,20 @@ fn stream_mode(config: &config::Config) -> Result<(), TreeppError> {
     let header = renderer.render_header(&config.root_path, config.path_explicitly_set);
     write_output!(header);
 
+    // 记录是否有子目录
+    let mut has_subdirs = false;
+
     // 流式扫描 + 渲染
     let stats = scan::scan_streaming(config, |event| {
         match event {
-            StreamEvent::Entry(entry) => {
-                let line = renderer.render_entry(&entry);
-                // 可能包含多行（如空行分隔）
+            StreamEvent::Entry(ref entry) => {
+                // 记录是否有目录
+                if entry.kind == scan::EntryKind::Directory {
+                    has_subdirs = true;
+                }
+
+                let line = renderer.render_entry(&entry.clone());
+                // 可能包含多行（如分隔行）
                 for l in line.lines() {
                     if !config.output.silent {
                         println!("{}", l);
@@ -189,23 +197,26 @@ fn stream_mode(config: &config::Config) -> Result<(), TreeppError> {
         Ok(())
     })?;
 
-    // 空目录时，按原生 tree 行为输出"没有子文件夹"
-    if stats.directory_count == 0 && !config.render.no_win_banner {
+    // 空目录时，按原生 tree 行为输出"没有子文件夹"和末尾空行
+    if !has_subdirs && !config.render.no_win_banner {
         if let Some(drive) = drive_letter_from_path(&config.root_path) {
             if let Ok(banner) = WinBanner::fetch_for_drive(drive) {
                 if !banner.no_subfolder.is_empty() {
-                    writeln_output!("");
                     writeln_output!(banner.no_subfolder);
                 }
             }
         }
+        // 只有在没有子目录时才输出末尾空行
+        writeln_output!("");
     }
 
-    // 末尾统计
+    // 末尾统计（如果启用）
     if config.render.show_report {
         let report =
             renderer.render_report(stats.directory_count, stats.file_count, stats.duration);
-        write_output!(report);
+        if !report.is_empty() {
+            write_output!(report);
+        }
     }
 
     // 刷新文件写入器
