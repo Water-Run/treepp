@@ -1,22 +1,24 @@
-# `tree++`: Complete Options Documentation and Examples
+# `tree++`: Complete Parameter Documentation and Examples
 
-This document provides a comprehensive description of all options supported by [tree++](https://github.com/Water-Run/treepp) along with usage examples.
+This document provides a comprehensive overview of all parameters and usage examples for [tree++](https://github.com/Water-Run/treepp).
 
-## Mock Directory
+## Sample Directory
 
-The example outputs in this document are based on this mock directory:
+Command examples are based on this sample directory structure:
 
 ```powershell
-PS D:\Rust\tree++> treepp /F
+PS D:\Data\Rust\tree++> treepp /f
 Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
 D:.
-│   Cargo.toml
-│   LICENSE
-│   OPTIONS-zh.md
-│   OPTIONS.md
-│   README-zh.md
-│   README.md
+│  .gitignore
+│  Cargo.lock
+│  Cargo.toml
+│  LICENSE
+│  OPTIONS-zh.md
+│  OPTIONS.md
+│  README-zh.md
+│  README.md
 │
 └─src
         cli.rs
@@ -28,7 +30,7 @@ D:.
         scan.rs
 ```
 
-> `treepp /F` behaves exactly like the native Windows `tree /F`: displays volume header information and tree structure. Running `treepp` directly also maintains the original semantics of showing only the directory structure.
+> `treepp /F` behaves identically to Windows native `tree /F` (diff-level): displays volume header information and tree structure. Running `treepp` alone maintains the original behavior of showing only directory structure.
 
 ## General Usage
 
@@ -36,30 +38,30 @@ D:.
 treepp [<PATH>] [<OPTIONS>...]
 ```
 
-- `<PATH>`: Optional, defaults to current directory. When no path is specified, the root path displays as `X:.` format; when explicitly specified, displays as a full uppercase path.
-- `<OPTIONS>`: Can be repeated and mixed. Supports three forms listed in the table below: `--` (GNU-style, case-sensitive), `-` (short form, case-sensitive), and `/` (CMD-style, case-insensitive).
+- `<PATH>`: Optional, defaults to current directory. When no path is specified, the root is displayed as `X:.` format; when explicitly specified, it shows the full uppercase path.
+- `<OPTIONS>`: Can be repeated and mixed. Supports three forms listed in the table below: `--` (GNU-style, case-sensitive), `-` (short parameters, case-sensitive), and `/` (CMD-style, case-insensitive).
 
-## Output Mode Description
+## Output Modes
 
 `tree++` supports two output modes:
 
 ### Streaming Output (Default)
 
-Scans, renders, and outputs simultaneously for real-time scrolling effect. Suitable for most interactive scenarios.
+Scans, renders, and outputs simultaneously, providing real-time scrolling. Suitable for most interactive scenarios.
 
-### Batch Mode
+### Batch Processing Mode
 
-Explicitly enabled via `--batch` (`-b` / `/B`). Outputs only after complete scanning. The following features **require batch mode**:
+Explicitly enabled via `--batch` (`-b` / `/B`). Performs complete scan before unified output. The following features **require batch processing mode**:
 
 - Structured output formats (JSON, YAML, TOML)
-- `/DU` (cumulative directory size, requires complete tree calculation)
+- `/DU` (cumulative directory size, requires full tree calculation)
 - `/T` (multi-threaded scanning)
 
-## Detailed Option Descriptions
+## Detailed Parameter Documentation
 
 ### `/?`: Show Help
 
-**Function:** Displays complete option help information.
+**Function:** Displays complete parameter help information.
 
 **Syntax:**
 
@@ -70,7 +72,7 @@ treepp (--help | -h | /?)
 **Example:**
 
 ```powershell
-PS D:\Rust\tree++> treepp /?
+PS D:\Data\Rust\tree++> treepp /?
 tree++: A much better Windows tree command.
 
 Usage:
@@ -117,7 +119,7 @@ treepp (--version | -v | /V)
 **Example:**
 
 ```powershell
-PS D:\Rust\tree++> treepp /V
+PS D:\Data\Rust\tree++> treepp /v
 tree++ version 0.1.0
 
 A much better Windows tree command.
@@ -126,9 +128,9 @@ author: WaterRun
 link: https://github.com/Water-Run/treepp
 ```
 
-### `/B`: Batch Mode
+### `/B`: Batch Processing Mode
 
-**Function:** Enables batch mode, outputting only after complete scanning. Some features (such as structured output, disk usage calculation, multi-threaded scanning) require this mode.
+**Function:** Enables batch processing mode, performing complete scan before unified output. Some features (such as structured output, disk usage calculation, multi-threaded scanning) require this mode.
 
 **Syntax:**
 
@@ -139,12 +141,32 @@ treepp (--batch | -b | /B) [<PATH>]
 **Example:**
 
 ```powershell
-PS D:\Rust\tree++> treepp /B /F /DU
+PS D:\Data\Rust\tree++> treepp /b /f /du
+Folder PATH listing for volume Storage
+Volume serial number is 26E9-52C1
+D:.
+│  .gitignore        1698
+│  Cargo.lock        19029
+│  Cargo.toml        1028
+│  LICENSE        35821
+│  OPTIONS-zh.md        19048
+│  OPTIONS.md        18812
+│  README-zh.md        4487
+│  README.md        4915
+│
+└─src        387614
+        cli.rs        68292
+        config.rs        41695
+        error.rs        28022
+        main.rs        11041
+        output.rs        25693
+        render.rs        118425
+        scan.rs        94446
 ```
 
-### `/A`: Draw Tree Using ASCII Characters
+### `/A`: Draw Tree with ASCII Characters
 
-**Function:** Outputs using ASCII tree characters, compatible with `tree /A`.
+**Function:** Outputs tree using ASCII characters, compatible with `tree /A`.
 
 **Syntax:**
 
@@ -155,7 +177,7 @@ treepp (--ascii | -a | /A) [<PATH>]
 **Example:**
 
 ```powershell
-PS D:\Rust\tree++> treepp /A
+PS D:\Data\Rust\tree++> treepp /a
 Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
 D:.
@@ -175,10 +197,12 @@ treepp (--files | -f | /F) [<PATH>]
 **Example (combined with `/A`):**
 
 ```powershell
-PS D:\Rust\tree++> treepp /A /F
+PS D:\Data\Rust\tree++> treepp /a /f
 Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
 D:.
+|   .gitignore
+|   Cargo.lock
 |   Cargo.toml
 |   LICENSE
 |   OPTIONS-zh.md
@@ -209,30 +233,32 @@ treepp (--full-path | -p | /FP) [<PATH>]
 **Example (combined with `/F`):**
 
 ```powershell
-PS D:\Rust\tree++> treepp /F /FP
+PS D:\Data\Rust\tree++> treepp /f /fp
 Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
-D:\RUST\TREE++
-│   D:\Rust\tree++\Cargo.toml
-│   D:\Rust\tree++\LICENSE
-│   D:\Rust\tree++\OPTIONS-zh.md
-│   D:\Rust\tree++\OPTIONS.md
-│   D:\Rust\tree++\README-zh.md
-│   D:\Rust\tree++\README.md
+D:.
+│  D:\Data\Rust\tree++\.gitignore
+│  D:\Data\Rust\tree++\Cargo.lock
+│  D:\Data\Rust\tree++\Cargo.toml
+│  D:\Data\Rust\tree++\LICENSE
+│  D:\Data\Rust\tree++\OPTIONS-zh.md
+│  D:\Data\Rust\tree++\OPTIONS.md
+│  D:\Data\Rust\tree++\README-zh.md
+│  D:\Data\Rust\tree++\README.md
 │
-└─D:\Rust\tree++\src
-        D:\Rust\tree++\src\cli.rs
-        D:\Rust\tree++\src\config.rs
-        D:\Rust\tree++\src\error.rs
-        D:\Rust\tree++\src\main.rs
-        D:\Rust\tree++\src\output.rs
-        D:\Rust\tree++\src\render.rs
-        D:\Rust\tree++\src\scan.rs
+└─D:\Data\Rust\tree++\src
+        D:\Data\Rust\tree++\src\cli.rs
+        D:\Data\Rust\tree++\src\config.rs
+        D:\Data\Rust\tree++\src\error.rs
+        D:\Data\Rust\tree++\src\main.rs
+        D:\Data\Rust\tree++\src\output.rs
+        D:\Data\Rust\tree++\src\render.rs
+        D:\Data\Rust\tree++\src\scan.rs
 ```
 
 ### `/HR`: Human-Readable File Sizes
 
-**Function:** Converts file sizes to readable units such as B/KB/MB/GB/TB. Enabling this option automatically enables `/S`.
+**Function:** Converts file sizes to readable units like B/KB/MB/GB/TB. Enabling this option automatically enables `/S`.
 
 **Syntax:**
 
@@ -243,30 +269,32 @@ treepp (--human-readable | -H | /HR) [<PATH>]
 **Example (`/HR /F`):**
 
 ```powershell
-PS D:\Rust\tree++> treepp /HR /F
+PS D:\Data\Rust\tree++> treepp /hr /f
 Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
 D:.
-│   Cargo.toml        982 B
-│   LICENSE           1.0 KB
-│   OPTIONS-zh.md     7.9 KB
-│   OPTIONS.md        7.5 KB
-│   README-zh.md      10.2 KB
-│   README.md         9.1 KB
+│  .gitignore        1.7 KB
+│  Cargo.lock        18.6 KB
+│  Cargo.toml        1.0 KB
+│  LICENSE        35.0 KB
+│  OPTIONS-zh.md        18.6 KB
+│  OPTIONS.md        18.4 KB
+│  README-zh.md        4.4 KB
+│  README.md        4.8 KB
 │
 └─src
-        cli.rs         6.0 KB
-        config.rs      2.8 KB
-        error.rs       1.9 KB
-        main.rs        512 B
-        output.rs      7.3 KB
-        render.rs      5.2 KB
-        scan.rs        8.8 KB
+        cli.rs        66.7 KB
+        config.rs        40.7 KB
+        error.rs        27.4 KB
+        main.rs        10.8 KB
+        output.rs        25.1 KB
+        render.rs        115.6 KB
+        scan.rs        92.2 KB
 ```
 
 ### `/S`: Show File Size (Bytes)
 
-**Function:** Displays file size in bytes. Can be combined with `/HR` to convert to human-readable format.
+**Function:** Displays file size in bytes, can be combined with `/HR` for human-readable format.
 
 **Syntax:**
 
@@ -277,25 +305,26 @@ treepp (--size | -s | /S) [<PATH>]
 **Example:**
 
 ```powershell
-PS D:\Rust\tree++> treepp /S /F
 Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
 D:.
-│   Cargo.toml        982
-│   LICENSE           1067
-│   OPTIONS-zh.md     8120
-│   OPTIONS.md        7644
-│   README-zh.md      10420
-│   README.md         9288
+│  .gitignore        1698
+│  Cargo.lock        19029
+│  Cargo.toml        1028
+│  LICENSE        35821
+│  OPTIONS-zh.md        19048
+│  OPTIONS.md        18812
+│  README-zh.md        4487
+│  README.md        4915
 │
 └─src
-        cli.rs         6120
-        config.rs      2840
-        error.rs       1980
-        main.rs        512
-        output.rs      7440
-        render.rs      5360
-        scan.rs        9020
+        cli.rs        68292
+        config.rs        41695
+        error.rs        28022
+        main.rs        11041
+        output.rs        25693
+        render.rs        118425
+        scan.rs        94446
 ```
 
 ### `/NI`: No Tree Connector Lines
@@ -311,27 +340,29 @@ treepp (--no-indent | -i | /NI) [<PATH>]
 **Example:**
 
 ```powershell
-PS D:\Rust\tree++> treepp /F /NI
+PS D:\Data\Rust\tree++> treepp /f /ni
 Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
 D:.
-  Cargo.toml
-  LICENSE
-  OPTIONS-zh.md
-  OPTIONS.md
-  README-zh.md
-  README.md
-  src
-    cli.rs
-    config.rs
-    error.rs
-    main.rs
-    output.rs
-    render.rs
-    scan.rs
+.gitignore
+Cargo.lock
+Cargo.toml
+LICENSE
+OPTIONS-zh.md
+OPTIONS.md
+README-zh.md
+README.md
+src
+  cli.rs
+  config.rs
+  error.rs
+  main.rs
+  output.rs
+  render.rs
+  scan.rs
 ```
 
-### `/R`: Reverse Sort
+### `/R`: Reverse Sort Order
 
 **Function:** Reverses the current sort order.
 
@@ -344,16 +375,18 @@ treepp (--reverse | -r | /R) [<PATH>]
 **Example:**
 
 ```powershell
-PS D:\Rust\tree++> treepp /F /R
+PS D:\Data\Rust\tree++> treepp /f /r
 Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
 D:.
-│   README.md
-│   README-zh.md
-│   OPTIONS.md
-│   OPTIONS-zh.md
-│   LICENSE
-│   Cargo.toml
+│  README.md
+│  README-zh.md
+│  OPTIONS.md
+│  OPTIONS-zh.md
+│  LICENSE
+│  Cargo.toml
+│  Cargo.lock
+│  .gitignore
 │
 └─src
         scan.rs
@@ -367,7 +400,7 @@ D:.
 
 ### `/DT`: Show Last Modified Date
 
-**Function:** Appends the last modification time of files/directories after each entry, formatted as `YYYY-MM-DD HH:MM:SS` (local timezone).
+**Function:** Appends last modification time for files/directories in `YYYY-MM-DD HH:MM:SS` format (local timezone).
 
 **Syntax:**
 
@@ -378,28 +411,30 @@ treepp (--date | -d | /DT) [<PATH>]
 **Example:**
 
 ```powershell
-PS D:\Rust\tree++> treepp /F /DT
+PS D:\Data\Rust\tree++> treepp /f /dt
 Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
 D:.
-│   Cargo.toml        2025-12-16 10:02:11
-│   LICENSE           2024-11-03 09:00:29
-│   OPTIONS-zh.md     2025-12-17 14:20:16
-│   OPTIONS.md        2025-12-17 14:18:05
-│   README-zh.md      2025-12-18 09:12:40
-│   README.md         2025-12-18 09:10:03
+│  .gitignore        2026-01-09 14:33:52
+│  Cargo.lock        2026-01-06 15:23:37
+│  Cargo.toml        2026-01-06 15:23:31
+│  LICENSE        2025-12-09 15:04:28
+│  OPTIONS-zh.md        2026-01-12 16:42:14
+│  OPTIONS.md        2026-01-09 14:45:31
+│  README-zh.md        2026-01-12 14:27:31
+│  README.md        2026-01-12 14:28:12
 │
-└─src
-        cli.rs         2025-12-17 22:41:12
-        config.rs      2025-12-17 22:35:09
-        error.rs       2025-12-17 22:12:47
-        main.rs        2025-12-17 20:30:00
-        output.rs      2025-12-17 23:01:58
-        render.rs      2025-12-17 22:58:47
-        scan.rs        2025-12-17 23:05:58
+└─src        2026-01-12 16:37:36
+        cli.rs        2026-01-08 14:24:42
+        config.rs        2026-01-12 09:34:42
+        error.rs        2026-01-08 14:19:05
+        main.rs        2026-01-12 16:28:17
+        output.rs        2026-01-08 14:22:43
+        render.rs        2026-01-12 16:24:44
+        scan.rs        2026-01-12 16:37:36
 ```
 
-### `/X`: Exclude Matches
+### `/X`: Exclude Pattern
 
 **Function:** Ignores files or directories matching the pattern. Supports wildcards `*` and `?`. Can be specified multiple times to exclude multiple patterns.
 
@@ -412,12 +447,14 @@ treepp (--exclude | -I | /X) <PATTERN> [<PATH>]
 **Example (exclude `*.md`):**
 
 ```powershell
-PS D:\Rust\tree++> treepp /F /X *.md
+PS D:\Data\Rust\tree++> treepp /f /x *.md
 Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
 D:.
-│   Cargo.toml
-│   LICENSE
+│  .gitignore
+│  Cargo.lock
+│  Cargo.toml
+│  LICENSE
 │
 └─src
         cli.rs
@@ -432,12 +469,27 @@ D:.
 **Example (exclude multiple patterns):**
 
 ```powershell
-PS D:\Rust\tree++> treepp /F /X *.md /X LICENSE
+PS D:\Data\Rust\tree++> treepp /f /x *.md /x LICENSE
+Folder PATH listing for volume Storage
+Volume serial number is 26E9-52C1
+D:.
+│  .gitignore
+│  Cargo.lock
+│  Cargo.toml
+│
+└─src
+        cli.rs
+        config.rs
+        error.rs
+        main.rs
+        output.rs
+        render.rs
+        scan.rs
 ```
 
 ### `/L`: Limit Recursion Depth
 
-**Function:** Specifies maximum recursion level. `0` shows only the root directory itself, `1` shows the root and its direct children.
+**Function:** Specifies maximum recursion level. `0` shows only the root directory itself, `1` shows root and its direct children.
 
 **Syntax:**
 
@@ -448,23 +500,25 @@ treepp (--level | -L | /L) <LEVEL> [<PATH>]
 **Example (show only 1 level):**
 
 ```powershell
-PS D:\Rust\tree++> treepp /F /L 1
+PS D:\Data\Rust\tree++> treepp /f /l 1
 Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
 D:.
-│   Cargo.toml
-│   LICENSE
-│   OPTIONS-zh.md
-│   OPTIONS.md
-│   README-zh.md
-│   README.md
+│  .gitignore
+│  Cargo.lock
+│  Cargo.toml
+│  LICENSE
+│  OPTIONS-zh.md
+│  OPTIONS.md
+│  README-zh.md
+│  README.md
 │
 └─src
 ```
 
-### `/M`: Show Only Matches
+### `/M`: Include Only Matching Files
 
-**Function:** Retains only file entries matching the pattern (directories are always shown to maintain structure). Supports wildcards. Can be specified multiple times.
+**Function:** Retains only file entries matching the pattern (directories always shown to maintain structure). Supports wildcards. Can be specified multiple times.
 
 **Syntax:**
 
@@ -475,11 +529,10 @@ treepp (--include | -m | /M) <PATTERN> [<PATH>]
 **Example (show only `*.rs`):**
 
 ```powershell
-PS D:\Rust\tree++> treepp /F /M *.rs
+PS D:\Data\Rust\tree++> treepp /f /m *rs
 Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
 D:.
-│
 └─src
         cli.rs
         config.rs
@@ -492,9 +545,9 @@ D:.
 
 ### `/DU`: Show Cumulative Directory Size
 
-**Function:** Calculates cumulative disk usage for each directory (recursively sums all child file sizes). Often used with `/HR`.
+**Function:** Calculates cumulative disk usage for each directory (recursively sums all child file sizes). Often used with `/HR`. Enabling this option automatically enables `/S`.
 
-> **Note:** This option requires batch mode (`/B`) because it needs to scan the complete tree before calculating cumulative sizes.
+> **Note:** This option requires batch processing mode (`/B`) because it needs a complete tree scan to calculate cumulative sizes.
 
 **Syntax:**
 
@@ -505,16 +558,16 @@ treepp (--disk-usage | -u | /DU) [<PATH>]
 **Example:**
 
 ```powershell
-PS D:\Rust\tree++> treepp /B /DU /HR
+PS D:\Data\Rust\tree++> treepp /b /du /hr
 Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
 D:.
-└─src        31.5 KB
+└─src        378.5 KB
 ```
 
 ### `/RP`: Show Summary Report
 
-**Function:** Appends summary statistics at the end of output, including directory count, file count (if `/F` is enabled), and scan duration.
+**Function:** Appends statistical summary at the end of output, including directory count, file count (if `/F` enabled), and scan duration.
 
 **Syntax:**
 
@@ -525,16 +578,18 @@ treepp (--report | -e | /RP) [<PATH>]
 **Example:**
 
 ```powershell
-PS D:\Rust\tree++> treepp /F /RP
+PS D:\Data\Rust\tree++> treepp /f /rp
 Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
 D:.
-│   Cargo.toml
-│   LICENSE
-│   OPTIONS-zh.md
-│   OPTIONS.md
-│   README-zh.md
-│   README.md
+│  .gitignore
+│  Cargo.lock
+│  Cargo.toml
+│  LICENSE
+│  OPTIONS-zh.md
+│  OPTIONS.md
+│  README-zh.md
+│  README.md
 │
 └─src
         cli.rs
@@ -545,7 +600,7 @@ D:.
         render.rs
         scan.rs
 
-1 directory, 13 files in 0.015s
+1 directory, 15 files in 0.002s
 ```
 
 ### `/P`: Prune Empty Directories
@@ -560,17 +615,21 @@ treepp (--prune | -P | /P) [<PATH>]
 
 **Example:**
 
+Assuming an empty directory `empty_dir` exists, using `/P` will not display it:
+
 ```powershell
-PS D:\Rust\tree++> treepp /P /F
+PS D:\Data\Rust\tree++> treepp /p /f
 Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
 D:.
-│   Cargo.toml
-│   LICENSE
-│   OPTIONS-zh.md
-│   OPTIONS.md
-│   README-zh.md
-│   README.md
+│  .gitignore
+│  Cargo.lock
+│  Cargo.toml
+│  LICENSE
+│  OPTIONS-zh.md
+│  OPTIONS.md
+│  README-zh.md
+│  README.md
 │
 └─src
         cli.rs
@@ -584,7 +643,7 @@ D:.
 
 ### `/NB`: No Windows Banner
 
-**Function:** Omits the Windows native `tree` volume information and serial number output (first two lines).
+**Function:** Omits Windows native `tree` volume information and serial number output (first two lines).
 
 **Syntax:**
 
@@ -595,14 +654,16 @@ treepp (--no-win-banner | -N | /NB) [<PATH>]
 **Example:**
 
 ```powershell
-PS D:\Rust\tree++> treepp /F /NB
+PS D:\Data\Rust\tree++> treepp /f /nb
 D:.
-│   Cargo.toml
-│   LICENSE
-│   OPTIONS-zh.md
-│   OPTIONS.md
-│   README-zh.md
-│   README.md
+│  .gitignore
+│  Cargo.lock
+│  Cargo.toml
+│  LICENSE
+│  OPTIONS-zh.md
+│  OPTIONS.md
+│  README-zh.md
+│  README.md
 │
 └─src
         cli.rs
@@ -614,13 +675,13 @@ D:.
         scan.rs
 ```
 
-> **Performance Tip:** The banner information is obtained by executing the native `tree` command in the `X:\__tree++__` directory. Enabling this option is recommended in performance-sensitive scenarios.
+> **Performance Tip:** Banner information is obtained by executing the native `tree` command in the `X:\__tree++__` directory. Enabling this option is recommended for performance-sensitive scenarios.
 
-### `/SI`: Silent Mode
+### `/SI`: Silent Terminal Output
 
 **Function:** Prevents writing results to standard output.
 
-> **Restriction:** Must be used with `/O`, otherwise an error will be reported. Using silent mode alone is meaningless (no output is produced).
+> **Restriction:** Must be used with `/O`, otherwise an error will occur. Using silent mode alone is meaningless (produces no output).
 
 **Syntax:**
 
@@ -631,20 +692,12 @@ treepp (--silent | -l | /SI) [<PATH>]
 **Example (`/F /O tree.txt /SI`):**
 
 ```powershell
-PS D:\Rust\tree++> treepp /F /O tree.txt /SI
-PS D:\Rust\tree++>
-```
-
-**Error Example (missing `/O`):**
-
-```powershell
-PS D:\Rust\tree++> treepp /SI
-tree++: Config error: Option conflict: --silent and (no --output) cannot be used together (Silent mode requires an output file; otherwise no output will be produced.)
+PS D:\Data\Rust\tree++> treepp /f /o tree.txt /si
 ```
 
 ### `/O`: Output to File
 
-**Function:** Persists results to a file. Supported formats are determined by file extension. By default, still outputs to console; can be combined with `/SI` for silence.
+**Function:** Persists results to a file. Supported formats are determined by file extension. By default, still outputs to console; use `/SI` for silent mode.
 
 **Syntax:**
 
@@ -661,21 +714,24 @@ treepp (--output | -o | /O) <FILE> [<PATH>]
 | `.yml` `.yaml` | YAML       | Yes           |
 | `.toml`        | TOML       | Yes           |
 
-> **Note:** Structured output formats (JSON/YAML/TOML) require batch mode (`/B`).
+> **Note:** Structured output formats (JSON/YAML/TOML) require batch processing mode (`/B`).
 
 **Example (TXT format, no `/B` needed):**
 
 ```powershell
-PS D:\Rust\tree++> treepp /F /O tree.txt
+PS D:\Data\Rust\tree++> treepp /f /o tree.txt
 Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
 D:.
-│   Cargo.toml
-│   LICENSE
-│   OPTIONS-zh.md
-│   OPTIONS.md
-│   README-zh.md
-│   README.md
+│  .gitignore
+│  Cargo.lock
+│  Cargo.toml
+│  LICENSE
+│  OPTIONS-zh.md
+│  OPTIONS.md
+│  README-zh.md
+│  README.md
+│  tree.txt
 │
 └─src
         cli.rs
@@ -686,20 +742,42 @@ D:.
         render.rs
         scan.rs
 
-output: D:\Rust\tree++\tree.txt
+
+Output written to: tree.txt
 ```
 
 **Example (JSON format, requires `/B`):**
 
 ```powershell
-PS D:\Rust\tree++> treepp /B /F /O tree.json
+PS D:\Data\Rust\tree++> treepp /b /f /o tree.json
+{
+  ".gitignore": {},
+  "Cargo.lock": {},
+  "Cargo.toml": {},
+  "LICENSE": {},
+  "OPTIONS-zh.md": {},
+  "OPTIONS.md": {},
+  "README-zh.md": {},
+  "README.md": {},
+  "src": {
+    "cli.rs": {},
+    "config.rs": {},
+    "error.rs": {},
+    "main.rs": {},
+    "output.rs": {},
+    "render.rs": {},
+    "scan.rs": {}
+  },
+  "tree.txt": {}
+}
+output: tree.json
 ```
 
-### `/T`: Scanning Thread Count
+### `/T`: Number of Scan Threads
 
 **Function:** Specifies the number of scanning threads. Value must be a positive integer.
 
-> **Restriction:** This option requires batch mode (`/B`).
+> **Restriction:** This option requires batch processing mode (`/B`).
 
 **Syntax:**
 
@@ -712,39 +790,20 @@ treepp (--thread | -t | /T) <N> [<PATH>]
 **Example:**
 
 ```powershell
-PS D:\Rust\tree++> treepp /B /F /T 16
-```
-
-**Error Example (missing `/B`):**
-
-```powershell
-PS D:\Rust\tree++> treepp /F /T 16
-tree++: CLI error: Option conflict: --thread and (no --batch) cannot be used together
-```
-
-### `/G`: Honor `.gitignore`
-
-**Function:** Parses `.gitignore` files in each directory level, automatically ignoring matching entries. Supports rule chain inheritance: subdirectories inherit parent directory rules while applying their own rules.
-
-**Syntax:**
-
-```powershell
-treepp (--gitignore | -g | /G) [<PATH>]
-```
-
-**Example:**
-
-```powershell
-PS D:\Rust\tree++> treepp /F /G
+PS D:\Data\Rust\tree++> treepp /b /f /t 16
 Folder PATH listing for volume Storage
 Volume serial number is 26E9-52C1
 D:.
-│   Cargo.toml
-│   LICENSE
-│   OPTIONS-zh.md
-│   OPTIONS.md
-│   README-zh.md
-│   README.md
+│  .gitignore
+│  Cargo.lock
+│  Cargo.toml
+│  LICENSE
+│  OPTIONS-zh.md
+│  OPTIONS.md
+│  README-zh.md
+│  README.md
+│  tree.json
+│  tree.txt
 │
 └─src
         cli.rs
@@ -756,21 +815,61 @@ D:.
         scan.rs
 ```
 
-## Option Restriction Summary
+### `/G`: Respect `.gitignore`
 
-| Option | Restriction Description                                                                         |
-|--------|-------------------------------------------------------------------------------------------------|
-| `/SI`  | Must be used with `/O`                                                                          |
-| `/T`   | Value must be a positive integer (≥1), and requires `/B`                                        |
-| `/L`   | Value must be a non-negative integer (≥0)                                                       |
-| `/DU`  | Requires `/B`                                                                                   |
-| `/O`   | Extension must be `.txt`, `.json`, `.yml`, `.yaml`, or `.toml`; structured formats require `/B` |
+**Function:** Parses `.gitignore` files in each directory level and automatically ignores matching entries. Supports rule chain inheritance: subdirectories inherit parent directory rules while applying their own rules.
+
+**Syntax:**
+
+```powershell
+treepp (--gitignore | -g | /G) [<PATH>]
+```
+
+**Example:**
+
+Assuming `.gitignore` contains `target/` and `*.log`, using `/G` will ignore these entries:
+
+```powershell
+PS D:\Data\Rust\tree++> treepp /f /g
+Folder PATH listing for volume Storage
+Volume serial number is 26E9-52C1
+D:.
+│  .gitignore
+│  Cargo.lock
+│  Cargo.toml
+│  LICENSE
+│  OPTIONS-zh.md
+│  OPTIONS.md
+│  README-zh.md
+│  README.md
+│  tree.json
+│  tree.txt
+│
+└─src
+        cli.rs
+        config.rs
+        error.rs
+        main.rs
+        output.rs
+        render.rs
+        scan.rs
+```
+
+## Parameter Restrictions Summary
+
+| Parameter | Restriction Description                                                                         |
+|-----------|-------------------------------------------------------------------------------------------------|
+| `/SI`     | Must be used with `/O`                                                                          |
+| `/T`      | Value must be a positive integer (≥1) and requires `/B`                                         |
+| `/L`      | Value must be a non-negative integer (≥0)                                                       |
+| `/DU`     | Requires `/B`                                                                                   |
+| `/O`      | Extension must be `.txt`, `.json`, `.yml`, `.yaml`, or `.toml`; structured formats require `/B` |
 
 ## Exit Codes
 
-| Exit Code | Meaning        |
-|-----------|----------------|
-| 0         | Success        |
-| 1         | Argument error |
-| 2         | Scan error     |
-| 3         | Output error   |
+| Exit Code | Meaning         |
+|-----------|-----------------|
+| 0         | Success         |
+| 1         | Parameter error |
+| 2         | Scan error      |
+| 3         | Output error    |
