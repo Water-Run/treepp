@@ -1,19 +1,19 @@
-//! 错误处理模块：定义全局统一错误类型
+//! Error handling module: defines unified error types for tree++.
 //!
-//! 本模块为 tree++ 提供统一的错误类型层次结构，覆盖以下场景：
+//! This module provides a hierarchical error type system covering:
 //!
-//! - **CLI 解析错误**：参数格式、冲突、未知选项等
-//! - **配置错误**：重导出自 `config` 模块，保持 API 一致性
-//! - **扫描错误**：文件系统访问、权限、路径不存在等
-//! - **匹配错误**：通配符模式语法、gitignore 规则解析等
-//! - **渲染错误**：输出格式化过程中的异常
-//! - **输出错误**：文件写入、序列化失败等
+//! - **CLI parsing errors**: argument format, conflicts, unknown options
+//! - **Configuration errors**: re-exported from `config` module for API consistency
+//! - **Scan errors**: filesystem access, permissions, path not found
+//! - **Match errors**: glob pattern syntax, gitignore rule parsing
+//! - **Render errors**: output formatting anomalies
+//! - **Output errors**: file writing, serialization failures
 //!
-//! 所有错误类型实现 `std::error::Error`，支持错误链追溯。
+//! All error types implement `std::error::Error` with proper error chain support.
 //!
-//! 文件: src/error.rs
-//! 作者: WaterRun
-//! 更新于: 2026-01-08
+//! File: src/error.rs
+//! Author: WaterRun
+//! Date: 2026-01-12
 
 #![forbid(unsafe_code)]
 
@@ -21,17 +21,13 @@ use std::io;
 use std::path::PathBuf;
 use thiserror::Error;
 
-// 重导出配置错误，保持 API 一致性
 pub use crate::config::ConfigError;
 
-// ============================================================================
-// 顶层错误类型
-// ============================================================================
-
-/// tree++ 全局错误类型
+/// Top-level error type for tree++.
 ///
-/// 聚合所有子模块错误，作为程序主入口的统一错误返回类型。
-/// 支持从各子错误类型自动转换。
+/// Aggregates all sub-module errors as the unified error return type for the
+/// program's main entry point. Supports automatic conversion from all sub-error
+/// types via the `From` trait.
 ///
 /// # Examples
 ///
@@ -47,47 +43,68 @@ pub use crate::config::ConfigError;
 /// let err = example_cli_error().unwrap_err();
 /// assert!(err.to_string().contains("/Z"));
 /// ```
+///
+/// ```
+/// use treepp::error::{TreeppError, ScanError};
+/// use std::path::PathBuf;
+///
+/// let scan_err = ScanError::PathNotFound {
+///     path: PathBuf::from("/missing"),
+/// };
+/// let treepp_err: TreeppError = scan_err.into();
+/// assert!(matches!(treepp_err, TreeppError::Scan(_)));
+/// ```
 #[derive(Debug, Error)]
 pub enum TreeppError {
-    /// CLI 解析错误
+    /// CLI parsing error.
     #[error(transparent)]
     Cli(#[from] CliError),
 
-    /// 配置验证错误
+    /// Configuration validation error.
     #[error(transparent)]
     Config(#[from] ConfigError),
 
-    /// 扫描错误
+    /// Directory scan error.
     #[error(transparent)]
     Scan(#[from] ScanError),
 
-    /// 匹配规则错误
+    /// Pattern matching error.
     #[error(transparent)]
     Match(#[from] MatchError),
 
-    /// 渲染错误
+    /// Rendering error.
     #[error(transparent)]
     Render(#[from] RenderError),
 
-    /// 输出错误
+    /// Output error.
     #[error(transparent)]
     Output(#[from] OutputError),
 }
 
-/// 全局结果类型别名
+/// Result type alias for tree++ operations.
+///
+/// A convenience alias for `Result<T, TreeppError>` used throughout the crate.
+///
+/// # Examples
+///
+/// ```
+/// use treepp::error::TreeppResult;
+///
+/// fn operation() -> TreeppResult<i32> {
+///     Ok(42)
+/// }
+///
+/// assert_eq!(operation().unwrap(), 42);
+/// ```
 pub type TreeppResult<T> = Result<T, TreeppError>;
 
-// ============================================================================
-// CLI 解析错误
-// ============================================================================
-
-/// CLI 参数解析错误
+/// CLI argument parsing errors.
 ///
-/// 表示命令行参数解析阶段产生的错误，包括：
-/// - 未知选项
-/// - 缺少必需参数值
-/// - 参数值格式错误
-/// - 参数冲突
+/// Represents errors that occur during command-line argument parsing, including:
+/// - Unknown options
+/// - Missing required argument values
+/// - Invalid argument value formats
+/// - Option conflicts
 ///
 /// # Examples
 ///
@@ -98,79 +115,85 @@ pub type TreeppResult<T> = Result<T, TreeppError>;
 ///     option: "--level".to_string(),
 /// };
 /// assert!(err.to_string().contains("--level"));
+/// assert!(err.to_string().contains("requires a value"));
+/// ```
+///
+/// ```
+/// use treepp::error::CliError;
+///
+/// let err1 = CliError::UnknownOption { option: "/Z".to_string() };
+/// let err2 = CliError::UnknownOption { option: "/Z".to_string() };
+/// assert_eq!(err1, err2);
 /// ```
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum CliError {
-    /// 未知选项
+    /// Unknown option was provided.
     #[error("Unknown option: {option}")]
     UnknownOption {
-        /// 未识别的选项名
+        /// The unrecognized option name.
         option: String,
     },
 
-    /// 选项缺少必需的参数值
+    /// Option is missing its required value.
     #[error("Option {option} requires a value.")]
     MissingValue {
-        /// 选项名
+        /// The option name.
         option: String,
     },
 
-    /// 参数值格式错误
+    /// Option value has invalid format.
     #[error("Invalid value '{value}' for option {option}: {reason}")]
     InvalidValue {
-        /// 选项名
+        /// The option name.
         option: String,
-        /// 提供的值
+        /// The provided value.
         value: String,
-        /// 错误原因
+        /// The reason for invalidity.
         reason: String,
     },
 
-    /// 选项重复指定
+    /// Option was specified more than once.
     #[error("Option {option} was specified more than once.")]
     DuplicateOption {
-        /// 选项名
+        /// The option name.
         option: String,
     },
 
-    /// 选项之间冲突
+    /// Two options conflict with each other.
     #[error("Option conflict: {opt_a} and {opt_b} cannot be used together.")]
     ConflictingOptions {
-        /// 冲突选项 A
+        /// First conflicting option.
         opt_a: String,
-        /// 冲突选项 B
+        /// Second conflicting option.
         opt_b: String,
     },
 
-    /// 指定了多个路径
+    /// Multiple paths were specified when only one is allowed.
     #[error("Only one path can be specified, but multiple were provided: {paths:?}")]
     MultiplePaths {
-        /// 所有发现的路径
+        /// All discovered paths.
         paths: Vec<String>,
     },
 
-    /// 无法解析的路径参数
+    /// Path argument could not be parsed.
     #[error("Failed to parse path argument: {arg}")]
     InvalidPath {
-        /// 原始参数
+        /// The original argument.
         arg: String,
     },
 
-    /// 底层解析错误
+    /// Generic parsing error.
     #[error("Argument parsing failed: {message}")]
     ParseError {
-        /// 错误消息
+        /// Error message.
         message: String,
     },
 }
 
-// ============================================================================
-// 扫描错误
-// ============================================================================
-
-/// 目录扫描错误
+/// Directory scanning errors.
 ///
-/// 表示目录遍历过程中产生的错误。
+/// Represents errors that occur during directory traversal, including filesystem
+/// access issues, permission problems, and path resolution failures.
 ///
 /// # Examples
 ///
@@ -182,74 +205,94 @@ pub enum CliError {
 ///     path: PathBuf::from("C:\\nonexistent"),
 /// };
 /// assert!(err.to_string().contains("nonexistent"));
+/// assert!(err.to_string().contains("Path not found"));
+/// ```
+///
+/// ```
+/// use std::path::PathBuf;
+/// use treepp::error::ScanError;
+///
+/// let err = ScanError::PermissionDenied {
+///     path: PathBuf::from("/protected"),
+/// };
+/// assert!(err.to_string().contains("Permission denied"));
 /// ```
 #[derive(Debug, Error)]
 pub enum ScanError {
-    /// 路径不存在
+    /// The specified path does not exist.
     #[error("Path not found: {path}")]
     PathNotFound {
-        /// 不存在的路径
+        /// The non-existent path.
         path: PathBuf,
     },
 
-    /// 路径不是目录
+    /// The specified path is not a directory.
     #[error("Path is not a directory: {path}")]
     NotADirectory {
-        /// 非目录路径
+        /// The non-directory path.
         path: PathBuf,
     },
 
-    /// 权限不足
+    /// Permission was denied for the path.
     #[error("Permission denied: {path}")]
     PermissionDenied {
-        /// 无权访问的路径
+        /// The inaccessible path.
         path: PathBuf,
     },
 
-    /// 读取目录失败
+    /// Failed to read directory contents.
     #[error("Failed to read directory: {path}")]
     ReadDirFailed {
-        /// 目录路径
+        /// The directory path.
         path: PathBuf,
-        /// 底层 IO 错误
+        /// The underlying IO error.
         #[source]
         source: io::Error,
     },
 
-    /// 获取元数据失败
+    /// Failed to retrieve file metadata.
     #[error("Failed to retrieve metadata: {path}")]
     MetadataFailed {
-        /// 文件路径
+        /// The file path.
         path: PathBuf,
-        /// 底层 IO 错误
+        /// The underlying IO error.
         #[source]
         source: io::Error,
     },
 
-    /// 路径规范化失败
+    /// Failed to canonicalize path.
     #[error("Failed to canonicalize path: {path}")]
     CanonicalizeFailed {
-        /// 原始路径
+        /// The original path.
         path: PathBuf,
-        /// 底层 IO 错误
+        /// The underlying IO error.
         #[source]
         source: io::Error,
     },
 
-    /// walkdir 遍历错误
+    /// Error during directory walk traversal.
     #[error("Directory walk error: {message}")]
     WalkError {
-        /// 错误消息
+        /// Error message.
         message: String,
-        /// 相关路径（如有）
+        /// Related path, if available.
         path: Option<PathBuf>,
     },
 }
 
 impl ScanError {
-    /// 从 IO 错误和路径创建适当的扫描错误
+    /// Creates an appropriate scan error from an IO error and path.
     ///
-    /// 根据 IO 错误类型自动选择合适的错误变体。
+    /// Automatically selects the appropriate error variant based on the IO error kind.
+    ///
+    /// # Arguments
+    ///
+    /// * `err` - The IO error to convert.
+    /// * `path` - The path associated with the error.
+    ///
+    /// # Returns
+    ///
+    /// A `ScanError` variant appropriate for the IO error kind.
     ///
     /// # Examples
     ///
@@ -260,8 +303,27 @@ impl ScanError {
     ///
     /// let io_err = io::Error::new(ErrorKind::NotFound, "not found");
     /// let scan_err = ScanError::from_io_error(io_err, PathBuf::from("/missing"));
-    ///
     /// assert!(matches!(scan_err, ScanError::PathNotFound { .. }));
+    /// ```
+    ///
+    /// ```
+    /// use std::io::{self, ErrorKind};
+    /// use std::path::PathBuf;
+    /// use treepp::error::ScanError;
+    ///
+    /// let io_err = io::Error::new(ErrorKind::PermissionDenied, "denied");
+    /// let scan_err = ScanError::from_io_error(io_err, PathBuf::from("/protected"));
+    /// assert!(matches!(scan_err, ScanError::PermissionDenied { .. }));
+    /// ```
+    ///
+    /// ```
+    /// use std::io::{self, ErrorKind};
+    /// use std::path::PathBuf;
+    /// use treepp::error::ScanError;
+    ///
+    /// let io_err = io::Error::new(ErrorKind::Other, "other error");
+    /// let scan_err = ScanError::from_io_error(io_err, PathBuf::from("/path"));
+    /// assert!(matches!(scan_err, ScanError::ReadDirFailed { .. }));
     /// ```
     #[must_use]
     pub fn from_io_error(err: io::Error, path: PathBuf) -> Self {
@@ -270,236 +332,6 @@ impl ScanError {
             io::ErrorKind::PermissionDenied => Self::PermissionDenied { path },
             _ => Self::ReadDirFailed { path, source: err },
         }
-    }
-}
-
-// ============================================================================
-// 匹配规则错误
-// ============================================================================
-
-/// 匹配规则错误
-///
-/// 表示模式匹配和 gitignore 规则解析过程中的错误。
-///
-/// # Examples
-///
-/// ```
-/// use treepp::error::MatchError;
-///
-/// let err = MatchError::InvalidPattern {
-///     pattern: "[invalid".to_string(),
-///     reason: "未闭合的字符类".to_string(),
-/// };
-/// assert!(err.to_string().contains("[invalid"));
-/// ```
-#[derive(Debug, Error, Clone, PartialEq, Eq)]
-pub enum MatchError {
-    /// 无效的通配符模式
-    #[error("Invalid pattern '{pattern}': {reason}")]
-    InvalidPattern {
-        /// 无效的模式字符串
-        pattern: String,
-        /// 错误原因
-        reason: String,
-    },
-
-    /// gitignore 文件解析失败
-    #[error("Failed to parse .gitignore: {path}")]
-    GitignoreParseError {
-        /// gitignore 文件路径
-        path: PathBuf,
-        /// 错误详情
-        detail: String,
-    },
-
-    /// gitignore 规则构建失败
-    #[error("Failed to build gitignore rules: {reason}")]
-    GitignoreBuildError {
-        /// 错误原因
-        reason: String,
-    },
-}
-
-impl MatchError {
-    /// 从 glob 模式错误创建
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use treepp::error::MatchError;
-    ///
-    /// let err = MatchError::from_glob_error("[bad", "unclosed bracket");
-    /// assert!(matches!(err, MatchError::InvalidPattern { .. }));
-    /// ```
-    #[must_use]
-    pub fn from_glob_error(pattern: &str, reason: &str) -> Self {
-        Self::InvalidPattern {
-            pattern: pattern.to_string(),
-            reason: reason.to_string(),
-        }
-    }
-}
-
-// ============================================================================
-// 渲染错误
-// ============================================================================
-
-/// 渲染错误
-///
-/// 表示树形结构渲染过程中的错误。
-/// 此类错误较少见，主要用于处理极端情况。
-///
-/// # Examples
-///
-/// ```
-/// use treepp::error::RenderError;
-///
-/// let err = RenderError::FormatError {
-///     context: "日期格式化".to_string(),
-///     detail: "时间戳超出范围".to_string(),
-/// };
-/// assert!(err.to_string().contains("日期格式化"));
-/// ```
-#[derive(Debug, Error, Clone, PartialEq, Eq)]
-pub enum RenderError {
-    /// 格式化错误
-    #[error("Formatting error ({context}): {detail}")]
-    FormatError {
-        /// 错误上下文
-        context: String,
-        /// 错误详情
-        detail: String,
-    },
-
-    /// 编码错误
-    #[error("Encoding error: path contains invalid UTF-8 characters")]
-    InvalidUtf8Path {
-        /// 问题路径（尽可能转换）
-        path_lossy: String,
-    },
-
-    /// Windows 样板信息获取失败
-    #[error("Failed to fetch Windows tree banner: {reason}")]
-    BannerFetchFailed {
-        /// 失败原因
-        reason: String,
-    },
-
-    /// 无效路径（无法提取盘符）
-    #[error("Invalid path '{path}': {reason}")]
-    InvalidPath {
-        /// 路径
-        path: PathBuf,
-        /// 原因
-        reason: String,
-    },
-}
-
-// ============================================================================
-// 输出错误
-// ============================================================================
-
-/// 输出错误
-///
-/// 表示结果输出过程中的错误，包括文件写入和序列化。
-///
-/// # Examples
-///
-/// ```
-/// use std::path::PathBuf;
-/// use treepp::error::OutputError;
-///
-/// let err = OutputError::SerializationFailed {
-///     format: "JSON".to_string(),
-///     reason: "循环引用".to_string(),
-/// };
-/// assert!(err.to_string().contains("JSON"));
-/// ```
-#[derive(Debug, Error)]
-pub enum OutputError {
-    /// 文件创建失败
-    #[error("Failed to create output file: {path}")]
-    FileCreateFailed {
-        /// 目标文件路径
-        path: PathBuf,
-        /// 底层 IO 错误
-        #[source]
-        source: io::Error,
-    },
-
-    /// 文件写入失败
-    #[error("Failed to write file: {path}")]
-    WriteFailed {
-        /// 目标文件路径
-        path: PathBuf,
-        /// 底层 IO 错误
-        #[source]
-        source: io::Error,
-    },
-
-    /// 序列化失败
-    #[error("{format} serialization failed: {reason}")]
-    SerializationFailed {
-        /// 输出格式名称
-        format: String,
-        /// 失败原因
-        reason: String,
-    },
-
-    /// 标准输出写入失败
-    #[error("Failed to write to stdout")]
-    StdoutFailed {
-        /// 底层 IO 错误
-        #[source]
-        source: io::Error,
-    },
-
-    /// 输出路径无效
-    #[error("Invalid output path: {path} ({reason})")]
-    InvalidOutputPath {
-        /// 输出路径
-        path: PathBuf,
-        /// 原因
-        reason: String,
-    },
-}
-
-impl OutputError {
-    /// 创建 JSON 序列化错误
-    #[must_use]
-    pub fn json_error(reason: impl Into<String>) -> Self {
-        Self::SerializationFailed {
-            format: "JSON".to_string(),
-            reason: reason.into(),
-        }
-    }
-
-    /// 创建 YAML 序列化错误
-    #[must_use]
-    pub fn yaml_error(reason: impl Into<String>) -> Self {
-        Self::SerializationFailed {
-            format: "YAML".to_string(),
-            reason: reason.into(),
-        }
-    }
-
-    /// 创建 TOML 序列化错误
-    #[must_use]
-    pub fn toml_error(reason: impl Into<String>) -> Self {
-        Self::SerializationFailed {
-            format: "TOML".to_string(),
-            reason: reason.into(),
-        }
-    }
-}
-
-// ============================================================================
-// 便捷转换实现
-// ============================================================================
-
-impl From<io::Error> for OutputError {
-    fn from(err: io::Error) -> Self {
-        Self::StdoutFailed { source: err }
     }
 }
 
@@ -528,11 +360,106 @@ impl From<walkdir::Error> for ScanError {
     }
 }
 
+/// Pattern matching errors.
+///
+/// Represents errors in pattern matching and gitignore rule parsing, including
+/// invalid glob patterns and gitignore file parsing failures.
+///
+/// # Examples
+///
+/// ```
+/// use treepp::error::MatchError;
+///
+/// let err = MatchError::InvalidPattern {
+///     pattern: "[invalid".to_string(),
+///     reason: "unclosed bracket".to_string(),
+/// };
+/// assert!(err.to_string().contains("[invalid"));
+/// assert!(err.to_string().contains("Invalid pattern"));
+/// ```
+///
+/// ```
+/// use treepp::error::MatchError;
+///
+/// let err1 = MatchError::InvalidPattern {
+///     pattern: "*.txt".to_string(),
+///     reason: "test".to_string(),
+/// };
+/// let err2 = MatchError::InvalidPattern {
+///     pattern: "*.txt".to_string(),
+///     reason: "test".to_string(),
+/// };
+/// assert_eq!(err1, err2);
+/// ```
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum MatchError {
+    /// Invalid glob pattern syntax.
+    #[error("Invalid pattern '{pattern}': {reason}")]
+    InvalidPattern {
+        /// The invalid pattern string.
+        pattern: String,
+        /// The reason for invalidity.
+        reason: String,
+    },
+
+    /// Failed to parse gitignore file.
+    #[error("Failed to parse .gitignore: {path}")]
+    GitignoreParseError {
+        /// The gitignore file path.
+        path: PathBuf,
+        /// Error details.
+        detail: String,
+    },
+
+    /// Failed to build gitignore rules.
+    #[error("Failed to build gitignore rules: {reason}")]
+    GitignoreBuildError {
+        /// The reason for failure.
+        reason: String,
+    },
+}
+
+impl MatchError {
+    /// Creates a `MatchError` from a glob pattern error.
+    ///
+    /// # Arguments
+    ///
+    /// * `pattern` - The invalid pattern string.
+    /// * `reason` - The reason for the error.
+    ///
+    /// # Returns
+    ///
+    /// A `MatchError::InvalidPattern` variant.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use treepp::error::MatchError;
+    ///
+    /// let err = MatchError::from_glob_error("[bad", "unclosed bracket");
+    /// assert!(matches!(err, MatchError::InvalidPattern { .. }));
+    /// ```
+    ///
+    /// ```
+    /// use treepp::error::MatchError;
+    ///
+    /// let err = MatchError::from_glob_error("**[", "syntax error");
+    /// assert!(err.to_string().contains("**["));
+    /// ```
+    #[must_use]
+    pub fn from_glob_error(pattern: &str, reason: &str) -> Self {
+        Self::InvalidPattern {
+            pattern: pattern.to_string(),
+            reason: reason.to_string(),
+        }
+    }
+}
+
 impl From<glob::PatternError> for MatchError {
     fn from(err: glob::PatternError) -> Self {
         Self::InvalidPattern {
             pattern: err.msg.to_string(),
-            reason: format!("位置 {}", err.pos),
+            reason: format!("position {}", err.pos),
         }
     }
 }
@@ -545,13 +472,242 @@ impl From<ignore::Error> for MatchError {
     }
 }
 
-// ============================================================================
-// 辅助函数
-// ============================================================================
-
-/// 将路径转换为可显示字符串
+/// Rendering errors.
 ///
-/// 处理可能包含无效 UTF-8 的路径，使用有损转换确保总能输出。
+/// Represents errors that occur during tree structure rendering. These errors
+/// are relatively rare and primarily handle edge cases.
+///
+/// # Examples
+///
+/// ```
+/// use treepp::error::RenderError;
+///
+/// let err = RenderError::FormatError {
+///     context: "date formatting".to_string(),
+///     detail: "timestamp out of range".to_string(),
+/// };
+/// assert!(err.to_string().contains("date formatting"));
+/// assert!(err.to_string().contains("timestamp out of range"));
+/// ```
+///
+/// ```
+/// use treepp::error::RenderError;
+///
+/// let err = RenderError::InvalidUtf8Path {
+///     path_lossy: "some\u{FFFD}path".to_string(),
+/// };
+/// assert!(err.to_string().contains("invalid UTF-8"));
+/// ```
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum RenderError {
+    /// Formatting error during rendering.
+    #[error("Formatting error ({context}): {detail}")]
+    FormatError {
+        /// Error context.
+        context: String,
+        /// Error details.
+        detail: String,
+    },
+
+    /// Path contains invalid UTF-8 characters.
+    #[error("Encoding error: path contains invalid UTF-8 characters")]
+    InvalidUtf8Path {
+        /// The path with lossy conversion applied.
+        path_lossy: String,
+    },
+
+    /// Failed to fetch Windows tree banner.
+    #[error("Failed to fetch Windows tree banner: {reason}")]
+    BannerFetchFailed {
+        /// The reason for failure.
+        reason: String,
+    },
+
+    /// Invalid path for rendering.
+    #[error("Invalid path '{path}': {reason}")]
+    InvalidPath {
+        /// The path.
+        path: PathBuf,
+        /// The reason.
+        reason: String,
+    },
+}
+
+/// Output errors.
+///
+/// Represents errors that occur during result output, including file writing
+/// and serialization failures.
+///
+/// # Examples
+///
+/// ```
+/// use std::path::PathBuf;
+/// use treepp::error::OutputError;
+///
+/// let err = OutputError::SerializationFailed {
+///     format: "JSON".to_string(),
+///     reason: "circular reference".to_string(),
+/// };
+/// assert!(err.to_string().contains("JSON"));
+/// assert!(err.to_string().contains("circular reference"));
+/// ```
+///
+/// ```
+/// use treepp::error::OutputError;
+///
+/// let err = OutputError::json_error("invalid structure");
+/// assert!(err.to_string().contains("JSON"));
+/// ```
+#[derive(Debug, Error)]
+pub enum OutputError {
+    /// Failed to create output file.
+    #[error("Failed to create output file: {path}")]
+    FileCreateFailed {
+        /// Target file path.
+        path: PathBuf,
+        /// The underlying IO error.
+        #[source]
+        source: io::Error,
+    },
+
+    /// Failed to write to file.
+    #[error("Failed to write file: {path}")]
+    WriteFailed {
+        /// Target file path.
+        path: PathBuf,
+        /// The underlying IO error.
+        #[source]
+        source: io::Error,
+    },
+
+    /// Serialization failed.
+    #[error("{format} serialization failed: {reason}")]
+    SerializationFailed {
+        /// Output format name.
+        format: String,
+        /// Failure reason.
+        reason: String,
+    },
+
+    /// Failed to write to stdout.
+    #[error("Failed to write to stdout")]
+    StdoutFailed {
+        /// The underlying IO error.
+        #[source]
+        source: io::Error,
+    },
+
+    /// Invalid output path.
+    #[error("Invalid output path: {path} ({reason})")]
+    InvalidOutputPath {
+        /// Output path.
+        path: PathBuf,
+        /// The reason.
+        reason: String,
+    },
+}
+
+impl OutputError {
+    /// Creates a JSON serialization error.
+    ///
+    /// # Arguments
+    ///
+    /// * `reason` - The reason for the serialization failure.
+    ///
+    /// # Returns
+    ///
+    /// An `OutputError::SerializationFailed` with format set to "JSON".
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use treepp::error::OutputError;
+    ///
+    /// let err = OutputError::json_error("invalid structure");
+    /// assert!(err.to_string().contains("JSON"));
+    /// assert!(err.to_string().contains("invalid structure"));
+    /// ```
+    #[must_use]
+    pub fn json_error(reason: impl Into<String>) -> Self {
+        Self::SerializationFailed {
+            format: "JSON".to_string(),
+            reason: reason.into(),
+        }
+    }
+
+    /// Creates a YAML serialization error.
+    ///
+    /// # Arguments
+    ///
+    /// * `reason` - The reason for the serialization failure.
+    ///
+    /// # Returns
+    ///
+    /// An `OutputError::SerializationFailed` with format set to "YAML".
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use treepp::error::OutputError;
+    ///
+    /// let err = OutputError::yaml_error("indentation error");
+    /// assert!(err.to_string().contains("YAML"));
+    /// assert!(err.to_string().contains("indentation error"));
+    /// ```
+    #[must_use]
+    pub fn yaml_error(reason: impl Into<String>) -> Self {
+        Self::SerializationFailed {
+            format: "YAML".to_string(),
+            reason: reason.into(),
+        }
+    }
+
+    /// Creates a TOML serialization error.
+    ///
+    /// # Arguments
+    ///
+    /// * `reason` - The reason for the serialization failure.
+    ///
+    /// # Returns
+    ///
+    /// An `OutputError::SerializationFailed` with format set to "TOML".
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use treepp::error::OutputError;
+    ///
+    /// let err = OutputError::toml_error("key-value error");
+    /// assert!(err.to_string().contains("TOML"));
+    /// assert!(err.to_string().contains("key-value error"));
+    /// ```
+    #[must_use]
+    pub fn toml_error(reason: impl Into<String>) -> Self {
+        Self::SerializationFailed {
+            format: "TOML".to_string(),
+            reason: reason.into(),
+        }
+    }
+}
+
+impl From<io::Error> for OutputError {
+    fn from(err: io::Error) -> Self {
+        Self::StdoutFailed { source: err }
+    }
+}
+
+/// Converts a path to a displayable string.
+///
+/// Handles paths that may contain invalid UTF-8 by using lossy conversion,
+/// ensuring output is always possible.
+///
+/// # Arguments
+///
+/// * `path` - The path to convert.
+///
+/// # Returns
+///
+/// A `String` representation of the path.
 ///
 /// # Examples
 ///
@@ -562,14 +718,33 @@ impl From<ignore::Error> for MatchError {
 /// let path = Path::new("C:\\Users\\test");
 /// assert_eq!(path_display(path), "C:\\Users\\test");
 /// ```
+///
+/// ```
+/// use std::path::Path;
+/// use treepp::error::path_display;
+///
+/// let path = Path::new("/home/user/file.txt");
+/// assert!(path_display(path).contains("file.txt"));
+/// ```
 #[must_use]
 pub fn path_display(path: &std::path::Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
-/// 判断错误是否可恢复（可继续处理其他项）
+/// Determines whether a scan error is recoverable.
 ///
-/// 某些扫描错误（如单个文件权限不足）不应中断整个遍历。
+/// Some scan errors (such as permission denied on a single file) should not
+/// interrupt the entire traversal. This function identifies such recoverable
+/// errors.
+///
+/// # Arguments
+///
+/// * `err` - The scan error to check.
+///
+/// # Returns
+///
+/// `true` if the error is recoverable and processing can continue with other
+/// items, `false` otherwise.
 ///
 /// # Examples
 ///
@@ -581,12 +756,26 @@ pub fn path_display(path: &std::path::Path) -> String {
 ///     path: PathBuf::from("/protected"),
 /// };
 /// assert!(is_recoverable(&err));
+/// ```
 ///
-/// let err = ScanError::PathNotFound {
-///     path: PathBuf::from("/root"),
+/// ```
+/// use std::path::PathBuf;
+/// use treepp::error::{ScanError, is_recoverable};
+///
+/// let err = ScanError::NotADirectory {
+///     path: PathBuf::from("/test"),
 /// };
-/// // 根路径不存在通常不可恢复，但此函数仅判断错误类型
-/// assert!(is_recoverable(&err));
+/// assert!(!is_recoverable(&err));
+/// ```
+///
+/// ```
+/// use treepp::error::{ScanError, is_recoverable};
+///
+/// let err = ScanError::WalkError {
+///     message: "test error".to_string(),
+///     path: None,
+/// };
+/// assert!(!is_recoverable(&err));
 /// ```
 #[must_use]
 pub const fn is_recoverable(err: &ScanError) -> bool {
@@ -598,21 +787,13 @@ pub const fn is_recoverable(err: &ScanError) -> bool {
     )
 }
 
-// ============================================================================
-// 单元测试
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::ErrorKind;
 
-    // ------------------------------------------------------------------------
-    // TreeppError 转换测试
-    // ------------------------------------------------------------------------
-
     #[test]
-    fn should_convert_cli_error_to_treepp_error() {
+    fn treepp_error_converts_from_cli_error() {
         let cli_err = CliError::UnknownOption {
             option: "/X".to_string(),
         };
@@ -623,7 +804,7 @@ mod tests {
     }
 
     #[test]
-    fn should_convert_scan_error_to_treepp_error() {
+    fn treepp_error_converts_from_scan_error() {
         let scan_err = ScanError::PathNotFound {
             path: PathBuf::from("/missing"),
         };
@@ -633,7 +814,7 @@ mod tests {
     }
 
     #[test]
-    fn should_convert_match_error_to_treepp_error() {
+    fn treepp_error_converts_from_match_error() {
         let match_err = MatchError::InvalidPattern {
             pattern: "[bad".to_string(),
             reason: "unclosed".to_string(),
@@ -644,7 +825,18 @@ mod tests {
     }
 
     #[test]
-    fn should_convert_output_error_to_treepp_error() {
+    fn treepp_error_converts_from_render_error() {
+        let render_err = RenderError::FormatError {
+            context: "test".to_string(),
+            detail: "detail".to_string(),
+        };
+        let treepp_err: TreeppError = render_err.into();
+
+        assert!(matches!(treepp_err, TreeppError::Render(_)));
+    }
+
+    #[test]
+    fn treepp_error_converts_from_output_error() {
         let output_err = OutputError::SerializationFailed {
             format: "JSON".to_string(),
             reason: "test".to_string(),
@@ -654,12 +846,8 @@ mod tests {
         assert!(matches!(treepp_err, TreeppError::Output(_)));
     }
 
-    // ------------------------------------------------------------------------
-    // CliError 测试
-    // ------------------------------------------------------------------------
-
     #[test]
-    fn should_format_unknown_option_error() {
+    fn cli_error_unknown_option_formats_correctly() {
         let err = CliError::UnknownOption {
             option: "--unknown".to_string(),
         };
@@ -668,7 +856,7 @@ mod tests {
     }
 
     #[test]
-    fn should_format_missing_value_error() {
+    fn cli_error_missing_value_formats_correctly() {
         let err = CliError::MissingValue {
             option: "--level".to_string(),
         };
@@ -677,7 +865,7 @@ mod tests {
     }
 
     #[test]
-    fn should_format_invalid_value_error() {
+    fn cli_error_invalid_value_formats_correctly() {
         let err = CliError::InvalidValue {
             option: "--thread".to_string(),
             value: "abc".to_string(),
@@ -690,7 +878,47 @@ mod tests {
     }
 
     #[test]
-    fn should_compare_cli_errors_for_equality() {
+    fn cli_error_duplicate_option_formats_correctly() {
+        let err = CliError::DuplicateOption {
+            option: "--level".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("--level"));
+        assert!(msg.contains("more than once"));
+    }
+
+    #[test]
+    fn cli_error_conflicting_options_formats_correctly() {
+        let err = CliError::ConflictingOptions {
+            opt_a: "--silent".to_string(),
+            opt_b: "--verbose".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("--silent"));
+        assert!(msg.contains("--verbose"));
+        assert!(msg.contains("cannot be used together"));
+    }
+
+    #[test]
+    fn cli_error_multiple_paths_formats_correctly() {
+        let err = CliError::MultiplePaths {
+            paths: vec!["path1".to_string(), "path2".to_string()],
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("path1"));
+        assert!(msg.contains("path2"));
+    }
+
+    #[test]
+    fn cli_error_parse_error_formats_correctly() {
+        let err = CliError::ParseError {
+            message: "unexpected token".to_string(),
+        };
+        assert!(err.to_string().contains("unexpected token"));
+    }
+
+    #[test]
+    fn cli_errors_compare_equal_when_identical() {
         let err1 = CliError::UnknownOption {
             option: "/Z".to_string(),
         };
@@ -705,12 +933,8 @@ mod tests {
         assert_ne!(err1, err3);
     }
 
-    // ------------------------------------------------------------------------
-    // ScanError 测试
-    // ------------------------------------------------------------------------
-
     #[test]
-    fn should_create_scan_error_from_io_not_found() {
+    fn scan_error_from_io_not_found_creates_path_not_found() {
         let io_err = io::Error::new(ErrorKind::NotFound, "file not found");
         let path = PathBuf::from("/test/path");
         let scan_err = ScanError::from_io_error(io_err, path.clone());
@@ -719,7 +943,7 @@ mod tests {
     }
 
     #[test]
-    fn should_create_scan_error_from_io_permission_denied() {
+    fn scan_error_from_io_permission_denied_creates_permission_denied() {
         let io_err = io::Error::new(ErrorKind::PermissionDenied, "access denied");
         let path = PathBuf::from("/protected");
         let scan_err = ScanError::from_io_error(io_err, path.clone());
@@ -728,7 +952,7 @@ mod tests {
     }
 
     #[test]
-    fn should_create_scan_error_from_io_other() {
+    fn scan_error_from_io_other_creates_read_dir_failed() {
         let io_err = io::Error::new(ErrorKind::Other, "some error");
         let path = PathBuf::from("/some/path");
         let scan_err = ScanError::from_io_error(io_err, path.clone());
@@ -737,7 +961,7 @@ mod tests {
     }
 
     #[test]
-    fn should_format_path_not_found_error() {
+    fn scan_error_path_not_found_formats_correctly() {
         let err = ScanError::PathNotFound {
             path: PathBuf::from("C:\\missing\\dir"),
         };
@@ -747,7 +971,7 @@ mod tests {
     }
 
     #[test]
-    fn should_format_permission_denied_error() {
+    fn scan_error_permission_denied_formats_correctly() {
         let err = ScanError::PermissionDenied {
             path: PathBuf::from("/root/secret"),
         };
@@ -755,12 +979,37 @@ mod tests {
         assert!(msg.contains("Permission denied"));
     }
 
-    // ------------------------------------------------------------------------
-    // MatchError 测试
-    // ------------------------------------------------------------------------
+    #[test]
+    fn scan_error_not_a_directory_formats_correctly() {
+        let err = ScanError::NotADirectory {
+            path: PathBuf::from("/some/file.txt"),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("not a directory"));
+    }
 
     #[test]
-    fn should_create_match_error_from_glob_error() {
+    fn scan_error_canonicalize_failed_formats_correctly() {
+        let err = ScanError::CanonicalizeFailed {
+            path: PathBuf::from("/invalid/../path"),
+            source: io::Error::new(ErrorKind::NotFound, "not found"),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("canonicalize"));
+    }
+
+    #[test]
+    fn scan_error_walk_error_formats_correctly() {
+        let err = ScanError::WalkError {
+            message: "walk failed".to_string(),
+            path: Some(PathBuf::from("/test")),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("walk failed"));
+    }
+
+    #[test]
+    fn match_error_from_glob_error_creates_invalid_pattern() {
         let err = MatchError::from_glob_error("[invalid", "未闭合的括号");
 
         match err {
@@ -768,12 +1017,12 @@ mod tests {
                 assert_eq!(pattern, "[invalid");
                 assert!(reason.contains("未闭合的括号"));
             }
-            _ => panic!("期望 InvalidPattern 变体"),
+            _ => panic!("Expected InvalidPattern variant"),
         }
     }
 
     #[test]
-    fn should_format_invalid_pattern_error() {
+    fn match_error_invalid_pattern_formats_correctly() {
         let err = MatchError::InvalidPattern {
             pattern: "**[".to_string(),
             reason: "语法错误".to_string(),
@@ -784,7 +1033,7 @@ mod tests {
     }
 
     #[test]
-    fn should_format_gitignore_parse_error() {
+    fn match_error_gitignore_parse_error_formats_correctly() {
         let err = MatchError::GitignoreParseError {
             path: PathBuf::from(".gitignore"),
             detail: "第 5 行语法错误".to_string(),
@@ -794,7 +1043,16 @@ mod tests {
     }
 
     #[test]
-    fn should_compare_match_errors_for_equality() {
+    fn match_error_gitignore_build_error_formats_correctly() {
+        let err = MatchError::GitignoreBuildError {
+            reason: "invalid rule".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("invalid rule"));
+    }
+
+    #[test]
+    fn match_errors_compare_equal_when_identical() {
         let err1 = MatchError::InvalidPattern {
             pattern: "*.txt".to_string(),
             reason: "test".to_string(),
@@ -806,12 +1064,8 @@ mod tests {
         assert_eq!(err1, err2);
     }
 
-    // ------------------------------------------------------------------------
-    // RenderError 测试
-    // ------------------------------------------------------------------------
-
     #[test]
-    fn should_format_render_format_error() {
+    fn render_error_format_error_formats_correctly() {
         let err = RenderError::FormatError {
             context: "大小格式化".to_string(),
             detail: "数值溢出".to_string(),
@@ -822,7 +1076,7 @@ mod tests {
     }
 
     #[test]
-    fn should_format_invalid_utf8_path_error() {
+    fn render_error_invalid_utf8_path_formats_correctly() {
         let err = RenderError::InvalidUtf8Path {
             path_lossy: "some\u{FFFD}path".to_string(),
         };
@@ -830,48 +1084,76 @@ mod tests {
         assert!(msg.contains("invalid UTF-8"));
     }
 
-    // ------------------------------------------------------------------------
-    // OutputError 测试
-    // ------------------------------------------------------------------------
+    #[test]
+    fn render_error_banner_fetch_failed_formats_correctly() {
+        let err = RenderError::BannerFetchFailed {
+            reason: "command failed".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("command failed"));
+    }
 
     #[test]
-    fn should_create_json_error() {
+    fn render_error_invalid_path_formats_correctly() {
+        let err = RenderError::InvalidPath {
+            path: PathBuf::from("/bad/path"),
+            reason: "missing drive letter".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("missing drive letter"));
+    }
+
+    #[test]
+    fn render_errors_compare_equal_when_identical() {
+        let err1 = RenderError::FormatError {
+            context: "test".to_string(),
+            detail: "detail".to_string(),
+        };
+        let err2 = RenderError::FormatError {
+            context: "test".to_string(),
+            detail: "detail".to_string(),
+        };
+        assert_eq!(err1, err2);
+    }
+
+    #[test]
+    fn output_error_json_error_creates_correct_variant() {
         let err = OutputError::json_error("无效结构");
         match err {
             OutputError::SerializationFailed { format, reason } => {
                 assert_eq!(format, "JSON");
                 assert!(reason.contains("无效结构"));
             }
-            _ => panic!("期望 SerializationFailed 变体"),
+            _ => panic!("Expected SerializationFailed variant"),
         }
     }
 
     #[test]
-    fn should_create_yaml_error() {
+    fn output_error_yaml_error_creates_correct_variant() {
         let err = OutputError::yaml_error("缩进错误");
         match err {
             OutputError::SerializationFailed { format, reason } => {
                 assert_eq!(format, "YAML");
                 assert!(reason.contains("缩进错误"));
             }
-            _ => panic!("期望 SerializationFailed 变体"),
+            _ => panic!("Expected SerializationFailed variant"),
         }
     }
 
     #[test]
-    fn should_create_toml_error() {
+    fn output_error_toml_error_creates_correct_variant() {
         let err = OutputError::toml_error("键值对错误");
         match err {
             OutputError::SerializationFailed { format, reason } => {
                 assert_eq!(format, "TOML");
                 assert!(reason.contains("键值对错误"));
             }
-            _ => panic!("期望 SerializationFailed 变体"),
+            _ => panic!("Expected SerializationFailed variant"),
         }
     }
 
     #[test]
-    fn should_convert_io_error_to_output_error() {
+    fn output_error_converts_from_io_error() {
         let io_err = io::Error::new(ErrorKind::BrokenPipe, "pipe broken");
         let output_err: OutputError = io_err.into();
 
@@ -879,7 +1161,7 @@ mod tests {
     }
 
     #[test]
-    fn should_format_file_create_failed_error() {
+    fn output_error_file_create_failed_formats_correctly() {
         let err = OutputError::FileCreateFailed {
             path: PathBuf::from("output.json"),
             source: io::Error::new(ErrorKind::PermissionDenied, "denied"),
@@ -889,12 +1171,29 @@ mod tests {
         assert!(msg.contains("Failed to create output file:"));
     }
 
-    // ------------------------------------------------------------------------
-    // 辅助函数测试
-    // ------------------------------------------------------------------------
+    #[test]
+    fn output_error_write_failed_formats_correctly() {
+        let err = OutputError::WriteFailed {
+            path: PathBuf::from("output.txt"),
+            source: io::Error::new(ErrorKind::Other, "disk full"),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("output.txt"));
+        assert!(msg.contains("Failed to write file"));
+    }
 
     #[test]
-    fn should_display_path_correctly() {
+    fn output_error_invalid_output_path_formats_correctly() {
+        let err = OutputError::InvalidOutputPath {
+            path: PathBuf::from("/invalid/path"),
+            reason: "directory does not exist".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("Invalid output path"));
+    }
+
+    #[test]
+    fn path_display_handles_valid_utf8_path() {
         let path = std::path::Path::new("C:\\Users\\test\\file.txt");
         let display = path_display(path);
         assert!(display.contains("test"));
@@ -902,7 +1201,14 @@ mod tests {
     }
 
     #[test]
-    fn should_identify_recoverable_permission_denied() {
+    fn path_display_handles_simple_path() {
+        let path = std::path::Path::new("/home/user");
+        let display = path_display(path);
+        assert!(display.contains("user"));
+    }
+
+    #[test]
+    fn is_recoverable_returns_true_for_permission_denied() {
         let err = ScanError::PermissionDenied {
             path: PathBuf::from("/test"),
         };
@@ -910,7 +1216,7 @@ mod tests {
     }
 
     #[test]
-    fn should_identify_recoverable_metadata_failed() {
+    fn is_recoverable_returns_true_for_metadata_failed() {
         let err = ScanError::MetadataFailed {
             path: PathBuf::from("/test"),
             source: io::Error::new(ErrorKind::Other, "test"),
@@ -919,7 +1225,7 @@ mod tests {
     }
 
     #[test]
-    fn should_identify_recoverable_path_not_found() {
+    fn is_recoverable_returns_true_for_path_not_found() {
         let err = ScanError::PathNotFound {
             path: PathBuf::from("/test"),
         };
@@ -927,7 +1233,7 @@ mod tests {
     }
 
     #[test]
-    fn should_not_identify_not_a_directory_as_recoverable() {
+    fn is_recoverable_returns_false_for_not_a_directory() {
         let err = ScanError::NotADirectory {
             path: PathBuf::from("/test"),
         };
@@ -935,7 +1241,7 @@ mod tests {
     }
 
     #[test]
-    fn should_not_identify_walk_error_as_recoverable() {
+    fn is_recoverable_returns_false_for_walk_error() {
         let err = ScanError::WalkError {
             message: "test error".to_string(),
             path: None,
@@ -943,25 +1249,62 @@ mod tests {
         assert!(!is_recoverable(&err));
     }
 
-    // ------------------------------------------------------------------------
-    // 错误链测试
-    // ------------------------------------------------------------------------
+    #[test]
+    fn is_recoverable_returns_false_for_read_dir_failed() {
+        let err = ScanError::ReadDirFailed {
+            path: PathBuf::from("/test"),
+            source: io::Error::new(ErrorKind::Other, "test"),
+        };
+        assert!(!is_recoverable(&err));
+    }
 
     #[test]
-    fn should_preserve_source_in_read_dir_failed() {
+    fn is_recoverable_returns_false_for_canonicalize_failed() {
+        let err = ScanError::CanonicalizeFailed {
+            path: PathBuf::from("/test"),
+            source: io::Error::new(ErrorKind::Other, "test"),
+        };
+        assert!(!is_recoverable(&err));
+    }
+
+    #[test]
+    fn scan_error_read_dir_failed_preserves_source() {
         let io_err = io::Error::new(ErrorKind::Other, "underlying error");
         let err = ScanError::ReadDirFailed {
             path: PathBuf::from("/test"),
             source: io_err,
         };
 
-        // 验证 source 可访问
         let source = std::error::Error::source(&err);
         assert!(source.is_some());
     }
 
     #[test]
-    fn should_preserve_source_in_file_create_failed() {
+    fn scan_error_metadata_failed_preserves_source() {
+        let io_err = io::Error::new(ErrorKind::Other, "metadata error");
+        let err = ScanError::MetadataFailed {
+            path: PathBuf::from("/test"),
+            source: io_err,
+        };
+
+        let source = std::error::Error::source(&err);
+        assert!(source.is_some());
+    }
+
+    #[test]
+    fn scan_error_canonicalize_failed_preserves_source() {
+        let io_err = io::Error::new(ErrorKind::NotFound, "not found");
+        let err = ScanError::CanonicalizeFailed {
+            path: PathBuf::from("/test"),
+            source: io_err,
+        };
+
+        let source = std::error::Error::source(&err);
+        assert!(source.is_some());
+    }
+
+    #[test]
+    fn output_error_file_create_failed_preserves_source() {
         let io_err = io::Error::new(ErrorKind::PermissionDenied, "no permission");
         let err = OutputError::FileCreateFailed {
             path: PathBuf::from("test.txt"),
@@ -970,5 +1313,106 @@ mod tests {
 
         let source = std::error::Error::source(&err);
         assert!(source.is_some());
+    }
+
+    #[test]
+    fn output_error_write_failed_preserves_source() {
+        let io_err = io::Error::new(ErrorKind::Other, "write error");
+        let err = OutputError::WriteFailed {
+            path: PathBuf::from("test.txt"),
+            source: io_err,
+        };
+
+        let source = std::error::Error::source(&err);
+        assert!(source.is_some());
+    }
+
+    #[test]
+    fn output_error_stdout_failed_preserves_source() {
+        let io_err = io::Error::new(ErrorKind::BrokenPipe, "broken");
+        let err = OutputError::StdoutFailed { source: io_err };
+
+        let source = std::error::Error::source(&err);
+        assert!(source.is_some());
+    }
+
+    #[test]
+    fn treepp_result_type_alias_works_correctly() {
+        fn test_ok() -> TreeppResult<i32> {
+            Ok(42)
+        }
+
+        fn test_err() -> TreeppResult<i32> {
+            Err(CliError::UnknownOption {
+                option: "/X".to_string(),
+            }
+                .into())
+        }
+
+        assert_eq!(test_ok().unwrap(), 42);
+        assert!(test_err().is_err());
+    }
+
+    #[test]
+    fn cli_error_invalid_path_formats_correctly() {
+        let err = CliError::InvalidPath {
+            arg: ":::invalid:::".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains(":::invalid:::"));
+    }
+
+    #[test]
+    fn cli_error_clone_produces_equal_value() {
+        let err = CliError::UnknownOption {
+            option: "/Z".to_string(),
+        };
+        let cloned = err.clone();
+        assert_eq!(err, cloned);
+    }
+
+    #[test]
+    fn match_error_clone_produces_equal_value() {
+        let err = MatchError::InvalidPattern {
+            pattern: "*.txt".to_string(),
+            reason: "test".to_string(),
+        };
+        let cloned = err.clone();
+        assert_eq!(err, cloned);
+    }
+
+    #[test]
+    fn render_error_clone_produces_equal_value() {
+        let err = RenderError::FormatError {
+            context: "test".to_string(),
+            detail: "detail".to_string(),
+        };
+        let cloned = err.clone();
+        assert_eq!(err, cloned);
+    }
+
+    #[test]
+    fn scan_error_walk_error_with_none_path_formats_correctly() {
+        let err = ScanError::WalkError {
+            message: "generic walk error".to_string(),
+            path: None,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("generic walk error"));
+    }
+
+    #[test]
+    fn scan_error_walk_error_with_some_path_stores_path() {
+        let err = ScanError::WalkError {
+            message: "walk error".to_string(),
+            path: Some(PathBuf::from("/some/path")),
+        };
+        match err {
+            ScanError::WalkError { path, .. } => {
+                assert!(path.is_some());
+                assert_eq!(path.unwrap(), PathBuf::from("/some/path"));
+            }
+            _ => panic!("Expected WalkError variant"),
+        }
     }
 }

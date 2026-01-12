@@ -1,15 +1,15 @@
-//! 输出模块：多格式输出与文件写入
+//! Output module: multi-format output and file writing.
 //!
-//! 本模块负责将渲染结果输出到不同目标，支持：
+//! This module handles outputting render results to various destinations:
 //!
-//! - **输出策略**：stdout、写文件、silent（仅写文件不写 stdout）
-//! - **多格式输出**：txt/json/yml/toml（序列化 schema 固定）
-//! - **文件写入策略**：覆盖写入，确保原子性
-//! - **流式输出**：`StreamWriter` 支持即时 flush 的流式写入
+//! - **Output strategies**: stdout, file writing, silent mode (file only)
+//! - **Multiple formats**: txt/json/yml/toml with fixed serialization schema
+//! - **File writing**: overwrite strategy with atomic semantics
+//! - **Streaming output**: `StreamWriter` for immediate flush streaming
 //!
-//! 文件: src/output.rs
-//! 作者: WaterRun
-//! 更新于: 2026-01-08
+//! File: src/output.rs
+//! Author: WaterRun
+//! Date: 2026-01-12
 
 #![forbid(unsafe_code)]
 
@@ -25,19 +25,138 @@ use crate::render::RenderResult;
 use crate::scan::{EntryKind, TreeNode};
 
 // ============================================================================
-// 序列化结构
+// Streaming Writer
 // ============================================================================
 
-/// 将 TreeNode 转换为 JSON Value（简洁的树形结构）
+/// A streaming writer that flushes immediately after each write.
 ///
-/// 输出格式：
-/// - 目录：对象，键为子项名称
-/// - 文件：对象，包含请求的元数据，无子项时为空对象
+/// Wraps stdout with automatic flushing to provide real-time scrolling output.
+///
+/// # Examples
+///
+/// ```no_run
+/// use treepp::output::StreamWriter;
+///
+/// let stdout = std::io::stdout();
+/// let mut writer = StreamWriter::new(&stdout);
+/// writer.write_line("├─src").unwrap();
+/// writer.write("Header content\n").unwrap();
+/// ```
+pub struct StreamWriter<'a> {
+    handle: StdoutLock<'a>,
+}
+
+impl<'a> StreamWriter<'a> {
+    /// Creates a new streaming writer from a stdout reference.
+    ///
+    /// # Arguments
+    ///
+    /// * `stdout` - Reference to the standard output handle.
+    ///
+    /// # Returns
+    ///
+    /// A new `StreamWriter` instance with the stdout locked.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use treepp::output::StreamWriter;
+    ///
+    /// let stdout = std::io::stdout();
+    /// let writer = StreamWriter::new(&stdout);
+    /// ```
+    #[must_use]
+    pub fn new(stdout: &'a Stdout) -> Self {
+        Self {
+            handle: stdout.lock(),
+        }
+    }
+
+    /// Writes a line and flushes immediately.
+    ///
+    /// Automatically appends a newline character.
+    ///
+    /// # Arguments
+    ///
+    /// * `line` - The line content to write (without trailing newline).
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns `OutputError::StdoutFailed` if writing or flushing fails.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use treepp::output::StreamWriter;
+    ///
+    /// let stdout = std::io::stdout();
+    /// let mut writer = StreamWriter::new(&stdout);
+    /// writer.write_line("├─src").unwrap();
+    /// writer.write_line("└─tests").unwrap();
+    /// ```
+    pub fn write_line(&mut self, line: &str) -> Result<(), OutputError> {
+        writeln!(self.handle, "{}", line)?;
+        self.handle.flush()?;
+        Ok(())
+    }
+
+    /// Writes a string without appending a newline and flushes.
+    ///
+    /// # Arguments
+    ///
+    /// * `content` - The content to write.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns `OutputError::StdoutFailed` if writing or flushing fails.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use treepp::output::StreamWriter;
+    ///
+    /// let stdout = std::io::stdout();
+    /// let mut writer = StreamWriter::new(&stdout);
+    /// writer.write("Header: ").unwrap();
+    /// writer.write("value\n").unwrap();
+    /// ```
+    pub fn write(&mut self, content: &str) -> Result<(), OutputError> {
+        write!(self.handle, "{}", content)?;
+        self.handle.flush()?;
+        Ok(())
+    }
+}
+
+// ============================================================================
+// Serialization Functions
+// ============================================================================
+
+/// Converts a `TreeNode` to a JSON `Value` with a concise tree structure.
+///
+/// The output format is:
+/// - Directory: object with child names as keys
+/// - File: object containing requested metadata, empty if no metadata
+///
+/// # Arguments
+///
+/// * `node` - The tree node to convert.
+/// * `config` - Configuration controlling which metadata to include.
+///
+/// # Returns
+///
+/// A `serde_json::Value` representing the node.
 fn to_json_value(node: &TreeNode, config: &Config) -> Value {
     let is_file = node.kind == EntryKind::File;
 
     if is_file {
-        // 文件：返回包含元数据的对象
         let mut obj = Map::new();
 
         if config.render.show_size {
@@ -68,17 +187,14 @@ fn to_json_value(node: &TreeNode, config: &Config) -> Value {
 
         Value::Object(obj)
     } else {
-        // 目录：返回包含子项的对象
         let mut obj = Map::new();
 
-        // 添加目录自身的元数据（如果需要）
         if config.render.show_disk_usage {
             if let Some(usage) = node.disk_usage {
                 obj.insert("_disk_usage".to_string(), Value::Number(usage.into()));
             }
         }
 
-        // 添加子项
         let children: Vec<&TreeNode> = node
             .children
             .iter()
@@ -98,79 +214,19 @@ fn to_json_value(node: &TreeNode, config: &Config) -> Value {
     }
 }
 
-// ============================================================================
-// 格式化输出
-// ============================================================================
-
-/// 序列化为 JSON 格式
+/// Converts a JSON `Value` to a TOML `Value`.
 ///
-/// # 参数
+/// # Arguments
 ///
-/// * `node` - 树节点
-/// * `config` - 输出配置
+/// * `value` - The JSON value to convert.
 ///
-/// # 返回值
+/// # Returns
 ///
-/// 成功返回 JSON 字符串，失败返回错误。
+/// The equivalent TOML value.
 ///
 /// # Errors
 ///
-/// 返回 `OutputError::SerializationFailed` 如果序列化失败。
-///
-/// # Examples
-///
-/// ```no_run
-/// use std::path::PathBuf;
-/// use treepp::config::Config;
-/// use treepp::scan::{TreeNode, EntryKind, EntryMetadata};
-/// use treepp::output::serialize_json;
-///
-/// let node = TreeNode::new(PathBuf::from("."), EntryKind::Directory, EntryMetadata::default());
-/// let config = Config::default();
-/// let json = serialize_json(&node, &config).unwrap();
-/// assert!(json.contains("\"name\""));
-/// ```
-/// 序列化为 JSON 格式
-pub fn serialize_json(node: &TreeNode, config: &Config) -> Result<String, OutputError> {
-    let value = to_json_value(node, config);
-    serde_json::to_string_pretty(&value).map_err(|e| OutputError::json_error(e.to_string()))
-}
-
-/// 序列化为 YAML 格式
-///
-/// # 参数
-///
-/// * `node` - 树节点
-/// * `config` - 输出配置
-///
-/// # 返回值
-///
-/// 成功返回 YAML 字符串，失败返回错误。
-///
-/// # Errors
-///
-/// 返回 `OutputError::SerializationFailed` 如果序列化失败。
-///
-/// # Examples
-///
-/// ```no_run
-/// use std::path::PathBuf;
-/// use treepp::config::Config;
-/// use treepp::scan::{TreeNode, EntryKind, EntryMetadata};
-/// use treepp::output::serialize_yaml;
-///
-/// let node = TreeNode::new(PathBuf::from("."), EntryKind::Directory, EntryMetadata::default());
-/// let config = Config::default();
-/// let yaml = serialize_yaml(&node, &config).unwrap();
-/// assert!(yaml.contains("name:"));
-/// ```
-/// 序列化为 YAML 格式
-pub fn serialize_yaml(node: &TreeNode, config: &Config) -> Result<String, OutputError> {
-    let value = to_json_value(node, config);
-    serde_yaml::to_string(&value).map_err(|e| OutputError::yaml_error(e.to_string()))
-}
-
-/// 将 JSON Value 转换为 TOML Value
+/// Returns `OutputError` if conversion fails (currently infallible for valid JSON).
 fn json_to_toml(value: &Value) -> Result<toml::Value, OutputError> {
     match value {
         Value::Null => Ok(toml::Value::String("null".to_string())),
@@ -199,20 +255,103 @@ fn json_to_toml(value: &Value) -> Result<toml::Value, OutputError> {
     }
 }
 
-/// 序列化为 TOML 格式
+/// Serializes a tree node to JSON format.
 ///
-/// # 参数
+/// Produces a pretty-printed JSON string with the tree structure where
+/// directory and file names are used as object keys.
 ///
-/// * `node` - 树节点
-/// * `config` - 输出配置
+/// # Arguments
 ///
-/// # 返回值
+/// * `node` - The root tree node to serialize.
+/// * `config` - Configuration controlling serialization options.
 ///
-/// 成功返回 TOML 字符串，失败返回错误。
+/// # Returns
+///
+/// A pretty-printed JSON string on success.
 ///
 /// # Errors
 ///
-/// 返回 `OutputError::SerializationFailed` 如果序列化失败。
+/// Returns `OutputError::SerializationFailed` if JSON serialization fails.
+///
+/// # Examples
+///
+/// ```no_run
+/// use std::path::PathBuf;
+/// use treepp::config::Config;
+/// use treepp::scan::{TreeNode, EntryKind, EntryMetadata};
+/// use treepp::output::serialize_json;
+///
+/// let node = TreeNode::new(
+///     PathBuf::from("."),
+///     EntryKind::Directory,
+///     EntryMetadata::default(),
+/// );
+/// let config = Config::default();
+/// let json = serialize_json(&node, &config).unwrap();
+/// assert!(json.starts_with("{"));
+/// ```
+pub fn serialize_json(node: &TreeNode, config: &Config) -> Result<String, OutputError> {
+    let value = to_json_value(node, config);
+    serde_json::to_string_pretty(&value).map_err(|e| OutputError::json_error(e.to_string()))
+}
+
+/// Serializes a tree node to YAML format.
+///
+/// Produces a YAML string with the tree structure where directory and
+/// file names are used as mapping keys.
+///
+/// # Arguments
+///
+/// * `node` - The root tree node to serialize.
+/// * `config` - Configuration controlling serialization options.
+///
+/// # Returns
+///
+/// A YAML string on success.
+///
+/// # Errors
+///
+/// Returns `OutputError::SerializationFailed` if YAML serialization fails.
+///
+/// # Examples
+///
+/// ```no_run
+/// use std::path::PathBuf;
+/// use treepp::config::Config;
+/// use treepp::scan::{TreeNode, EntryKind, EntryMetadata};
+/// use treepp::output::serialize_yaml;
+///
+/// let node = TreeNode::new(
+///     PathBuf::from("."),
+///     EntryKind::Directory,
+///     EntryMetadata::default(),
+/// );
+/// let config = Config::default();
+/// let yaml = serialize_yaml(&node, &config).unwrap();
+/// assert!(!yaml.is_empty());
+/// ```
+pub fn serialize_yaml(node: &TreeNode, config: &Config) -> Result<String, OutputError> {
+    let value = to_json_value(node, config);
+    serde_yaml::to_string(&value).map_err(|e| OutputError::yaml_error(e.to_string()))
+}
+
+/// Serializes a tree node to TOML format.
+///
+/// Produces a TOML string with the tree structure. Since TOML requires
+/// a top-level table, the root node's contents are serialized directly.
+///
+/// # Arguments
+///
+/// * `node` - The root tree node to serialize.
+/// * `config` - Configuration controlling serialization options.
+///
+/// # Returns
+///
+/// A pretty-printed TOML string on success.
+///
+/// # Errors
+///
+/// Returns `OutputError::SerializationFailed` if TOML serialization fails.
 ///
 /// # Examples
 ///
@@ -222,122 +361,42 @@ fn json_to_toml(value: &Value) -> Result<toml::Value, OutputError> {
 /// use treepp::scan::{TreeNode, EntryKind, EntryMetadata};
 /// use treepp::output::serialize_toml;
 ///
-/// let node = TreeNode::new(PathBuf::from("."), EntryKind::Directory, EntryMetadata::default());
+/// let node = TreeNode::new(
+///     PathBuf::from("."),
+///     EntryKind::Directory,
+///     EntryMetadata::default(),
+/// );
 /// let config = Config::default();
-/// let toml = serialize_toml(&node, &config).unwrap();
-/// assert!(toml.contains("[tree]"));
+/// let toml_str = serialize_toml(&node, &config).unwrap();
+/// assert!(!toml_str.is_empty());
 /// ```
-/// 序列化为 TOML 格式
 pub fn serialize_toml(node: &TreeNode, config: &Config) -> Result<String, OutputError> {
-    // TOML 需要顶层为表，所以用根节点名称作为键
     let value = to_json_value(node, config);
-
-    // 转换为 TOML 兼容格式
     let toml_value = json_to_toml(&value)?;
     toml::to_string_pretty(&toml_value).map_err(|e| OutputError::toml_error(e.to_string()))
 }
 
 // ============================================================================
-// 流式输出写入器
+// Output Functions
 // ============================================================================
 
-/// 流式输出写入器
+/// Writes content to standard output.
 ///
-/// 封装 stdout 输出，每次写入后立即 flush，实现实时滚动效果。
+/// Respects the silent mode configuration; if silent is enabled,
+/// no output is written.
 ///
-/// # Examples
+/// # Arguments
 ///
-/// ```no_run
-/// use treepp::output::StreamWriter;
+/// * `content` - The content to write.
+/// * `config` - Configuration containing the silent mode flag.
 ///
-/// let stdout = std::io::stdout();
-/// let mut writer = StreamWriter::new(&stdout);
-/// writer.write_line("Hello, World!").unwrap();
-/// ```
-pub struct StreamWriter<'a> {
-    /// stdout 锁定句柄
-    handle: StdoutLock<'a>,
-}
-
-impl<'a> StreamWriter<'a> {
-    /// 创建新的流式写入器
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// use treepp::output::StreamWriter;
-    ///
-    /// let stdout = std::io::stdout();
-    /// let writer = StreamWriter::new(&stdout);
-    /// ```
-    #[must_use]
-    pub fn new(stdout: &'a Stdout) -> Self {
-        Self {
-            handle: stdout.lock(),
-        }
-    }
-
-    /// 写入一行并立即 flush
-    ///
-    /// 自动追加换行符。
-    ///
-    /// # Errors
-    ///
-    /// 返回 `OutputError::StdoutFailed` 如果写入失败。
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// use treepp::output::StreamWriter;
-    ///
-    /// let stdout = std::io::stdout();
-    /// let mut writer = StreamWriter::new(&stdout);
-    /// writer.write_line("├─src").unwrap();
-    /// ```
-    pub fn write_line(&mut self, line: &str) -> Result<(), OutputError> {
-        writeln!(self.handle, "{}", line)?;
-        self.handle.flush()?;
-        Ok(())
-    }
-
-    /// 写入字符串（不换行）并 flush
-    ///
-    /// # Errors
-    ///
-    /// 返回 `OutputError::StdoutFailed` 如果写入失败。
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// use treepp::output::StreamWriter;
-    ///
-    /// let stdout = std::io::stdout();
-    /// let mut writer = StreamWriter::new(&stdout);
-    /// writer.write("Header content\n").unwrap();
-    /// ```
-    pub fn write(&mut self, content: &str) -> Result<(), OutputError> {
-        write!(self.handle, "{}", content)?;
-        self.handle.flush()?;
-        Ok(())
-    }
-}
-
-// ============================================================================
-// 输出目标
-// ============================================================================
-
-/// 输出到标准输出
+/// # Returns
 ///
-/// 如果配置了静默模式则不输出。
-///
-/// # 参数
-///
-/// * `content` - 输出内容
-/// * `config` - 输出配置
+/// `Ok(())` on success or if silent mode is enabled.
 ///
 /// # Errors
 ///
-/// 返回 `OutputError::StdoutFailed` 如果写入失败。
+/// Returns `OutputError::StdoutFailed` if writing to stdout fails.
 ///
 /// # Examples
 ///
@@ -360,20 +419,24 @@ pub fn write_stdout(content: &str, config: &Config) -> Result<(), OutputError> {
     Ok(())
 }
 
-/// 写入文件
+/// Writes content to a file.
 ///
-/// 使用覆盖写入策略，确保文件内容完整写入。
+/// Uses overwrite strategy and creates parent directories if needed.
+/// The write is buffered for performance.
 ///
-/// # 参数
+/// # Arguments
 ///
-/// * `content` - 输出内容
-/// * `path` - 目标文件路径
+/// * `content` - The content to write.
+/// * `path` - The destination file path.
+///
+/// # Returns
+///
+/// `Ok(())` on success.
 ///
 /// # Errors
 ///
-/// 返回 `OutputError` 如果：
-/// - 无法创建文件
-/// - 写入失败
+/// Returns `OutputError::FileCreateFailed` if the file cannot be created,
+/// or `OutputError::WriteFailed` if writing fails.
 ///
 /// # Examples
 ///
@@ -384,16 +447,16 @@ pub fn write_stdout(content: &str, config: &Config) -> Result<(), OutputError> {
 /// write_file("content", Path::new("output.txt")).unwrap();
 /// ```
 pub fn write_file(content: &str, path: &Path) -> Result<(), OutputError> {
-    // 确保父目录存在
     if let Some(parent) = path.parent()
-        && !parent.as_os_str().is_empty() && !parent.exists() {
+        && !parent.as_os_str().is_empty()
+        && !parent.exists()
+    {
         fs::create_dir_all(parent).map_err(|e| OutputError::FileCreateFailed {
             path: path.to_path_buf(),
             source: e,
         })?;
     }
 
-    // 创建文件并写入
     let file = File::create(path).map_err(|e| OutputError::FileCreateFailed {
         path: path.to_path_buf(),
         source: e,
@@ -415,18 +478,22 @@ pub fn write_file(content: &str, path: &Path) -> Result<(), OutputError> {
     Ok(())
 }
 
-/// 输出文件写入提示信息
+/// Prints a file output notice to stdout.
 ///
-/// 在非静默模式下，向标准输出打印文件写入提示。
+/// Displays the path where output was written, unless silent mode is enabled.
 ///
-/// # 参数
+/// # Arguments
 ///
-/// * `path` - 输出文件路径
-/// * `config` - 输出配置
+/// * `path` - The output file path to display.
+/// * `config` - Configuration containing the silent mode flag.
+///
+/// # Returns
+///
+/// `Ok(())` on success or if silent mode is enabled.
 ///
 /// # Errors
 ///
-/// 返回 `OutputError::StdoutFailed` 如果写入失败。
+/// Returns `OutputError::StdoutFailed` if writing to stdout fails.
 ///
 /// # Examples
 ///
@@ -452,33 +519,30 @@ pub fn print_file_notice(path: &Path, config: &Config) -> Result<(), OutputError
 }
 
 // ============================================================================
-// 统一输出接口
+// Unified Output Interface
 // ============================================================================
 
-/// 执行输出操作
+/// Executes the complete output workflow.
 ///
-/// 根据配置执行完整的输出流程：
-/// 1. 根据格式选择渲染文本或序列化结构
-/// 2. 输出到 stdout（除非静默）
-/// 3. 写入文件（如果配置了输出路径）
-/// 4. 打印文件写入提示（如果写入了文件且非静默）
+/// Performs the full output process based on configuration:
+/// 1. Selects rendered text or serializes structure based on format
+/// 2. Outputs to stdout (unless silent)
+/// 3. Writes to file (if output path is configured)
+/// 4. Prints file notice (if file was written and not silent)
 ///
-/// # 参数
+/// # Arguments
 ///
-/// * `render_result` - 渲染结果（用于 TXT 格式）
-/// * `tree` - 树节点（用于结构化格式）
-/// * `config` - 完整配置
+/// * `render_result` - The render result (used for TXT format).
+/// * `tree` - The tree node (used for structured formats).
+/// * `config` - The complete configuration.
 ///
-/// # 返回值
+/// # Returns
 ///
-/// 成功返回 `()`，失败返回 `OutputError`。
+/// `Ok(())` on success.
 ///
 /// # Errors
 ///
-/// 返回 `OutputError` 如果：
-/// - 序列化失败
-/// - 文件写入失败
-/// - 标准输出写入失败
+/// Returns `OutputError` if serialization, file writing, or stdout fails.
 ///
 /// # Examples
 ///
@@ -490,16 +554,15 @@ pub fn print_file_notice(path: &Path, config: &Config) -> Result<(), OutputError
 /// use treepp::output::execute_output;
 ///
 /// let config = Config::with_root(PathBuf::from(".")).validate().unwrap();
-/// let stats = scan(&config).expect("扫描失败");
+/// let stats = scan(&config).expect("Scan failed");
 /// let result = render(&stats, &config);
-/// execute_output(&result, &stats.tree, &config).expect("输出失败");
+/// execute_output(&result, &stats.tree, &config).expect("Output failed");
 /// ```
 pub fn execute_output(
     render_result: &RenderResult,
     tree: &TreeNode,
     config: &Config,
 ) -> Result<(), OutputError> {
-    // 根据格式生成输出内容
     let content = match config.output.format {
         OutputFormat::Txt => render_result.content.clone(),
         OutputFormat::Json => serialize_json(tree, config)?,
@@ -507,10 +570,8 @@ pub fn execute_output(
         OutputFormat::Toml => serialize_toml(tree, config)?,
     };
 
-    // 输出到 stdout
     write_stdout(&content, config)?;
 
-    // 写入文件（如果配置了输出路径）
     if let Some(ref output_path) = config.output.output_path {
         write_file(&content, output_path)?;
         print_file_notice(output_path, config)?;
@@ -519,20 +580,24 @@ pub fn execute_output(
     Ok(())
 }
 
-/// 仅输出到文件（跳过 stdout）
+/// Writes output to a file only, skipping stdout.
 ///
-/// 用于明确需要跳过标准输出的场景。
+/// Used when stdout output should be explicitly bypassed.
 ///
-/// # 参数
+/// # Arguments
 ///
-/// * `render_result` - 渲染结果（用于 TXT 格式）
-/// * `tree` - 树节点（用于结构化格式）
-/// * `config` - 完整配置
-/// * `path` - 输出文件路径
+/// * `render_result` - The render result (used for TXT format).
+/// * `tree` - The tree node (used for structured formats).
+/// * `config` - The complete configuration.
+/// * `path` - The output file path.
+///
+/// # Returns
+///
+/// `Ok(())` on success.
 ///
 /// # Errors
 ///
-/// 返回 `OutputError` 如果序列化或写入失败。
+/// Returns `OutputError` if serialization or file writing fails.
 ///
 /// # Examples
 ///
@@ -544,7 +609,7 @@ pub fn execute_output(
 /// use treepp::output::write_to_file_only;
 ///
 /// let config = Config::with_root(PathBuf::from(".")).validate().unwrap();
-/// let stats = scan(&config).expect("扫描失败");
+/// let stats = scan(&config).expect("Scan failed");
 /// let result = render(&stats, &config);
 /// write_to_file_only(&result, &stats.tree, &config, &PathBuf::from("tree.txt")).unwrap();
 /// ```
@@ -565,18 +630,24 @@ pub fn write_to_file_only(
 }
 
 // ============================================================================
-// 辅助函数
+// Helper Functions
 // ============================================================================
 
-/// 从文件路径推断输出格式
+/// Infers the output format from a file path extension.
 ///
-/// # 参数
+/// Recognizes the following extensions (case-insensitive):
+/// - `.json` → JSON
+/// - `.yaml`, `.yml` → YAML
+/// - `.toml` → TOML
+/// - `.txt` → TXT
 ///
-/// * `path` - 文件路径
+/// # Arguments
 ///
-/// # 返回值
+/// * `path` - The file path to examine.
 ///
-/// 返回 `Some(OutputFormat)` 如果能识别扩展名，否则返回 `None`。
+/// # Returns
+///
+/// `Some(OutputFormat)` if the extension is recognized, `None` otherwise.
 ///
 /// # Examples
 ///
@@ -591,29 +662,31 @@ pub fn write_to_file_only(
 /// assert_eq!(infer_format(Path::new("tree.toml")), Some(OutputFormat::Toml));
 /// assert_eq!(infer_format(Path::new("tree.txt")), Some(OutputFormat::Txt));
 /// assert_eq!(infer_format(Path::new("tree.unknown")), None);
+/// assert_eq!(infer_format(Path::new("no_extension")), None);
 /// ```
 #[must_use]
 pub fn infer_format(path: &Path) -> Option<OutputFormat> {
     OutputFormat::from_extension(path)
 }
 
-/// 验证输出路径有效性
+/// Validates that an output path is writable.
 ///
-/// 检查输出路径是否可写入。
+/// Checks that the path does not point to an existing directory and
+/// that the parent path (if it exists) is a directory.
 ///
-/// # 参数
+/// # Arguments
 ///
-/// * `path` - 输出文件路径
+/// * `path` - The output file path to validate.
 ///
-/// # 返回值
+/// # Returns
 ///
-/// 成功返回 `Ok(())`，失败返回错误原因。
+/// `Ok(())` if the path is valid for writing.
 ///
 /// # Errors
 ///
-/// 返回 `OutputError::InvalidOutputPath` 如果：
-/// - 路径指向已存在的目录
-/// - 父目录不可访问
+/// Returns `OutputError::InvalidOutputPath` if:
+/// - The path points to an existing directory
+/// - The parent path exists but is not a directory
 ///
 /// # Examples
 ///
@@ -621,14 +694,10 @@ pub fn infer_format(path: &Path) -> Option<OutputFormat> {
 /// use std::path::Path;
 /// use treepp::output::validate_output_path;
 ///
-/// // 正常路径
 /// assert!(validate_output_path(Path::new("output.txt")).is_ok());
-///
-/// // 相对路径也可以
 /// assert!(validate_output_path(Path::new("subdir/output.txt")).is_ok());
 /// ```
 pub fn validate_output_path(path: &Path) -> Result<(), OutputError> {
-    // 检查是否为已存在的目录
     if path.exists() && path.is_dir() {
         return Err(OutputError::InvalidOutputPath {
             path: path.to_path_buf(),
@@ -636,9 +705,11 @@ pub fn validate_output_path(path: &Path) -> Result<(), OutputError> {
         });
     }
 
-    // 检查父目录
     if let Some(parent) = path.parent()
-        && !parent.as_os_str().is_empty() && parent.exists() && !parent.is_dir() {
+        && !parent.as_os_str().is_empty()
+        && parent.exists()
+        && !parent.is_dir()
+    {
         return Err(OutputError::InvalidOutputPath {
             path: path.to_path_buf(),
             reason: "Parent path is not a directory.".to_string(),
@@ -649,7 +720,7 @@ pub fn validate_output_path(path: &Path) -> Result<(), OutputError> {
 }
 
 // ============================================================================
-// 单元测试
+// Unit Tests
 // ============================================================================
 
 #[cfg(test)]
@@ -659,7 +730,6 @@ mod tests {
     use std::path::PathBuf;
     use tempfile::tempdir;
 
-    /// 创建测试用的树节点
     fn create_test_tree() -> TreeNode {
         let mut root = TreeNode::new(
             PathBuf::from("test_root"),
@@ -694,27 +764,68 @@ mod tests {
         root
     }
 
-    #[test]
-    fn test_serialize_json_basic() {
-        let tree = create_test_tree();
-        let config = Config::default();
+    fn create_empty_tree() -> TreeNode {
+        TreeNode::new(
+            PathBuf::from("empty_root"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        )
+    }
 
-        let json = serialize_json(&tree, &config).expect("JSON 序列化应成功");
+    fn create_deep_tree() -> TreeNode {
+        let mut root = TreeNode::new(
+            PathBuf::from("deep"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
 
-        // 新格式：键为条目名称，值为子项或元数据对象
-        assert!(json.contains("\"subdir\""));  // 子目录名称作为键
-        assert!(json.contains("{"));           // 对象格式
+        let mut level1 = TreeNode::new(
+            PathBuf::from("deep/level1"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+
+        let mut level2 = TreeNode::new(
+            PathBuf::from("deep/level1/level2"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+
+        level2.children.push(TreeNode::new(
+            PathBuf::from("deep/level1/level2/deep_file.txt"),
+            EntryKind::File,
+            EntryMetadata {
+                size: 512,
+                ..Default::default()
+            },
+        ));
+
+        level1.children.push(level2);
+        root.children.push(level1);
+
+        root
     }
 
     #[test]
-    fn test_serialize_json_with_files() {
+    fn should_serialize_json_with_directory_structure() {
+        let tree = create_test_tree();
+        let config = Config::default();
+
+        let json = serialize_json(&tree, &config).expect("JSON序列化应成功");
+
+        assert!(json.contains("\"subdir\""));
+        assert!(json.contains("{"));
+    }
+
+    #[test]
+    fn should_serialize_json_with_file_metadata_when_enabled() {
         let tree = create_test_tree();
         let mut config = Config::default();
-        config.batch_mode = true; // JSON 序列化需要批处理模式
+        config.batch_mode = true;
         config.scan.show_files = true;
         config.render.show_size = true;
 
-        let json = serialize_json(&tree, &config).expect("JSON 序列化应成功");
+        let json = serialize_json(&tree, &config).expect("JSON序列化应成功");
 
         assert!(json.contains("file1.txt"));
         assert!(json.contains("\"size\":"));
@@ -722,30 +833,71 @@ mod tests {
     }
 
     #[test]
-    fn test_serialize_yaml_basic() {
+    fn should_serialize_json_for_empty_tree() {
+        let tree = create_empty_tree();
+        let config = Config::default();
+
+        let json = serialize_json(&tree, &config).expect("空树JSON序列化应成功");
+
+        assert!(json.contains("{"));
+        assert!(json.contains("}"));
+    }
+
+    #[test]
+    fn should_serialize_json_for_deep_tree() {
+        let tree = create_deep_tree();
+        let mut config = Config::default();
+        config.scan.show_files = true;
+
+        let json = serialize_json(&tree, &config).expect("深层树JSON序列化应成功");
+
+        assert!(json.contains("level1"));
+        assert!(json.contains("level2"));
+        assert!(json.contains("deep_file.txt"));
+    }
+
+    #[test]
+    fn should_serialize_yaml_with_directory_structure() {
         let tree = create_test_tree();
         let config = Config::default();
 
-        let yaml = serialize_yaml(&tree, &config).expect("YAML 序列化应成功");
+        let yaml = serialize_yaml(&tree, &config).expect("YAML序列化应成功");
 
-        // 新格式：键为条目名称
         assert!(yaml.contains("subdir:") || yaml.contains("file1.txt:"));
     }
 
     #[test]
-    fn test_serialize_toml_basic() {
+    fn should_serialize_yaml_for_empty_tree() {
+        let tree = create_empty_tree();
+        let config = Config::default();
+
+        let yaml = serialize_yaml(&tree, &config).expect("空树YAML序列化应成功");
+
+        assert!(!yaml.is_empty());
+    }
+
+    #[test]
+    fn should_serialize_toml_with_directory_structure() {
         let tree = create_test_tree();
         let config = Config::default();
 
-        let toml = serialize_toml(&tree, &config).expect("TOML 序列化应成功");
+        let toml = serialize_toml(&tree, &config).expect("TOML序列化应成功");
 
-        // 新格式：TOML 表格，条目名称作为键
-        // TOML 输出可能是 [subdir] 或类似格式
         assert!(toml.contains("subdir") || toml.contains("file1"));
     }
 
     #[test]
-    fn test_infer_format_json() {
+    fn should_serialize_toml_for_empty_tree() {
+        let tree = create_empty_tree();
+        let config = Config::default();
+
+        let result = serialize_toml(&tree, &config);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn should_infer_json_format_from_extension() {
         assert_eq!(
             infer_format(Path::new("output.json")),
             Some(OutputFormat::Json)
@@ -754,10 +906,14 @@ mod tests {
             infer_format(Path::new("OUTPUT.JSON")),
             Some(OutputFormat::Json)
         );
+        assert_eq!(
+            infer_format(Path::new("path/to/file.json")),
+            Some(OutputFormat::Json)
+        );
     }
 
     #[test]
-    fn test_infer_format_yaml() {
+    fn should_infer_yaml_format_from_extension() {
         assert_eq!(
             infer_format(Path::new("output.yaml")),
             Some(OutputFormat::Yaml)
@@ -766,32 +922,46 @@ mod tests {
             infer_format(Path::new("output.yml")),
             Some(OutputFormat::Yaml)
         );
+        assert_eq!(
+            infer_format(Path::new("OUTPUT.YML")),
+            Some(OutputFormat::Yaml)
+        );
     }
 
     #[test]
-    fn test_infer_format_toml() {
+    fn should_infer_toml_format_from_extension() {
         assert_eq!(
             infer_format(Path::new("output.toml")),
+            Some(OutputFormat::Toml)
+        );
+        assert_eq!(
+            infer_format(Path::new("config.TOML")),
             Some(OutputFormat::Toml)
         );
     }
 
     #[test]
-    fn test_infer_format_txt() {
+    fn should_infer_txt_format_from_extension() {
         assert_eq!(
             infer_format(Path::new("output.txt")),
+            Some(OutputFormat::Txt)
+        );
+        assert_eq!(
+            infer_format(Path::new("README.TXT")),
             Some(OutputFormat::Txt)
         );
     }
 
     #[test]
-    fn test_infer_format_unknown() {
+    fn should_return_none_for_unknown_extension() {
         assert_eq!(infer_format(Path::new("output.xyz")), None);
         assert_eq!(infer_format(Path::new("output")), None);
+        assert_eq!(infer_format(Path::new(".hidden")), None);
+        assert_eq!(infer_format(Path::new("file.doc")), None);
     }
 
     #[test]
-    fn test_write_file_creates_file() {
+    fn should_create_file_and_write_content() {
         let dir = tempdir().expect("创建临时目录失败");
         let file_path = dir.path().join("test_output.txt");
 
@@ -803,17 +973,19 @@ mod tests {
     }
 
     #[test]
-    fn test_write_file_creates_parent_dirs() {
+    fn should_create_parent_directories_when_writing() {
         let dir = tempdir().expect("创建临时目录失败");
         let file_path = dir.path().join("subdir1/subdir2/test.txt");
 
         write_file("nested content", &file_path).expect("写入嵌套文件应成功");
 
         assert!(file_path.exists());
+        let content = fs::read_to_string(&file_path).expect("读取文件失败");
+        assert_eq!(content, "nested content");
     }
 
     #[test]
-    fn test_write_file_overwrites() {
+    fn should_overwrite_existing_file() {
         let dir = tempdir().expect("创建临时目录失败");
         let file_path = dir.path().join("overwrite.txt");
 
@@ -825,13 +997,37 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_output_path_normal() {
-        assert!(validate_output_path(Path::new("output.txt")).is_ok());
-        assert!(validate_output_path(Path::new("subdir/output.txt")).is_ok());
+    fn should_write_empty_content() {
+        let dir = tempdir().expect("创建临时目录失败");
+        let file_path = dir.path().join("empty.txt");
+
+        write_file("", &file_path).expect("写入空内容应成功");
+
+        assert!(file_path.exists());
+        let content = fs::read_to_string(&file_path).expect("读取文件失败");
+        assert!(content.is_empty());
     }
 
     #[test]
-    fn test_validate_output_path_existing_dir() {
+    fn should_write_unicode_content() {
+        let dir = tempdir().expect("创建临时目录失败");
+        let file_path = dir.path().join("unicode.txt");
+
+        write_file("你好世界 🌍 émoji", &file_path).expect("写入Unicode内容应成功");
+
+        let content = fs::read_to_string(&file_path).expect("读取文件失败");
+        assert_eq!(content, "你好世界 🌍 émoji");
+    }
+
+    #[test]
+    fn should_validate_normal_output_path() {
+        assert!(validate_output_path(Path::new("output.txt")).is_ok());
+        assert!(validate_output_path(Path::new("subdir/output.txt")).is_ok());
+        assert!(validate_output_path(Path::new("a/b/c/d/output.json")).is_ok());
+    }
+
+    #[test]
+    fn should_reject_existing_directory_as_output_path() {
         let dir = tempdir().expect("创建临时目录失败");
 
         let result = validate_output_path(dir.path());
@@ -843,12 +1039,67 @@ mod tests {
     }
 
     #[test]
-    fn test_write_stdout_silent_mode() {
+    fn should_skip_output_in_silent_mode() {
         let mut config = Config::default();
         config.output.silent = true;
 
-        // 静默模式下不应报错（即使我们无法真正验证没有输出）
         let result = write_stdout("test", &config);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn should_skip_file_notice_in_silent_mode() {
+        let mut config = Config::default();
+        config.output.silent = true;
+
+        let result = print_file_notice(Path::new("test.txt"), &config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn should_convert_json_null_to_toml() {
+        let result = json_to_toml(&Value::Null).expect("转换应成功");
+        assert_eq!(result, toml::Value::String("null".to_string()));
+    }
+
+    #[test]
+    fn should_convert_json_bool_to_toml() {
+        let result = json_to_toml(&Value::Bool(true)).expect("转换应成功");
+        assert_eq!(result, toml::Value::Boolean(true));
+    }
+
+    #[test]
+    fn should_convert_json_number_to_toml() {
+        let result = json_to_toml(&Value::Number(42.into())).expect("转换应成功");
+        assert_eq!(result, toml::Value::Integer(42));
+    }
+
+    #[test]
+    fn should_convert_json_string_to_toml() {
+        let result = json_to_toml(&Value::String("test".to_string())).expect("转换应成功");
+        assert_eq!(result, toml::Value::String("test".to_string()));
+    }
+
+    #[test]
+    fn should_convert_json_array_to_toml() {
+        let arr = Value::Array(vec![Value::Number(1.into()), Value::Number(2.into())]);
+        let result = json_to_toml(&arr).expect("转换应成功");
+        if let toml::Value::Array(arr) = result {
+            assert_eq!(arr.len(), 2);
+        } else {
+            panic!("应该是数组");
+        }
+    }
+
+    #[test]
+    fn should_convert_json_object_to_toml() {
+        let mut obj = Map::new();
+        obj.insert("key".to_string(), Value::String("value".to_string()));
+        let result = json_to_toml(&Value::Object(obj)).expect("转换应成功");
+        if let toml::Value::Table(table) = result {
+            assert!(table.contains_key("key"));
+        } else {
+            panic!("应该是表格");
+        }
     }
 }

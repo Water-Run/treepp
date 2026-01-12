@@ -1,23 +1,26 @@
-//! tree++ 主程序入口
+//! tree++ main program entry point.
 //!
-//! 本模块实现 `tree++` 命令行工具的主入口，串联以下流程：
+//! This module implements the main entry point for the `tree++` command-line tool,
+//! orchestrating the following pipeline:
 //!
-//! 1. **CLI 解析**：解析命令行参数，产出 `ParseResult`
-//! 2. **配置验证**：验证配置有效性，补齐派生字段
-//! 3. **目录扫描**：在可流式时采用“边扫边渲染边输出”，否则构建完整树
-//! 4. **树形渲染**：根据扫描模式选择流式渲染或批处理渲染
-//! 5. **结果输出**：输出到 stdout 和/或文件
+//! 1. **CLI Parsing**: Parse command-line arguments, producing a `ParseResult`
+//! 2. **Configuration Validation**: Validate configuration and populate derived fields
+//! 3. **Directory Scanning**: Use streaming scan-render-output when possible, otherwise build complete tree
+//! 4. **Tree Rendering**: Choose streaming or batch rendering based on scan mode
+//! 5. **Result Output**: Output to stdout and/or file
 //!
-//! # 退出码
+//! # Exit Codes
 //!
-//! - `0`：成功
-//! - `1`：参数错误
-//! - `2`：扫描错误
-//! - `3`：输出错误
+//! | Code | Meaning |
+//! |------|---------|
+//! | `0`  | Success |
+//! | `1`  | CLI/argument error |
+//! | `2`  | Scan error |
+//! | `3`  | Output error |
 //!
-//! 文件: src/main.rs
-//! 作者: WaterRun
-//! 更新于: 2026-01-12
+//! File: src/main.rs
+//! Author: WaterRun
+//! Date: 2026-01-12
 
 #![forbid(unsafe_code)]
 #![deny(warnings)]
@@ -31,24 +34,40 @@ mod output;
 mod render;
 mod scan;
 
+use std::fs::File;
+use std::io::{BufWriter, Write};
+use std::path::{Component, Path};
 use std::process::ExitCode;
 
 use cli::{CliError, CliParser, ParseResult};
-use error::TreeppError;
-use render::{StreamRenderConfig, StreamRenderer};
+use config::Config;
+use error::{OutputError, ScanError, TreeppError};
+use render::{StreamRenderConfig, StreamRenderer, TreeChars, WinBanner};
+use scan::{EntryKind, StreamEvent};
 
-/// 退出码：成功
+/// Exit code indicating successful execution.
 const EXIT_SUCCESS: u8 = 0;
-/// 退出码：参数错误
+
+/// Exit code indicating a CLI or argument parsing error.
 const EXIT_CLI_ERROR: u8 = 1;
-/// 退出码：扫描错误
+
+/// Exit code indicating a directory scanning error.
 const EXIT_SCAN_ERROR: u8 = 2;
-/// 退出码：输出错误
+
+/// Exit code indicating an output writing error.
 const EXIT_OUTPUT_ERROR: u8 = 3;
 
-/// 程序主入口
+/// Program main entry point.
 ///
-/// 解析命令行参数并执行相应操作。
+/// Parses command-line arguments and executes the appropriate action.
+///
+/// # Returns
+///
+/// Returns an `ExitCode` reflecting the execution result:
+/// - `EXIT_SUCCESS` (0) on success
+/// - `EXIT_CLI_ERROR` (1) on argument errors
+/// - `EXIT_SCAN_ERROR` (2) on scan errors
+/// - `EXIT_OUTPUT_ERROR` (3) on output errors
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::from(EXIT_SUCCESS),
@@ -60,13 +79,25 @@ fn main() -> ExitCode {
     }
 }
 
-/// 执行主流程：根据 batch_mode 选择批处理或流式模式。
+/// Executes the main workflow.
+///
+/// Selects between batch mode and streaming mode based on configuration.
+///
+/// # Returns
+///
+/// Returns `Ok(())` on success, or a `TreeppError` on failure.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - CLI parsing fails
+/// - Configuration validation fails
+/// - Directory scanning fails
+/// - Output writing fails
 fn run() -> Result<(), TreeppError> {
-    // 1. CLI 解析
     let parser = CliParser::from_env();
     let parse_result = parser.parse()?;
 
-    // 2. 根据解析结果执行相应操作
     match parse_result {
         ParseResult::Help => {
             cli::print_help();
@@ -77,7 +108,6 @@ fn run() -> Result<(), TreeppError> {
             Ok(())
         }
         ParseResult::Config(config) => {
-            // 配置已在 parse() 中 validate
             if config.batch_mode {
                 batch_mode(&config)
             } else {
@@ -87,219 +117,425 @@ fn run() -> Result<(), TreeppError> {
     }
 }
 
-/// 批处理管线：完整扫描 -> 渲染 -> 输出。
-fn batch_mode(config: &config::Config) -> Result<(), TreeppError> {
+/// Executes the batch processing pipeline.
+///
+/// Performs a complete scan of the directory tree, then renders and outputs
+/// the result. This mode is required for structured output formats (JSON,
+/// YAML, TOML) and disk usage calculation.
+///
+/// # Arguments
+///
+/// * `config` - The validated configuration specifying scan and render options.
+///
+/// # Returns
+///
+/// Returns `Ok(())` on success, or a `TreeppError` on failure.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - Directory scanning fails
+/// - Output writing fails
+fn batch_mode(config: &Config) -> Result<(), TreeppError> {
     let stats = scan::scan(config)?;
     let render_result = render::render(&stats, config);
     output::execute_output(&render_result, &stats.tree, config)?;
     Ok(())
 }
 
-/// 流式管线：边扫描边渲染边输出。
+/// Executes the streaming pipeline.
 ///
-/// 在流式模式下：
-/// - 始终输出 TXT 格式（JSON/YAML/TOML 需要批处理模式）
-/// - 如果指定了输出文件，同时写入文件和 stdout（除非 silent）
-/// - disk_usage 不可用（需要批处理模式）
-fn stream_mode(config: &config::Config) -> Result<(), TreeppError> {
-    use crate::error::ScanError;
-    use render::{TreeChars, WinBanner};
-    use scan::StreamEvent;
-    use std::fs::File;
-    use std::io::{BufWriter, Write};
-
-    // 准备文件写入器（如果有输出路径）
-    let mut file_writer: Option<BufWriter<File>> = if let Some(ref path) = config.output.output_path
-    {
-        let file = File::create(path).map_err(|e| {
-            crate::error::OutputError::FileCreateFailed {
-                path: path.clone(),
-                source: e,
-            }
-        })?;
-        Some(BufWriter::new(file))
-    } else {
-        None
-    };
-
-    // 辅助宏：同时写入 stdout 和文件
-    macro_rules! write_output {
-        ($content:expr) => {
-            if !config.output.silent {
-                print!("{}", $content);
-            }
-            if let Some(ref mut writer) = file_writer {
-                write!(writer, "{}", $content).map_err(|e| {
-                    crate::error::OutputError::WriteFailed {
-                        path: config.output.output_path.clone().unwrap(),
-                        source: e,
-                    }
-                })?;
-            }
-        };
-    }
-
-    macro_rules! writeln_output {
-        ($content:expr) => {
-            if !config.output.silent {
-                println!("{}", $content);
-            }
-            if let Some(ref mut writer) = file_writer {
-                writeln!(writer, "{}", $content).map_err(|e| {
-                    crate::error::OutputError::WriteFailed {
-                        path: config.output.output_path.clone().unwrap(),
-                        source: e,
-                    }
-                })?;
-            }
-        };
-        () => {
-            if !config.output.silent {
-                println!();
-            }
-            if let Some(ref mut writer) = file_writer {
-                writeln!(writer).map_err(|e| {
-                    crate::error::OutputError::WriteFailed {
-                        path: config.output.output_path.clone().unwrap(),
-                        source: e,
-                    }
-                })?;
-            }
-        };
-    }
+/// Scans, renders, and outputs the directory tree simultaneously for
+/// improved responsiveness. This mode has the following constraints:
+///
+/// - Always outputs TXT format (JSON/YAML/TOML require batch mode)
+/// - If an output file is specified, writes to both file and stdout (unless silent)
+/// - `disk_usage` is unavailable (requires batch mode)
+///
+/// # Arguments
+///
+/// * `config` - The validated configuration specifying scan and render options.
+///
+/// # Returns
+///
+/// Returns `Ok(())` on success, or a `TreeppError` on failure.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - Output file creation fails
+/// - Directory scanning fails
+/// - Writing to file or stdout fails
+fn stream_mode(config: &Config) -> Result<(), TreeppError> {
+    let mut file_writer = create_file_writer_if_needed(config)?;
+    let mut output_context = StreamOutputContext::new(config, &mut file_writer);
 
     let mut renderer = StreamRenderer::new(StreamRenderConfig::from_config(config));
     let chars = TreeChars::from_charset(config.render.charset);
 
-    // 头部（可含 banner）立即输出
     let header = renderer.render_header(&config.root_path, config.path_explicitly_set);
-    write_output!(header);
+    output_context.write(&header)?;
 
-    // 记录是否有子目录和文件
     let mut has_subdirs = false;
     let mut has_files = false;
-    // 记录根级别是否有内容（用于判断是否需要在"没有子文件夹"前输出空行）
-    let mut root_has_rendered_content = false;
 
-    // 流式扫描 + 渲染
     let stats = scan::scan_streaming(config, |event| {
-        match event {
-            StreamEvent::Entry(ref entry) => {
-                // 记录是否有目录或文件
-                if entry.kind == scan::EntryKind::Directory {
-                    has_subdirs = true;
-                } else {
-                    has_files = true;
-                }
-
-                // 记录根级别是否有内容
-                if entry.depth == 0 {
-                    root_has_rendered_content = true;
-                }
-
-                let line = renderer.render_entry(&entry.clone());
-                // 可能包含多行（如分隔行）
-                for l in line.lines() {
-                    if !config.output.silent {
-                        println!("{}", l);
-                    }
-                    if let Some(ref mut writer) = file_writer {
-                        writeln!(writer, "{}", l).map_err(|e| ScanError::WalkError {
-                            message: e.to_string(),
-                            path: None,
-                        })?;
-                    }
-                }
-            }
-            StreamEvent::EnterDir { is_last } => {
-                renderer.push_level(!is_last);
-            }
-            StreamEvent::LeaveDir => {
-                // 获取尾随行（如果有）
-                if let Some(trailing) = renderer.pop_level() {
-                    if !config.output.silent {
-                        println!("{}", trailing);
-                    }
-                    if let Some(ref mut writer) = file_writer {
-                        writeln!(writer, "{}", trailing).map_err(|e| ScanError::WalkError {
-                            message: e.to_string(),
-                            path: None,
-                        })?;
-                    }
-                }
-            }
-        }
-        Ok(())
+        handle_stream_event(
+            event,
+            &mut renderer,
+            &mut output_context,
+            &mut has_subdirs,
+            &mut has_files,
+        )
     })?;
 
-    // 空目录时，按原生 tree 行为输出"没有子文件夹"和末尾空行
-    if !has_subdirs && !config.render.no_win_banner {
-        if let Some(drive) = drive_letter_from_path(&config.root_path) {
-            if let Ok(banner) = WinBanner::fetch_for_drive(drive) {
-                // 如果有文件但无目录，输出与文件前缀对齐的空格行
-                // 这个空格行是在文件列表结束后、"没有子文件夹"之前
-                if has_files && config.scan.show_files && !config.render.no_indent {
-                    writeln_output!(chars.space);
-                }
+    render_empty_directory_notice(config, &chars, has_subdirs, has_files, &mut output_context)?;
 
-                if !banner.no_subfolder.is_empty() {
-                    writeln_output!(banner.no_subfolder);
-                }
-            }
-        }
-        // 输出末尾空行
-        writeln_output!();
-    }
-
-    // 末尾统计（如果启用）
     if config.render.show_report {
         let report =
             renderer.render_report(stats.directory_count, stats.file_count, stats.duration);
         if !report.is_empty() {
-            write_output!(report);
+            output_context.write(&report)?;
         }
     }
 
-    // 刷新文件写入器
-    if let Some(ref mut writer) = file_writer {
-        writer.flush().map_err(|e| {
-            crate::error::OutputError::WriteFailed {
-                path: config.output.output_path.clone().unwrap(),
+    output_context.flush()?;
+    print_output_path_notice(config);
+
+    Ok(())
+}
+
+/// Creates a buffered file writer if an output path is configured.
+///
+/// # Arguments
+///
+/// * `config` - The configuration containing the optional output path.
+///
+/// # Returns
+///
+/// Returns `Some(BufWriter<File>)` if an output path is specified,
+/// `None` otherwise.
+///
+/// # Errors
+///
+/// Returns an error if the file cannot be created.
+fn create_file_writer_if_needed(config: &Config) -> Result<Option<BufWriter<File>>, TreeppError> {
+    match config.output.output_path {
+        Some(ref path) => {
+            let file = File::create(path).map_err(|e| OutputError::FileCreateFailed {
+                path: path.clone(),
                 source: e,
-            }
-        })?;
+            })?;
+            Ok(Some(BufWriter::new(file)))
+        }
+        None => Ok(None),
+    }
+}
+
+/// Context for managing streaming output to stdout and optional file.
+struct StreamOutputContext<'a> {
+    /// Reference to the configuration.
+    config: &'a Config,
+    /// Mutable reference to an optional file writer.
+    file_writer: &'a mut Option<BufWriter<File>>,
+}
+
+impl<'a> StreamOutputContext<'a> {
+    /// Creates a new streaming output context.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - The configuration controlling output behavior.
+    /// * `file_writer` - Mutable reference to an optional file writer.
+    ///
+    /// # Returns
+    ///
+    /// Returns a new `StreamOutputContext` instance.
+    fn new(config: &'a Config, file_writer: &'a mut Option<BufWriter<File>>) -> Self {
+        Self {
+            config,
+            file_writer,
+        }
     }
 
-    // 打印文件写入提示
+    /// Writes content to stdout (unless silent) and file (if configured).
+    ///
+    /// # Arguments
+    ///
+    /// * `content` - The string content to write.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing to the file fails.
+    fn write(&mut self, content: &str) -> Result<(), TreeppError> {
+        if !self.config.output.silent {
+            print!("{}", content);
+        }
+        if let Some(writer) = self.file_writer.as_mut() {
+            write!(writer, "{}", content).map_err(|e| OutputError::WriteFailed {
+                path: self.config.output.output_path.clone().unwrap(),
+                source: e,
+            })?;
+        }
+        Ok(())
+    }
+
+    /// Writes a line to stdout (unless silent) and file (if configured).
+    ///
+    /// # Arguments
+    ///
+    /// * `content` - The string content to write, followed by a newline.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing to the file fails.
+    fn writeln(&mut self, content: &str) -> Result<(), TreeppError> {
+        if !self.config.output.silent {
+            println!("{}", content);
+        }
+        if let Some(writer) = self.file_writer.as_mut() {
+            writeln!(writer, "{}", content).map_err(|e| OutputError::WriteFailed {
+                path: self.config.output.output_path.clone().unwrap(),
+                source: e,
+            })?;
+        }
+        Ok(())
+    }
+
+    /// Writes an empty line to stdout (unless silent) and file (if configured).
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing to the file fails.
+    fn writeln_empty(&mut self) -> Result<(), TreeppError> {
+        if !self.config.output.silent {
+            println!();
+        }
+        if let Some(writer) = self.file_writer.as_mut() {
+            writeln!(writer).map_err(|e| OutputError::WriteFailed {
+                path: self.config.output.output_path.clone().unwrap(),
+                source: e,
+            })?;
+        }
+        Ok(())
+    }
+
+    /// Flushes the file writer buffer if present.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if flushing fails.
+    fn flush(&mut self) -> Result<(), TreeppError> {
+        if let Some(writer) = self.file_writer.as_mut() {
+            writer.flush().map_err(|e| OutputError::WriteFailed {
+                path: self.config.output.output_path.clone().unwrap(),
+                source: e,
+            })?;
+        }
+        Ok(())
+    }
+}
+
+/// Handles a single stream event during streaming scan.
+///
+/// Processes directory entry events, directory enter/leave events,
+/// and writes rendered output accordingly.
+///
+/// # Arguments
+///
+/// * `event` - The stream event to process.
+/// * `renderer` - The stream renderer for generating output lines.
+/// * `output_context` - The output context for writing results.
+/// * `has_subdirs` - Mutable flag tracking whether subdirectories were found.
+/// * `has_files` - Mutable flag tracking whether files were found.
+///
+/// # Returns
+///
+/// Returns `Ok(())` on success.
+///
+/// # Errors
+///
+/// Returns an error if writing output fails.
+fn handle_stream_event(
+    event: StreamEvent,
+    renderer: &mut StreamRenderer,
+    output_context: &mut StreamOutputContext<'_>,
+    has_subdirs: &mut bool,
+    has_files: &mut bool,
+) -> Result<(), ScanError> {
+    match event {
+        StreamEvent::Entry(ref entry) => {
+            if entry.kind == EntryKind::Directory {
+                *has_subdirs = true;
+            } else {
+                *has_files = true;
+            }
+
+            let line = renderer.render_entry(&entry.clone());
+            for l in line.lines() {
+                if !output_context.config.output.silent {
+                    println!("{}", l);
+                }
+                if let Some(writer) = output_context.file_writer.as_mut() {
+                    writeln!(writer, "{}", l).map_err(|e| ScanError::WalkError {
+                        message: e.to_string(),
+                        path: None,
+                    })?;
+                }
+            }
+        }
+        StreamEvent::EnterDir { is_last } => {
+            renderer.push_level(!is_last);
+        }
+        StreamEvent::LeaveDir => {
+            if let Some(trailing) = renderer.pop_level() {
+                if !output_context.config.output.silent {
+                    println!("{}", trailing);
+                }
+                if let Some(writer) = output_context.file_writer.as_mut() {
+                    writeln!(writer, "{}", trailing).map_err(|e| ScanError::WalkError {
+                        message: e.to_string(),
+                        path: None,
+                    })?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Renders the "no subfolders" notice for empty directories.
+///
+/// Mimics the behavior of the native Windows `tree` command when a directory
+/// contains no subdirectories.
+///
+/// # Arguments
+///
+/// * `config` - The configuration specifying render options.
+/// * `chars` - The tree characters for formatting.
+/// * `has_subdirs` - Whether subdirectories were found.
+/// * `has_files` - Whether files were found.
+/// * `output_context` - The output context for writing results.
+///
+/// # Returns
+///
+/// Returns `Ok(())` on success.
+///
+/// # Errors
+///
+/// Returns an error if writing output fails.
+fn render_empty_directory_notice(
+    config: &Config,
+    chars: &TreeChars,
+    has_subdirs: bool,
+    has_files: bool,
+    output_context: &mut StreamOutputContext<'_>,
+) -> Result<(), TreeppError> {
+    if has_subdirs || config.render.no_win_banner {
+        return Ok(());
+    }
+
+    if let Some(drive) = drive_letter_from_path(&config.root_path) {
+        if let Ok(banner) = WinBanner::fetch_for_drive(drive) {
+            if has_files && config.scan.show_files && !config.render.no_indent {
+                output_context.writeln(&chars.space)?;
+            }
+
+            if !banner.no_subfolder.is_empty() {
+                output_context.writeln(&banner.no_subfolder)?;
+            }
+        }
+    }
+
+    output_context.writeln_empty()?;
+    Ok(())
+}
+
+/// Prints the output file path notice if applicable.
+///
+/// Informs the user where the output was written when an output file
+/// was specified and silent mode is not enabled.
+///
+/// # Arguments
+///
+/// * `config` - The configuration containing the optional output path.
+fn print_output_path_notice(config: &Config) {
     if let Some(ref path) = config.output.output_path {
         if !config.output.silent {
             println!("\nOutput written to: {}", path.display());
         }
     }
-
-    Ok(())
 }
 
-/// 从路径提取盘符（大写）。无法提取时返回 None。
-fn drive_letter_from_path(path: &std::path::Path) -> Option<char> {
-    use std::path::Component;
+/// Extracts the drive letter (uppercase) from a path.
+///
+/// Handles both standard paths (e.g., `C:\`) and long path format
+/// (e.g., `\\?\C:\`).
+///
+/// # Arguments
+///
+/// * `path` - The path to extract the drive letter from.
+///
+/// # Returns
+///
+/// Returns `Some(char)` containing the uppercase drive letter if found,
+/// `None` otherwise.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use std::path::Path;
+///
+/// let path = Path::new("C:\\Users");
+/// assert_eq!(drive_letter_from_path(path), Some('C'));
+/// ```
+fn drive_letter_from_path(path: &Path) -> Option<char> {
+    let first_component = path.components().next()?;
 
-    if let Some(Component::Prefix(prefix)) = path.components().next() {
-        let s = prefix.as_os_str().to_string_lossy();
-        let chars: Vec<char> = s.chars().collect();
-        // 普通格式 "C:"
+    if let Component::Prefix(prefix) = first_component {
+        let prefix_str = prefix.as_os_str().to_string_lossy();
+        let chars: Vec<char> = prefix_str.chars().collect();
+
         if chars.len() >= 2 && chars[1] == ':' {
             return Some(chars[0].to_ascii_uppercase());
         }
-        // 长路径格式 "\\?\C:"
-        if s.starts_with(r"\\?\") && chars.len() >= 6 && chars[5] == ':' {
+
+        if prefix_str.starts_with(r"\\?\") && chars.len() >= 6 && chars[5] == ':' {
             return Some(chars[4].to_ascii_uppercase());
         }
     }
+
     None
 }
 
-/// 将错误映射为退出码
+/// Maps an error to its corresponding exit code.
+///
+/// # Arguments
+///
+/// * `err` - The error to map.
+///
+/// # Returns
+///
+/// Returns the appropriate exit code for the error type:
+/// - `EXIT_CLI_ERROR` for CLI and config errors
+/// - `EXIT_SCAN_ERROR` for scan and match errors
+/// - `EXIT_OUTPUT_ERROR` for render and output errors
 fn error_to_exit_code(err: &TreeppError) -> u8 {
     match err {
         TreeppError::Cli(_) | TreeppError::Config(_) => EXIT_CLI_ERROR,
@@ -308,9 +544,14 @@ fn error_to_exit_code(err: &TreeppError) -> u8 {
     }
 }
 
-/// 打印错误信息到 stderr
+/// Prints a formatted error message to stderr.
 ///
-/// 根据错误类型格式化输出，提供用户友好的错误提示。
+/// Provides user-friendly error output with contextual hints for common
+/// error scenarios.
+///
+/// # Arguments
+///
+/// * `err` - The error to print.
 fn print_error(err: &TreeppError) {
     let prefix = match err {
         TreeppError::Cli(_) => "CLI error",
@@ -323,7 +564,6 @@ fn print_error(err: &TreeppError) {
 
     eprintln!("tree++: {}: {}", prefix, err);
 
-    // 对于特定错误类型，提供额外提示
     match err {
         TreeppError::Cli(CliError::UnknownOption { .. }) => {
             eprintln!("Hint: run `treepp --help` to list available options");

@@ -1,14 +1,16 @@
-//! 命令行参数解析模块
+//! Command-line argument parsing module.
 //!
-//! 本模块实现 `tree++` 命令行工具的参数解析功能，支持三种参数风格混用：
+//! This module implements the argument parsing functionality for the `tree++` command-line tool,
+//! supporting three argument styles that can be mixed freely:
 //!
-//! - Windows CMD 风格 (`/F`)，大小写不敏感
-//! - Unix 短参数风格 (`-f`)，大小写敏感
-//! - GNU 长参数风格 (`--files`)，大小写敏感
+//! - Windows CMD style (`/F`), case-insensitive
+//! - Unix short argument style (`-f`), case-sensitive
+//! - GNU long argument style (`--files`), case-sensitive
 //!
-//! 解析完成后产出 [`Config`] 结构体，供后续扫描、匹配、渲染、输出模块使用。
+//! After parsing, a [`Config`] struct is produced for use by subsequent scan, match, render,
+//! and output modules.
 //!
-//! # 示例
+//! # Examples
 //!
 //! ```no_run
 //! use treepp::cli::{CliParser, ParseResult};
@@ -17,15 +19,15 @@
 //! let parser = CliParser::new(args);
 //! match parser.parse() {
 //!     Ok(ParseResult::Config(config)) => println!("{:?}", config),
-//!     Ok(ParseResult::Help) => println!("显示帮助"),
-//!     Ok(ParseResult::Version) => println!("显示版本"),
-//!     Err(e) => eprintln!("错误: {}", e),
+//!     Ok(ParseResult::Help) => println!("Show help"),
+//!     Ok(ParseResult::Version) => println!("Show version"),
+//!     Err(e) => eprintln!("Error: {}", e),
 //! }
 //! ```
 //!
-//! 文件: src/cli.rs
-//! 作者: WaterRun
-//! 更新于: 2026-01-08
+//! File: src/cli.rs
+//! Author: WaterRun
+//! Date: 2026-01-12
 
 #![forbid(unsafe_code)]
 
@@ -38,12 +40,18 @@ use crate::config::{CharsetMode, Config, PathMode};
 pub(crate) use crate::error::CliError;
 
 // ============================================================================
-// 解析结果枚举
+// Parse Result
 // ============================================================================
 
-/// 解析结果
+/// Result of command-line parsing.
 ///
-/// 表示命令行解析后的三种可能结果。
+/// Represents the three possible outcomes after parsing command-line arguments.
+///
+/// # Variants
+///
+/// * `Config` - Normal configuration, scanning should be executed
+/// * `Help` - User requested help information display
+/// * `Version` - User requested version information display
 ///
 /// # Examples
 ///
@@ -52,54 +60,66 @@ pub(crate) use crate::error::CliError;
 ///
 /// let parser = CliParser::new(vec!["--help".to_string()]);
 /// match parser.parse() {
-///     Ok(ParseResult::Help) => println!("显示帮助"),
-///     Ok(ParseResult::Version) => println!("显示版本"),
-///     Ok(ParseResult::Config(c)) => println!("配置: {:?}", c),
-///     Err(e) => eprintln!("错误: {}", e),
+///     Ok(ParseResult::Help) => println!("Show help"),
+///     Ok(ParseResult::Version) => println!("Show version"),
+///     Ok(ParseResult::Config(c)) => println!("Config: {:?}", c),
+///     Err(e) => eprintln!("Error: {}", e),
 /// }
 /// ```
 #[derive(Debug)]
 pub enum ParseResult {
-    /// 正常配置，需要执行扫描
+    /// Normal configuration, scanning should be executed.
     Config(Config),
-    /// 用户请求显示帮助信息
+    /// User requested help information display.
     Help,
-    /// 用户请求显示版本信息
+    /// User requested version information display.
     Version,
 }
 
 // ============================================================================
-// 参数定义
+// Argument Definition Types
 // ============================================================================
 
-/// 参数类型
+/// Argument type classification.
+///
+/// Determines whether an argument is a simple flag or requires a value.
+///
+/// # Variants
+///
+/// * `Flag` - Boolean flag that takes no value
+/// * `Value` - Argument that requires a following value
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ArgKind {
-    /// 标志型参数（无需值）
+    /// Boolean flag that takes no value.
     Flag,
-    /// 带值型参数（需要后跟一个值）
+    /// Argument that requires a following value.
     Value,
 }
 
-/// 参数定义结构体
+/// Definition of a command-line argument.
+///
+/// Contains all patterns that can match this argument across the three supported styles.
+///
+/// # Fields
+///
+/// * `canonical` - Canonical name used for duplicate detection and error messages
+/// * `kind` - Whether this argument is a flag or requires a value
+/// * `cmd_patterns` - Windows CMD style patterns (`/X`), matched case-insensitively
+/// * `short_patterns` - Unix short patterns (`-x`), matched case-sensitively
+/// * `long_patterns` - GNU long patterns (`--xxx`), matched case-sensitively
 struct ArgDef {
-    /// 规范名称（用于重复检测和错误消息）
     canonical: &'static str,
-    /// 参数类型
     kind: ArgKind,
-    /// Windows CMD 风格 (`/X`)，大小写不敏感
     cmd_patterns: &'static [&'static str],
-    /// Unix 短参数 (`-x`)，大小写敏感
     short_patterns: &'static [&'static str],
-    /// GNU 长参数 (`--xxx`)，大小写敏感
     long_patterns: &'static [&'static str],
 }
 
-/// 所有支持的参数定义
+/// All supported argument definitions.
 ///
-/// 参数定义顺序与文档保持一致，便于维护。
+/// Arguments are organized by category for maintainability.
 const ARG_DEFINITIONS: &[ArgDef] = &[
-    // 信息显示类
+    // Information display
     ArgDef {
         canonical: "help",
         kind: ArgKind::Flag,
@@ -114,7 +134,7 @@ const ARG_DEFINITIONS: &[ArgDef] = &[
         short_patterns: &["-v"],
         long_patterns: &["--version"],
     },
-    // 显示内容类
+    // Display content
     ArgDef {
         canonical: "files",
         kind: ArgKind::Flag,
@@ -157,7 +177,7 @@ const ARG_DEFINITIONS: &[ArgDef] = &[
         short_patterns: &["-u"],
         long_patterns: &["--disk-usage"],
     },
-    // 渲染样式类
+    // Rendering style
     ArgDef {
         canonical: "ascii",
         kind: ArgKind::Flag,
@@ -179,7 +199,7 @@ const ARG_DEFINITIONS: &[ArgDef] = &[
         short_patterns: &["-r"],
         long_patterns: &["--reverse"],
     },
-    // 过滤类
+    // Filtering
     ArgDef {
         canonical: "level",
         kind: ArgKind::Value,
@@ -215,7 +235,7 @@ const ARG_DEFINITIONS: &[ArgDef] = &[
         short_patterns: &["-g"],
         long_patterns: &["--gitignore"],
     },
-    // 输出控制类
+    // Output control
     ArgDef {
         canonical: "report",
         kind: ArgKind::Flag,
@@ -244,7 +264,7 @@ const ARG_DEFINITIONS: &[ArgDef] = &[
         short_patterns: &["-o"],
         long_patterns: &["--output"],
     },
-    // 模式类
+    // Mode
     ArgDef {
         canonical: "batch",
         kind: ArgKind::Flag,
@@ -252,7 +272,7 @@ const ARG_DEFINITIONS: &[ArgDef] = &[
         short_patterns: &["-b"],
         long_patterns: &["--batch"],
     },
-    // 性能类
+    // Performance
     ArgDef {
         canonical: "thread",
         kind: ArgKind::Value,
@@ -262,61 +282,64 @@ const ARG_DEFINITIONS: &[ArgDef] = &[
     },
 ];
 
+/// Arguments that can be specified multiple times.
+const ACCUMULATIVE_OPTIONS: &[&str] = &["include", "exclude"];
+
 // ============================================================================
-// 参数匹配结果
+// Matched Argument
 // ============================================================================
 
-/// 参数匹配结果
+/// Result of matching an argument to a definition.
+///
+/// Contains the matched definition and optionally the parsed value.
 struct MatchedArg {
-    /// 匹配到的参数定义
     definition: &'static ArgDef,
-    /// 参数值（如果是带值参数）
     value: Option<String>,
 }
 
 // ============================================================================
-// 命令行解析器
+// CLI Parser
 // ============================================================================
 
-/// 命令行参数解析器
+/// Command-line argument parser.
 ///
-/// 支持三种参数风格混用：
-/// - Windows CMD 风格 (`/F`)，大小写不敏感
-/// - Unix 短参数风格 (`-f`)，大小写敏感
-/// - GNU 长参数风格 (`--files`)，大小写敏感
+/// Supports three argument styles that can be mixed freely:
+/// - Windows CMD style (`/F`), case-insensitive
+/// - Unix short argument style (`-f`), case-sensitive
+/// - GNU long argument style (`--files`), case-sensitive
 ///
-/// # 路径位置规则
+/// # Path Position Rules
 ///
-/// 路径参数可以出现在任意位置，包括选项之前、之后或之间。
+/// Path arguments can appear at any position, including before, after, or between options.
 ///
 /// # Examples
 ///
 /// ```no_run
 /// use treepp::cli::CliParser;
 ///
-/// // 从命令行参数创建
+/// // Create from environment arguments
 /// let parser = CliParser::from_env();
 ///
-/// // 或手动指定参数
+/// // Or specify arguments manually
 /// let parser = CliParser::new(vec!["/F".to_string(), "--ascii".to_string()]);
 /// ```
 pub struct CliParser {
-    /// 待解析的参数列表
     args: Vec<String>,
-    /// 当前解析位置
     position: usize,
-    /// 已使用的规范名称集合（用于重复检测）
     seen_canonical_names: HashSet<String>,
-    /// 是否显式设置了线程数
     thread_explicitly_set: bool,
 }
 
 impl CliParser {
-    /// 从参数列表创建解析器
+    /// Creates a new parser from an argument list.
     ///
-    /// # 参数
+    /// # Arguments
     ///
-    /// * `args` - 命令行参数列表（不包含程序名）
+    /// * `args` - Command-line arguments (excluding the program name)
+    ///
+    /// # Returns
+    ///
+    /// A new `CliParser` instance ready for parsing.
     ///
     /// # Examples
     ///
@@ -335,9 +358,13 @@ impl CliParser {
         }
     }
 
-    /// 从环境参数创建解析器
+    /// Creates a parser from environment arguments.
     ///
-    /// 自动跳过程序名（第一个参数）。
+    /// Automatically skips the program name (first argument).
+    ///
+    /// # Returns
+    ///
+    /// A new `CliParser` instance initialized with environment arguments.
     ///
     /// # Examples
     ///
@@ -353,29 +380,30 @@ impl CliParser {
         Self::new(args)
     }
 
-    /// 解析命令行参数
+    /// Parses command-line arguments.
     ///
-    /// 解析完成后调用 `Config::validate()` 验证配置有效性。
+    /// After parsing, calls `Config::validate()` to verify configuration validity.
     ///
-    /// # 路径位置规则
+    /// # Path Position Rules
     ///
-    /// 路径参数可以出现在任意位置。例如：
-    /// - `treepp C:\dir /F` ✓ 正确
-    /// - `treepp /F C:\dir` ✓ 正确
-    /// - `treepp /F C:\dir --ascii` ✓ 正确
+    /// Path arguments can appear at any position. For example:
+    /// - `treepp C:\dir /F` ✓
+    /// - `treepp /F C:\dir` ✓
+    /// - `treepp /F C:\dir --ascii` ✓
     ///
-    /// # 返回值
+    /// # Returns
     ///
-    /// 成功返回 `ParseResult`，失败返回 `CliError`。
+    /// * `Ok(ParseResult)` - Successfully parsed result
+    /// * `Err(CliError)` - Parsing error
     ///
     /// # Errors
     ///
-    /// - `CliError::UnknownOption` - 遇到未知参数
-    /// - `CliError::MissingValue` - 需要值的参数缺少值
-    /// - `CliError::InvalidValue` - 参数值无效
-    /// - `CliError::DuplicateOption` - 参数重复
-    /// - `CliError::MultiplePaths` - 指定了多个路径
-    /// - `CliError::ConflictingOptions` - 参数冲突（如 --thread 未配合 --batch）
+    /// * `CliError::UnknownOption` - Encountered unknown argument
+    /// * `CliError::MissingValue` - Value-requiring argument missing its value
+    /// * `CliError::InvalidValue` - Invalid argument value
+    /// * `CliError::DuplicateOption` - Duplicate argument
+    /// * `CliError::MultiplePaths` - Multiple paths specified
+    /// * `CliError::ConflictingOptions` - Conflicting arguments (e.g., `--thread` without `--batch`)
     ///
     /// # Examples
     ///
@@ -387,15 +415,12 @@ impl CliParser {
     ///     Ok(ParseResult::Config(config)) => {
     ///         assert!(config.scan.show_files);
     ///     }
-    ///     _ => panic!("解析失败"),
+    ///     _ => panic!("Parse failed"),
     /// }
     /// ```
     pub fn parse(mut self) -> Result<ParseResult, CliError> {
         let mut config = Config::default();
         let mut collected_paths: Vec<String> = Vec::new();
-
-        // 可累积的参数（允许多次指定）
-        const ACCUMULATIVE_OPTIONS: &[&str] = &["include", "exclude"];
 
         while self.position < self.args.len() {
             let current_arg = self.args[self.position].clone();
@@ -403,14 +428,12 @@ impl CliParser {
             if Self::is_option_like(&current_arg) {
                 let matched = self.try_match_argument(&current_arg)?;
 
-                // 非累积参数才检查重复
                 if !ACCUMULATIVE_OPTIONS.contains(&matched.definition.canonical) {
                     self.register_canonical_name(matched.definition.canonical)?;
                 }
 
                 self.apply_to_config(&mut config, &matched)?;
 
-                // 帮助和版本信息立即返回
                 if matched.definition.canonical == "help" {
                     return Ok(ParseResult::Help);
                 }
@@ -418,17 +441,14 @@ impl CliParser {
                     return Ok(ParseResult::Version);
                 }
             } else {
-                // 非选项参数视为路径，直接收集
                 collected_paths.push(current_arg);
             }
 
             self.position += 1;
         }
 
-        // 验证并设置路径
         self.validate_paths(&collected_paths, &mut config)?;
 
-        // CLI 层面的冲突检查：thread 必须配合 batch
         if self.thread_explicitly_set && !config.batch_mode {
             return Err(CliError::ConflictingOptions {
                 opt_a: "--thread".to_string(),
@@ -436,7 +456,6 @@ impl CliParser {
             });
         }
 
-        // 调用 Config::validate() 进行配置验证
         let validated_config = config.validate().map_err(|e| CliError::ParseError {
             message: e.to_string(),
         })?;
@@ -444,12 +463,42 @@ impl CliParser {
         Ok(ParseResult::Config(validated_config))
     }
 
-    /// 判断字符串是否看起来像选项参数
+    /// Determines if a string looks like an option argument.
+    ///
+    /// # Arguments
+    ///
+    /// * `arg` - The argument string to check
+    ///
+    /// # Returns
+    ///
+    /// `true` if the argument starts with `-` or `/`, indicating it's likely an option.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use treepp::cli::CliParser;
+    ///
+    /// // These are not accessible directly, but the logic is:
+    /// // "-f" -> true (starts with -)
+    /// // "/F" -> true (starts with /)
+    /// // "path" -> false (regular path)
+    /// ```
     fn is_option_like(arg: &str) -> bool {
         arg.starts_with('-') || arg.starts_with('/')
     }
 
-    /// 尝试匹配参数到已知定义
+    /// Attempts to match an argument to a known definition.
+    ///
+    /// Iterates through all argument definitions and attempts to match.
+    ///
+    /// # Arguments
+    ///
+    /// * `arg` - The argument string to match
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(MatchedArg)` - Successfully matched argument
+    /// * `Err(CliError::UnknownOption)` - No matching definition found
     fn try_match_argument(&mut self, arg: &str) -> Result<MatchedArg, CliError> {
         for def in ARG_DEFINITIONS {
             if let Some(matched) = self.try_match_definition(arg, def)? {
@@ -461,7 +510,20 @@ impl CliParser {
         })
     }
 
-    /// 尝试将参数与特定定义匹配
+    /// Attempts to match an argument against a specific definition.
+    ///
+    /// Checks all three styles: CMD (case-insensitive), Unix short, and GNU long (both case-sensitive).
+    ///
+    /// # Arguments
+    ///
+    /// * `arg` - The argument string to match
+    /// * `def` - The definition to match against
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Some(MatchedArg))` - Successfully matched
+    /// * `Ok(None)` - No match for this definition
+    /// * `Err(CliError)` - Error during matching (e.g., missing value)
     fn try_match_definition(
         &mut self,
         arg: &str,
@@ -469,7 +531,6 @@ impl CliParser {
     ) -> Result<Option<MatchedArg>, CliError> {
         let arg_upper = arg.to_uppercase();
 
-        // CMD 风格匹配（大小写不敏感）
         for pattern in def.cmd_patterns {
             if arg_upper == pattern.to_uppercase() {
                 let value = self.consume_value_if_required(def, arg)?;
@@ -480,7 +541,6 @@ impl CliParser {
             }
         }
 
-        // Unix 短参数匹配（大小写敏感）
         for pattern in def.short_patterns {
             if arg == *pattern {
                 let value = self.consume_value_if_required(def, arg)?;
@@ -491,7 +551,6 @@ impl CliParser {
             }
         }
 
-        // GNU 长参数匹配（大小写敏感）
         for pattern in def.long_patterns {
             if arg == *pattern {
                 let value = self.consume_value_if_required(def, arg)?;
@@ -501,7 +560,6 @@ impl CliParser {
                 }));
             }
 
-            // 支持 --option=value 语法
             let equals_prefix = format!("{pattern}=");
             if arg.starts_with(&equals_prefix) && def.kind == ArgKind::Value {
                 let value = arg[equals_prefix.len()..].to_string();
@@ -515,7 +573,21 @@ impl CliParser {
         Ok(None)
     }
 
-    /// 如果参数需要值，消费下一个参数作为值
+    /// Consumes the next argument as a value if required.
+    ///
+    /// For value-type arguments, reads the next argument as the value.
+    /// For flag-type arguments, returns `None`.
+    ///
+    /// # Arguments
+    ///
+    /// * `def` - The argument definition
+    /// * `arg` - The original argument string (for error messages)
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Some(String))` - Value for value-type arguments
+    /// * `Ok(None)` - No value for flag-type arguments
+    /// * `Err(CliError::MissingValue)` - Value required but not provided
     fn consume_value_if_required(
         &mut self,
         def: &ArgDef,
@@ -543,7 +615,16 @@ impl CliParser {
         Ok(Some(next_arg.clone()))
     }
 
-    /// 注册已使用的规范名称，检测重复
+    /// Registers a canonical name and checks for duplicates.
+    ///
+    /// # Arguments
+    ///
+    /// * `canonical` - The canonical name to register
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` - Successfully registered
+    /// * `Err(CliError::DuplicateOption)` - Name already registered
     fn register_canonical_name(&mut self, canonical: &str) -> Result<(), CliError> {
         if !self.seen_canonical_names.insert(canonical.to_string()) {
             return Err(CliError::DuplicateOption {
@@ -553,60 +634,67 @@ impl CliParser {
         Ok(())
     }
 
-    /// 将匹配的参数应用到配置
-    fn apply_to_config(&mut self, config: &mut Config, matched: &MatchedArg) -> Result<(), CliError> {
+    /// Applies a matched argument to the configuration.
+    ///
+    /// Updates the appropriate field in the config based on the matched argument.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - The configuration to update
+    /// * `matched` - The matched argument with its value
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` - Successfully applied
+    /// * `Err(CliError::InvalidValue)` - Invalid value for the argument
+    fn apply_to_config(
+        &mut self,
+        config: &mut Config,
+        matched: &MatchedArg,
+    ) -> Result<(), CliError> {
         let canonical = matched.definition.canonical;
 
         match canonical {
-            // 信息显示类
             "help" => config.show_help = true,
             "version" => config.show_version = true,
-
-            // 模式类
             "batch" => config.batch_mode = true,
-
-            // 扫描选项
             "files" => config.scan.show_files = true,
             "gitignore" => config.scan.respect_gitignore = true,
             "level" => {
-                let value = matched.value.as_ref().expect("level 参数需要值");
+                let value = matched.value.as_ref().expect("level requires a value");
                 let depth: usize = value.parse().map_err(|_| CliError::InvalidValue {
                     option: canonical.to_string(),
                     value: value.clone(),
-                    reason: "必须是正整数".to_string(),
+                    reason: "must be a positive integer".to_string(),
                 })?;
                 config.scan.max_depth = Some(depth);
             }
             "thread" => {
-                let value = matched.value.as_ref().expect("thread 参数需要值");
+                let value = matched.value.as_ref().expect("thread requires a value");
                 let count: usize = value.parse().map_err(|_| CliError::InvalidValue {
                     option: canonical.to_string(),
                     value: value.clone(),
-                    reason: "必须是正整数".to_string(),
+                    reason: "must be a positive integer".to_string(),
                 })?;
                 config.scan.thread_count =
                     NonZeroUsize::new(count).ok_or_else(|| CliError::InvalidValue {
                         option: canonical.to_string(),
                         value: value.clone(),
-                        reason: "线程数必须大于 0".to_string(),
+                        reason: "thread count must be greater than 0".to_string(),
                     })?;
                 self.thread_explicitly_set = true;
             }
-
-            // 匹配选项
             "include" => {
-                if let Some(value) = matched.value.clone() {
-                    config.matching.include_patterns.push(value);
+                if let Some(ref value) = matched.value {
+                    config.matching.include_patterns.push(value.clone());
                 }
             }
             "exclude" => {
-                if let Some(value) = matched.value.clone() {
-                    config.matching.exclude_patterns.push(value);
+                if let Some(ref value) = matched.value {
+                    config.matching.exclude_patterns.push(value.clone());
                 }
             }
             "prune" => config.matching.prune_empty = true,
-
-            // 渲染选项
             "ascii" => config.render.charset = CharsetMode::Ascii,
             "full-path" => config.render.path_mode = PathMode::Full,
             "size" => config.render.show_size = true,
@@ -617,26 +705,34 @@ impl CliParser {
             "reverse" => config.render.reverse_sort = true,
             "report" => config.render.show_report = true,
             "no-win-banner" => config.render.no_win_banner = true,
-
-            // 输出选项
             "output" => {
-                if let Some(value) = matched.value.as_ref() {
+                if let Some(ref value) = matched.value {
                     config.output.output_path = Some(PathBuf::from(value));
                 }
             }
             "silent" => config.output.silent = true,
-
             _ => {}
         }
 
         Ok(())
     }
 
-    /// 验证路径参数
+    /// Validates path arguments.
+    ///
+    /// Ensures at most one path is specified and updates the config accordingly.
+    ///
+    /// # Arguments
+    ///
+    /// * `paths` - Collected path arguments
+    /// * `config` - The configuration to update
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` - Valid paths
+    /// * `Err(CliError::MultiplePaths)` - More than one path specified
     fn validate_paths(&self, paths: &[String], config: &mut Config) -> Result<(), CliError> {
         match paths.len() {
             0 => {
-                // 未指定路径，使用默认值，标记为未显式指定
                 config.path_explicitly_set = false;
                 Ok(())
             }
@@ -653,10 +749,14 @@ impl CliParser {
 }
 
 // ============================================================================
-// 帮助与版本信息
+// Help and Version Text
 // ============================================================================
 
-/// 获取帮助信息字符串
+/// Returns the help information string.
+///
+/// # Returns
+///
+/// A static string containing the complete help text.
 ///
 /// # Examples
 ///
@@ -702,7 +802,11 @@ Options:
 More info: https://github.com/Water-Run/treepp"#
 }
 
-/// 获取版本信息字符串
+/// Returns the version information string.
+///
+/// # Returns
+///
+/// A static string containing the version and author information.
 ///
 /// # Examples
 ///
@@ -722,7 +826,7 @@ author: WaterRun
 link: https://github.com/Water-Run/treepp"#
 }
 
-/// 打印帮助信息到标准输出
+/// Prints help information to standard output.
 ///
 /// # Examples
 ///
@@ -735,7 +839,7 @@ pub fn print_help() {
     println!("{}", help_text());
 }
 
-/// 打印版本信息到标准输出
+/// Prints version information to standard output.
 ///
 /// # Examples
 ///
@@ -749,7 +853,7 @@ pub fn print_version() {
 }
 
 // ============================================================================
-// 单元测试
+// Unit Tests
 // ============================================================================
 
 #[cfg(test)]
@@ -758,16 +862,10 @@ mod tests {
     use crate::config::OutputFormat;
     use tempfile::TempDir;
 
-    // ------------------------------------------------------------------------
-    // 辅助函数
-    // ------------------------------------------------------------------------
-
-    /// 创建临时目录用于测试
     fn create_temp_dir() -> TempDir {
         TempDir::new().expect("创建临时目录失败")
     }
 
-    /// 创建带有指定路径的解析器
     fn parser_with_temp_dir(temp_dir: &TempDir, extra_args: Vec<&str>) -> CliParser {
         let path_str = temp_dir.path().to_string_lossy().to_string();
         let mut args = vec![path_str];
@@ -775,23 +873,18 @@ mod tests {
         CliParser::new(args)
     }
 
-    // ------------------------------------------------------------------------
-    // 基础解析测试
-    // ------------------------------------------------------------------------
+    // ========================================================================
+    // Basic Parsing Tests
+    // ========================================================================
 
     #[test]
-    fn should_parse_empty_args_with_defaults() {
+    fn parse_empty_args_returns_default_config() {
         let parser = CliParser::new(vec![]);
         let result = parser.parse();
 
         assert!(result.is_ok(), "解析应成功: {:?}", result);
         if let Ok(ParseResult::Config(config)) = result {
-            // 验证后的路径是规范化的绝对路径
-            assert!(
-                config.root_path.is_absolute(),
-                "默认路径应被规范化为绝对路径"
-            );
-            // 验证其他默认值
+            assert!(config.root_path.is_absolute());
             assert!(!config.scan.show_files);
             assert_eq!(config.scan.thread_count.get(), 8);
             assert_eq!(config.scan.max_depth, None);
@@ -817,7 +910,7 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_path_only() {
+    fn parse_path_only_sets_root_path() {
         let temp_dir = create_temp_dir();
         let path_str = temp_dir.path().to_string_lossy().to_string();
 
@@ -835,7 +928,7 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_path_with_spaces() {
+    fn parse_path_with_spaces_succeeds() {
         let temp_dir = create_temp_dir();
         let sub_dir = temp_dir.path().join("path with spaces");
         std::fs::create_dir(&sub_dir).expect("创建子目录失败");
@@ -847,8 +940,7 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_relative_path() {
-        // 使用当前目录的相对路径 "."
+    fn parse_relative_path_normalizes_to_absolute() {
         let parser = CliParser::new(vec![".".to_string()]);
         let result = parser.parse();
 
@@ -858,12 +950,23 @@ mod tests {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // 帮助与版本测试
-    // ------------------------------------------------------------------------
+    #[test]
+    fn parse_current_dir_double_dot_normalizes() {
+        let parser = CliParser::new(vec!["..".to_string()]);
+        let result = parser.parse();
+
+        assert!(result.is_ok(), "父目录路径解析应成功: {:?}", result);
+        if let Ok(ParseResult::Config(config)) = result {
+            assert!(config.root_path.is_absolute());
+        }
+    }
+
+    // ========================================================================
+    // Help and Version Tests
+    // ========================================================================
 
     #[test]
-    fn should_return_help_for_help_flags() {
+    fn parse_help_flags_returns_help() {
         for flag in &["--help", "-h", "/?"] {
             let parser = CliParser::new(vec![flag.to_string()]);
             let result = parser.parse();
@@ -872,7 +975,7 @@ mod tests {
     }
 
     #[test]
-    fn should_return_version_for_version_flags() {
+    fn parse_version_flags_returns_version() {
         for flag in &["--version", "-v", "/V", "/v"] {
             let parser = CliParser::new(vec![flag.to_string()]);
             let result = parser.parse();
@@ -881,28 +984,32 @@ mod tests {
     }
 
     #[test]
-    fn should_return_help_even_with_other_options() {
-        // 帮助选项应该优先返回
+    fn parse_help_with_other_options_returns_help() {
         let parser = CliParser::new(vec!["/F".to_string(), "--help".to_string()]);
         let result = parser.parse();
-        // 注意：由于重复检测，这里会检测到 help，但 /F 在前面先处理
-        // 实际上会解析 /F，然后解析 --help 并返回 Help
         assert!(matches!(result, Ok(ParseResult::Help)));
     }
 
     #[test]
-    fn should_return_version_even_with_other_options() {
+    fn parse_version_with_other_options_returns_version() {
         let parser = CliParser::new(vec!["/F".to_string(), "--version".to_string()]);
         let result = parser.parse();
         assert!(matches!(result, Ok(ParseResult::Version)));
     }
 
-    // ------------------------------------------------------------------------
-    // 三风格混用测试
-    // ------------------------------------------------------------------------
+    #[test]
+    fn parse_help_before_other_options_returns_help() {
+        let parser = CliParser::new(vec!["--help".to_string(), "/F".to_string()]);
+        let result = parser.parse();
+        assert!(matches!(result, Ok(ParseResult::Help)));
+    }
+
+    // ========================================================================
+    // Three-Style Mixing Tests
+    // ========================================================================
 
     #[test]
-    fn should_parse_cmd_style_case_insensitive() {
+    fn parse_cmd_style_case_insensitive() {
         let parser1 = CliParser::new(vec!["/F".to_string()]);
         let parser2 = CliParser::new(vec!["/f".to_string()]);
 
@@ -917,8 +1024,7 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_cmd_style_various_cases() {
-        // 测试更多 CMD 风格的大小写变体
+    fn parse_cmd_style_various_cases() {
         for flag in &["/A", "/a", "/HR", "/hr", "/Hr", "/hR", "/NI", "/ni", "/Ni"] {
             let parser = CliParser::new(vec![flag.to_string()]);
             let result = parser.parse();
@@ -930,7 +1036,7 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_unix_short_style_case_sensitive() {
+    fn parse_unix_short_style_case_sensitive() {
         let parser1 = CliParser::new(vec!["-f".to_string()]);
         let result1 = parser1.parse();
         assert!(matches!(result1, Ok(ParseResult::Config(_))));
@@ -941,7 +1047,7 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_gnu_long_style() {
+    fn parse_gnu_long_style_files() {
         let parser = CliParser::new(vec!["--files".to_string()]);
         if let Ok(ParseResult::Config(config)) = parser.parse() {
             assert!(config.scan.show_files);
@@ -951,14 +1057,14 @@ mod tests {
     }
 
     #[test]
-    fn should_reject_gnu_long_style_wrong_case() {
+    fn parse_gnu_long_style_wrong_case_fails() {
         let parser = CliParser::new(vec!["--FILES".to_string()]);
         let result = parser.parse();
         assert!(matches!(result, Err(CliError::UnknownOption { .. })));
     }
 
     #[test]
-    fn should_parse_mixed_styles() {
+    fn parse_mixed_styles_combined() {
         let parser = CliParser::new(vec![
             "/F".to_string(),
             "-a".to_string(),
@@ -976,19 +1082,11 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_all_three_styles_together() {
+    fn parse_all_three_styles_together() {
         let temp_dir = create_temp_dir();
         let parser = parser_with_temp_dir(
             &temp_dir,
-            vec![
-                "/F",
-                "-a",
-                "--size",
-                "/HR",
-                "-d",
-                "--reverse",
-                "--prune",
-            ],
+            vec!["/F", "-a", "--size", "/HR", "-d", "--reverse", "--prune"],
         );
 
         if let Ok(ParseResult::Config(config)) = parser.parse() {
@@ -1004,12 +1102,12 @@ mod tests {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // 等价映射测试
-    // ------------------------------------------------------------------------
+    // ========================================================================
+    // Equivalent Mapping Tests
+    // ========================================================================
 
     #[test]
-    fn should_map_equivalent_options() {
+    fn map_equivalent_files_options() {
         let cases = vec!["/F", "-f", "--files"];
 
         for flag in cases {
@@ -1023,7 +1121,7 @@ mod tests {
     }
 
     #[test]
-    fn should_map_all_equivalent_ascii_options() {
+    fn map_equivalent_ascii_options() {
         for flag in &["/A", "/a", "-a", "--ascii"] {
             let parser = CliParser::new(vec![flag.to_string()]);
             if let Ok(ParseResult::Config(config)) = parser.parse() {
@@ -1039,7 +1137,7 @@ mod tests {
     }
 
     #[test]
-    fn should_map_all_equivalent_level_options() {
+    fn map_equivalent_level_options() {
         for (flag, value) in &[("/L", "5"), ("-L", "5"), ("--level", "5")] {
             let parser = CliParser::new(vec![flag.to_string(), value.to_string()]);
             if let Ok(ParseResult::Config(config)) = parser.parse() {
@@ -1050,12 +1148,12 @@ mod tests {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // 带值参数测试
-    // ------------------------------------------------------------------------
+    // ========================================================================
+    // Value Argument Tests
+    // ========================================================================
 
     #[test]
-    fn should_parse_value_arguments() {
+    fn parse_value_argument_with_space() {
         let parser = CliParser::new(vec!["--level".to_string(), "5".to_string()]);
 
         if let Ok(ParseResult::Config(config)) = parser.parse() {
@@ -1066,7 +1164,7 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_equals_syntax() {
+    fn parse_value_argument_with_equals_syntax() {
         let parser = CliParser::new(vec!["--level=10".to_string()]);
 
         if let Ok(ParseResult::Config(config)) = parser.parse() {
@@ -1077,7 +1175,7 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_equals_syntax_with_various_values() {
+    fn parse_equals_syntax_various_values() {
         let cases = vec![
             ("--level=1", 1usize),
             ("--level=100", 100),
@@ -1095,8 +1193,7 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_equals_syntax_for_output() {
-        // txt 格式不需要 --batch
+    fn parse_equals_syntax_for_output() {
         let parser = CliParser::new(vec!["--output=tree.txt".to_string()]);
 
         if let Ok(ParseResult::Config(config)) = parser.parse() {
@@ -1107,36 +1204,35 @@ mod tests {
     }
 
     #[test]
-    fn should_fail_on_missing_value() {
+    fn parse_missing_value_fails() {
         let parser = CliParser::new(vec!["--level".to_string()]);
         let result = parser.parse();
         assert!(matches!(result, Err(CliError::MissingValue { .. })));
     }
 
     #[test]
-    fn should_fail_on_missing_value_when_followed_by_option() {
+    fn parse_value_followed_by_option_fails() {
         let parser = CliParser::new(vec!["--level".to_string(), "--files".to_string()]);
         let result = parser.parse();
         assert!(matches!(result, Err(CliError::MissingValue { .. })));
     }
 
     #[test]
-    fn should_fail_on_invalid_value() {
+    fn parse_invalid_value_fails() {
         let parser = CliParser::new(vec!["--level".to_string(), "abc".to_string()]);
         let result = parser.parse();
         assert!(matches!(result, Err(CliError::InvalidValue { .. })));
     }
 
     #[test]
-    fn should_fail_on_negative_level() {
+    fn parse_negative_level_treated_as_missing_value() {
         let parser = CliParser::new(vec!["--level".to_string(), "-5".to_string()]);
         let result = parser.parse();
-        // -5 看起来像选项，所以会报 MissingValue
         assert!(matches!(result, Err(CliError::MissingValue { .. })));
     }
 
     #[test]
-    fn should_parse_level_zero() {
+    fn parse_level_zero_succeeds() {
         let parser = CliParser::new(vec!["--level".to_string(), "0".to_string()]);
 
         if let Ok(ParseResult::Config(config)) = parser.parse() {
@@ -1147,7 +1243,7 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_large_level() {
+    fn parse_large_level_succeeds() {
         let parser = CliParser::new(vec!["--level".to_string(), "1000000".to_string()]);
 
         if let Ok(ParseResult::Config(config)) = parser.parse() {
@@ -1157,33 +1253,33 @@ mod tests {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // 重复参数测试
-    // ------------------------------------------------------------------------
+    // ========================================================================
+    // Duplicate Option Tests
+    // ========================================================================
 
     #[test]
-    fn should_fail_on_duplicate_option() {
+    fn parse_duplicate_option_different_styles_fails() {
         let parser = CliParser::new(vec!["/F".to_string(), "--files".to_string()]);
         let result = parser.parse();
         assert!(matches!(result, Err(CliError::DuplicateOption { .. })));
     }
 
     #[test]
-    fn should_fail_on_duplicate_same_style() {
+    fn parse_duplicate_option_same_style_fails() {
         let parser = CliParser::new(vec!["/F".to_string(), "/F".to_string()]);
         let result = parser.parse();
         assert!(matches!(result, Err(CliError::DuplicateOption { .. })));
     }
 
     #[test]
-    fn should_fail_on_duplicate_different_case_cmd() {
+    fn parse_duplicate_option_different_case_cmd_fails() {
         let parser = CliParser::new(vec!["/F".to_string(), "/f".to_string()]);
         let result = parser.parse();
         assert!(matches!(result, Err(CliError::DuplicateOption { .. })));
     }
 
     #[test]
-    fn should_fail_on_duplicate_level() {
+    fn parse_duplicate_level_fails() {
         let parser = CliParser::new(vec![
             "--level".to_string(),
             "3".to_string(),
@@ -1194,44 +1290,51 @@ mod tests {
         assert!(matches!(result, Err(CliError::DuplicateOption { .. })));
     }
 
-    // ------------------------------------------------------------------------
-    // 未知参数测试
-    // ------------------------------------------------------------------------
+    // ========================================================================
+    // Unknown Option Tests
+    // ========================================================================
 
     #[test]
-    fn should_fail_on_unknown_option() {
+    fn parse_unknown_cmd_option_fails() {
         let parser = CliParser::new(vec!["/UNKNOWN".to_string()]);
         let result = parser.parse();
         assert!(matches!(result, Err(CliError::UnknownOption { .. })));
     }
 
     #[test]
-    fn should_fail_on_unknown_short_option() {
+    fn parse_unknown_short_option_fails() {
         let parser = CliParser::new(vec!["-z".to_string()]);
         let result = parser.parse();
         assert!(matches!(result, Err(CliError::UnknownOption { .. })));
     }
 
     #[test]
-    fn should_fail_on_unknown_long_option() {
+    fn parse_unknown_long_option_fails() {
         let parser = CliParser::new(vec!["--unknown-option".to_string()]);
         let result = parser.parse();
         assert!(matches!(result, Err(CliError::UnknownOption { .. })));
     }
 
     #[test]
-    fn should_fail_on_typo_option() {
-        let parser = CliParser::new(vec!["--fies".to_string()]); // typo for --files
+    fn parse_typo_option_fails() {
+        let parser = CliParser::new(vec!["--fies".to_string()]);
         let result = parser.parse();
         assert!(matches!(result, Err(CliError::UnknownOption { .. })));
     }
 
-    // ------------------------------------------------------------------------
-    // 线程数测试
-    // ------------------------------------------------------------------------
+    #[test]
+    fn parse_partial_option_fails() {
+        let parser = CliParser::new(vec!["--fil".to_string()]);
+        let result = parser.parse();
+        assert!(matches!(result, Err(CliError::UnknownOption { .. })));
+    }
+
+    // ========================================================================
+    // Thread Count Tests
+    // ========================================================================
 
     #[test]
-    fn should_parse_thread_count() {
+    fn parse_thread_count_with_batch() {
         let parser = CliParser::new(vec![
             "--batch".to_string(),
             "--thread".to_string(),
@@ -1246,7 +1349,7 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_thread_count_one() {
+    fn parse_thread_count_one() {
         let parser = CliParser::new(vec![
             "--batch".to_string(),
             "--thread".to_string(),
@@ -1261,7 +1364,7 @@ mod tests {
     }
 
     #[test]
-    fn should_fail_on_zero_thread_count() {
+    fn parse_zero_thread_count_fails() {
         let parser = CliParser::new(vec![
             "--batch".to_string(),
             "--thread".to_string(),
@@ -1272,7 +1375,7 @@ mod tests {
     }
 
     #[test]
-    fn should_fail_on_invalid_thread_count() {
+    fn parse_invalid_thread_count_fails() {
         let parser = CliParser::new(vec![
             "--batch".to_string(),
             "--thread".to_string(),
@@ -1283,12 +1386,9 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_thread_with_cmd_style() {
-        let parser = CliParser::new(vec![
-            "/B".to_string(),
-            "/T".to_string(),
-            "4".to_string(),
-        ]);
+    fn parse_thread_with_cmd_style() {
+        let parser =
+            CliParser::new(vec!["/B".to_string(), "/T".to_string(), "4".to_string()]);
 
         if let Ok(ParseResult::Config(config)) = parser.parse() {
             assert_eq!(config.scan.thread_count.get(), 4);
@@ -1297,13 +1397,27 @@ mod tests {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // 输出选项测试
-    // ------------------------------------------------------------------------
+    #[test]
+    fn parse_thread_large_value() {
+        let parser = CliParser::new(vec![
+            "--batch".to_string(),
+            "--thread".to_string(),
+            "128".to_string(),
+        ]);
+
+        if let Ok(ParseResult::Config(config)) = parser.parse() {
+            assert_eq!(config.scan.thread_count.get(), 128);
+        } else {
+            panic!("解析失败");
+        }
+    }
+
+    // ========================================================================
+    // Output Option Tests
+    // ========================================================================
 
     #[test]
-    fn should_parse_output_path() {
-        // txt 格式不需要 --batch
+    fn parse_output_path_txt() {
         let parser = CliParser::new(vec!["--output".to_string(), "tree.txt".to_string()]);
 
         if let Ok(ParseResult::Config(config)) = parser.parse() {
@@ -1314,16 +1428,18 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_output_with_various_extensions() {
-        // txt 格式不需要 --batch
+    fn parse_output_format_inference() {
         let txt_parser = CliParser::new(vec!["--output".to_string(), "tree.txt".to_string()]);
         if let Ok(ParseResult::Config(config)) = txt_parser.parse() {
-            assert_eq!(config.output.format, OutputFormat::Txt, "测试 tree.txt 格式推断");
+            assert_eq!(
+                config.output.format,
+                OutputFormat::Txt,
+                "测试 tree.txt 格式推断"
+            );
         } else {
             panic!("解析 --output tree.txt 失败");
         }
 
-        // 结构化格式需要 --batch
         let structured_cases = vec![
             ("tree.json", OutputFormat::Json),
             ("tree.yml", OutputFormat::Yaml),
@@ -1349,8 +1465,7 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_output_with_path() {
-        // txt 格式不需要 --batch
+    fn parse_output_with_full_path() {
         let parser = CliParser::new(vec![
             "--output".to_string(),
             "C:\\output\\tree.txt".to_string(),
@@ -1367,7 +1482,7 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_silent_with_output() {
+    fn parse_silent_with_output() {
         let parser = CliParser::new(vec![
             "--silent".to_string(),
             "--output".to_string(),
@@ -1382,12 +1497,26 @@ mod tests {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // 模式匹配测试
-    // ------------------------------------------------------------------------
+    #[test]
+    fn parse_output_with_relative_path() {
+        let parser = CliParser::new(vec![
+            "--output".to_string(),
+            "./output/tree.txt".to_string(),
+        ]);
+
+        if let Ok(ParseResult::Config(config)) = parser.parse() {
+            assert!(config.output.output_path.is_some());
+        } else {
+            panic!("解析失败");
+        }
+    }
+
+    // ========================================================================
+    // Pattern Matching Tests
+    // ========================================================================
 
     #[test]
-    fn should_parse_include_pattern() {
+    fn parse_include_pattern() {
         let parser = CliParser::new(vec!["--include".to_string(), "*.rs".to_string()]);
 
         if let Ok(ParseResult::Config(config)) = parser.parse() {
@@ -1398,8 +1527,9 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_exclude_pattern() {
-        let parser = CliParser::new(vec!["--exclude".to_string(), "node_modules".to_string()]);
+    fn parse_exclude_pattern() {
+        let parser =
+            CliParser::new(vec!["--exclude".to_string(), "node_modules".to_string()]);
 
         if let Ok(ParseResult::Config(config)) = parser.parse() {
             assert_eq!(
@@ -1412,7 +1542,7 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_multiple_include_patterns() {
+    fn parse_multiple_include_patterns() {
         let parser = CliParser::new(vec![
             "--include".to_string(),
             "*.rs".to_string(),
@@ -1431,7 +1561,7 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_multiple_exclude_patterns() {
+    fn parse_multiple_exclude_patterns() {
         let parser = CliParser::new(vec![
             "--exclude".to_string(),
             "target".to_string(),
@@ -1450,7 +1580,7 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_prune() {
+    fn parse_prune_all_styles() {
         for flag in &["--prune", "-P", "/P"] {
             let parser = CliParser::new(vec![flag.to_string()]);
             if let Ok(ParseResult::Config(config)) = parser.parse() {
@@ -1462,7 +1592,7 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_gitignore() {
+    fn parse_gitignore_all_styles() {
         for flag in &["--gitignore", "-g", "/G", "/g"] {
             let parser = CliParser::new(vec![flag.to_string()]);
             if let Ok(ParseResult::Config(config)) = parser.parse() {
@@ -1473,46 +1603,47 @@ mod tests {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // 配置验证集成测试
-    // ------------------------------------------------------------------------
+    #[test]
+    fn parse_include_with_complex_pattern() {
+        let parser = CliParser::new(vec![
+            "--include".to_string(),
+            "src/**/*.rs".to_string(),
+        ]);
+
+        if let Ok(ParseResult::Config(config)) = parser.parse() {
+            assert_eq!(
+                config.matching.include_patterns,
+                vec!["src/**/*.rs".to_string()]
+            );
+        } else {
+            panic!("解析失败");
+        }
+    }
+
+    // ========================================================================
+    // Configuration Validation Integration Tests
+    // ========================================================================
 
     #[test]
-    fn should_fail_silent_without_output() {
+    fn parse_silent_without_output_fails() {
         let parser = CliParser::new(vec!["--silent".to_string()]);
         let result = parser.parse();
         assert!(result.is_err());
     }
 
     #[test]
-    fn should_infer_output_format_from_extension() {
-        // JSON 格式需要 --batch
-        let parser = CliParser::new(vec![
-            "--batch".to_string(),
-            "--output".to_string(),
-            "tree.json".to_string(),
-        ]);
-
-        if let Ok(ParseResult::Config(config)) = parser.parse() {
-            assert_eq!(config.output.format, OutputFormat::Json);
-        } else {
-            panic!("解析失败");
-        }
-    }
-
-    #[test]
-    fn should_fail_on_nonexistent_path() {
+    fn parse_nonexistent_path_fails() {
         let parser = CliParser::new(vec!["C:\\nonexistent\\path\\12345".to_string()]);
         let result = parser.parse();
         assert!(result.is_err(), "不存在的路径应该失败");
     }
 
-    // ------------------------------------------------------------------------
-    // 渲染选项测试
-    // ------------------------------------------------------------------------
+    // ========================================================================
+    // Rendering Option Tests
+    // ========================================================================
 
     #[test]
-    fn should_parse_full_path() {
+    fn parse_full_path_all_styles() {
         for flag in &["--full-path", "-p", "/FP", "/fp"] {
             let parser = CliParser::new(vec![flag.to_string()]);
             if let Ok(ParseResult::Config(config)) = parser.parse() {
@@ -1524,7 +1655,7 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_size() {
+    fn parse_size_all_styles() {
         for flag in &["--size", "-s", "/S"] {
             let parser = CliParser::new(vec![flag.to_string()]);
             if let Ok(ParseResult::Config(config)) = parser.parse() {
@@ -1536,7 +1667,7 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_human_readable() {
+    fn parse_human_readable_all_styles() {
         for flag in &["--human-readable", "-H", "/HR", "/hr"] {
             let parser = CliParser::new(vec![flag.to_string()]);
             if let Ok(ParseResult::Config(config)) = parser.parse() {
@@ -1548,7 +1679,7 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_date() {
+    fn parse_date_all_styles() {
         for flag in &["--date", "-d", "/DT", "/dt"] {
             let parser = CliParser::new(vec![flag.to_string()]);
             if let Ok(ParseResult::Config(config)) = parser.parse() {
@@ -1560,8 +1691,7 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_disk_usage() {
-        // disk-usage 需要 --batch
+    fn parse_disk_usage_with_batch() {
         for flag in &["--disk-usage", "-u", "/DU", "/du"] {
             let parser = CliParser::new(vec!["--batch".to_string(), flag.to_string()]);
             if let Ok(ParseResult::Config(config)) = parser.parse() {
@@ -1574,7 +1704,7 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_no_indent() {
+    fn parse_no_indent_all_styles() {
         for flag in &["--no-indent", "-i", "/NI", "/ni"] {
             let parser = CliParser::new(vec![flag.to_string()]);
             if let Ok(ParseResult::Config(config)) = parser.parse() {
@@ -1586,7 +1716,7 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_reverse() {
+    fn parse_reverse_all_styles() {
         for flag in &["--reverse", "-r", "/R", "/r"] {
             let parser = CliParser::new(vec![flag.to_string()]);
             if let Ok(ParseResult::Config(config)) = parser.parse() {
@@ -1598,7 +1728,7 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_report() {
+    fn parse_report_all_styles() {
         for flag in &["--report", "-e", "/RP", "/rp"] {
             let parser = CliParser::new(vec![flag.to_string()]);
             if let Ok(ParseResult::Config(config)) = parser.parse() {
@@ -1610,7 +1740,7 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_no_win_banner() {
+    fn parse_no_win_banner_all_styles() {
         for flag in &["--no-win-banner", "-N", "/NB", "/nb"] {
             let parser = CliParser::new(vec![flag.to_string()]);
             if let Ok(ParseResult::Config(config)) = parser.parse() {
@@ -1621,12 +1751,12 @@ mod tests {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // 帮助文本测试
-    // ------------------------------------------------------------------------
+    // ========================================================================
+    // Help Text Tests
+    // ========================================================================
 
     #[test]
-    fn should_contain_all_options_in_help() {
+    fn help_text_contains_all_options() {
         let help = help_text();
         assert!(help.contains("--help"));
         assert!(help.contains("--batch"));
@@ -1649,20 +1779,11 @@ mod tests {
         assert!(help.contains("--full-path"));
         assert!(help.contains("--no-indent"));
         assert!(help.contains("--report"));
-        // 验证依赖说明
         assert!(help.contains("requires --batch"));
     }
 
     #[test]
-    fn should_contain_version_in_version_text() {
-        let version = version_text();
-        assert!(version.contains("0.1.0"));
-        assert!(version.contains("WaterRun"));
-        assert!(version.contains("github.com"));
-    }
-
-    #[test]
-    fn should_contain_usage_in_help() {
+    fn help_text_contains_usage() {
         let help = help_text();
         assert!(help.contains("Usage"));
         assert!(help.contains("treepp"));
@@ -1670,12 +1791,20 @@ mod tests {
         assert!(help.contains("OPTIONS"));
     }
 
-    // ------------------------------------------------------------------------
-    // 路径位置测试
-    // ------------------------------------------------------------------------
+    #[test]
+    fn version_text_contains_required_info() {
+        let version = version_text();
+        assert!(version.contains("0.1.0"));
+        assert!(version.contains("WaterRun"));
+        assert!(version.contains("github.com"));
+    }
+
+    // ========================================================================
+    // Path Position Tests
+    // ========================================================================
 
     #[test]
-    fn should_fail_multiple_paths() {
+    fn parse_multiple_paths_fails() {
         let parser = CliParser::new(vec!["path1".to_string(), "path2".to_string()]);
         let result = parser.parse();
 
@@ -1689,7 +1818,7 @@ mod tests {
     }
 
     #[test]
-    fn should_fail_three_paths() {
+    fn parse_three_paths_fails() {
         let parser = CliParser::new(vec![
             "path1".to_string(),
             "path2".to_string(),
@@ -1705,62 +1834,67 @@ mod tests {
     }
 
     #[test]
-    fn should_accept_only_options_no_path() {
+    fn parse_only_options_uses_default_path() {
         let parser = CliParser::new(vec!["/F".to_string()]);
         let result = parser.parse();
 
-        // 当前目录应该存在，所以解析应该成功
         assert!(result.is_ok(), "只有选项无路径应该成功（使用当前目录）");
     }
 
-    // ------------------------------------------------------------------------
-    // 边缘情况测试
-    // ------------------------------------------------------------------------
+    #[test]
+    fn parse_path_between_options() {
+        let temp_dir = create_temp_dir();
+        let parser = CliParser::new(vec![
+            "/F".to_string(),
+            temp_dir.path().to_string_lossy().to_string(),
+            "--ascii".to_string(),
+        ]);
+
+        let result = parser.parse();
+        assert!(result.is_ok(), "路径在选项之间应该成功");
+    }
+
+    // ========================================================================
+    // Edge Case Tests
+    // ========================================================================
 
     #[test]
-    fn should_handle_empty_string_arg() {
-        // 空字符串被视为路径
+    fn parse_empty_string_arg_fails() {
         let parser = CliParser::new(vec!["".to_string()]);
         let result = parser.parse();
-        // 空路径应该导致验证失败
         assert!(result.is_err());
     }
 
     #[test]
-    fn should_handle_whitespace_only_arg() {
+    fn parse_whitespace_only_arg_fails() {
         let parser = CliParser::new(vec!["   ".to_string()]);
         let result = parser.parse();
-        // 纯空白路径应该导致验证失败
         assert!(result.is_err());
     }
 
     #[test]
-    fn should_handle_dash_only() {
+    fn parse_dash_only_fails() {
         let parser = CliParser::new(vec!["-".to_string()]);
         let result = parser.parse();
-        // 单独的 "-" 应该被视为未知选项
         assert!(matches!(result, Err(CliError::UnknownOption { .. })));
     }
 
     #[test]
-    fn should_handle_double_dash_only() {
+    fn parse_double_dash_only_fails() {
         let parser = CliParser::new(vec!["--".to_string()]);
         let result = parser.parse();
-        // 单独的 "--" 应该被视为未知选项
         assert!(matches!(result, Err(CliError::UnknownOption { .. })));
     }
 
     #[test]
-    fn should_handle_slash_only() {
+    fn parse_slash_only_fails() {
         let parser = CliParser::new(vec!["/".to_string()]);
         let result = parser.parse();
-        // 单独的 "/" 应该被视为未知选项
         assert!(matches!(result, Err(CliError::UnknownOption { .. })));
     }
 
     #[test]
-    fn should_parse_option_with_unicode() {
-        // 带有 Unicode 字符的路径
+    fn parse_unicode_path() {
         let temp_dir = create_temp_dir();
         let unicode_dir = temp_dir.path().join("测试目录");
         std::fs::create_dir(&unicode_dir).expect("创建目录失败");
@@ -1774,34 +1908,30 @@ mod tests {
         assert!(result.is_ok(), "Unicode 路径应该成功: {:?}", result);
     }
 
-    // ------------------------------------------------------------------------
-    // 复合场景测试
-    // ------------------------------------------------------------------------
+    #[test]
+    fn parse_unicode_path_with_special_chars() {
+        let temp_dir = create_temp_dir();
+        let special_dir = temp_dir.path().join("テスト_フォルダ");
+        std::fs::create_dir(&special_dir).expect("创建目录失败");
+
+        let parser = CliParser::new(vec![special_dir.to_string_lossy().to_string()]);
+        let result = parser.parse();
+
+        assert!(result.is_ok(), "特殊 Unicode 路径应该成功: {:?}", result);
+    }
+
+    // ========================================================================
+    // Complex Scenario Tests
+    // ========================================================================
 
     #[test]
-    fn should_parse_complex_command_line() {
+    fn parse_complex_command_line() {
         let temp_dir = create_temp_dir();
         let parser = parser_with_temp_dir(
             &temp_dir,
             vec![
-                "/B", // 需要批处理模式以支持 /DU 和 /T
-                "/F",
-                "-a",
-                "--level",
-                "5",
-                "-s",
-                "-H",
-                "-r",
-                "--include",
-                "*.rs",
-                "--exclude",
-                "target",
-                "--prune",
-                "-g",
-                "--report",
-                "-N",
-                "--thread",
-                "4",
+                "/B", "/F", "-a", "--level", "5", "-s", "-H", "-r", "--include", "*.rs",
+                "--exclude", "target", "--prune", "-g", "--report", "-N", "--thread", "4",
                 "--disk-usage",
             ],
         );
@@ -1828,19 +1958,13 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_minimal_output_scenario() {
+    fn parse_minimal_output_scenario() {
         let temp_dir = create_temp_dir();
         let output_file = temp_dir.path().join("output.json");
 
         let parser = parser_with_temp_dir(
             &temp_dir,
-            vec![
-                "--batch", // JSON 输出需要批处理模式
-                "--output",
-                output_file.to_str().unwrap(),
-                "--silent",
-                "/F",
-            ],
+            vec!["--batch", "--output", output_file.to_str().unwrap(), "--silent", "/F"],
         );
 
         if let Ok(ParseResult::Config(config)) = parser.parse() {
@@ -1853,12 +1977,41 @@ mod tests {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // is_option_like 测试
-    // ------------------------------------------------------------------------
+    #[test]
+    fn parse_all_rendering_options_combined() {
+        let parser = CliParser::new(vec![
+            "--ascii".to_string(),
+            "--size".to_string(),
+            "--human-readable".to_string(),
+            "--date".to_string(),
+            "--no-indent".to_string(),
+            "--reverse".to_string(),
+            "--report".to_string(),
+            "--no-win-banner".to_string(),
+            "--full-path".to_string(),
+        ]);
+
+        if let Ok(ParseResult::Config(config)) = parser.parse() {
+            assert_eq!(config.render.charset, CharsetMode::Ascii);
+            assert!(config.render.show_size);
+            assert!(config.render.human_readable);
+            assert!(config.render.show_date);
+            assert!(config.render.no_indent);
+            assert!(config.render.reverse_sort);
+            assert!(config.render.show_report);
+            assert!(config.render.no_win_banner);
+            assert_eq!(config.render.path_mode, PathMode::Full);
+        } else {
+            panic!("解析失败");
+        }
+    }
+
+    // ========================================================================
+    // is_option_like Tests
+    // ========================================================================
 
     #[test]
-    fn should_identify_option_like_strings() {
+    fn is_option_like_identifies_options() {
         assert!(CliParser::is_option_like("-f"));
         assert!(CliParser::is_option_like("--files"));
         assert!(CliParser::is_option_like("/F"));
@@ -1869,27 +2022,30 @@ mod tests {
     }
 
     #[test]
-    fn should_identify_non_option_strings() {
+    fn is_option_like_identifies_non_options() {
         assert!(!CliParser::is_option_like("path"));
         assert!(!CliParser::is_option_like("C:\\dir"));
         assert!(!CliParser::is_option_like("file.txt"));
         assert!(!CliParser::is_option_like(""));
         assert!(!CliParser::is_option_like("123"));
+        assert!(!CliParser::is_option_like("src/main.rs"));
     }
 
-    // ------------------------------------------------------------------------
-    // from_env 测试
-    // ------------------------------------------------------------------------
+    // ========================================================================
+    // from_env Tests
+    // ========================================================================
 
     #[test]
-    fn should_create_parser_from_env() {
-        // 这个测试主要验证 from_env 不会 panic
+    fn from_env_creates_parser() {
         let _parser = CliParser::from_env();
-        // 不调用 parse()，因为实际的命令行参数可能导致各种结果
     }
 
+    // ========================================================================
+    // Path Explicit Set Tests
+    // ========================================================================
+
     #[test]
-    fn test_path_explicitly_set_when_specified() {
+    fn path_explicitly_set_when_specified() {
         let temp_dir = create_temp_dir();
         let path_str = temp_dir.path().to_string_lossy().to_string();
 
@@ -1904,7 +2060,7 @@ mod tests {
     }
 
     #[test]
-    fn test_path_not_explicitly_set_when_omitted() {
+    fn path_not_explicitly_set_when_omitted() {
         let parser = CliParser::new(vec![]);
         let result = parser.parse();
 
@@ -1916,7 +2072,7 @@ mod tests {
     }
 
     #[test]
-    fn test_path_explicitly_set_with_dot() {
+    fn path_explicitly_set_with_dot() {
         let parser = CliParser::new(vec![".".to_string()]);
         let result = parser.parse();
 
@@ -1927,12 +2083,12 @@ mod tests {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // batch 模式测试
-    // ------------------------------------------------------------------------
+    // ========================================================================
+    // Batch Mode Tests
+    // ========================================================================
 
     #[test]
-    fn should_parse_batch_flag_cmd_style() {
+    fn parse_batch_flag_cmd_style() {
         let parser = CliParser::new(vec!["/B".to_string()]);
         if let Ok(ParseResult::Config(config)) = parser.parse() {
             assert!(config.batch_mode);
@@ -1942,7 +2098,7 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_batch_flag_cmd_style_lowercase() {
+    fn parse_batch_flag_cmd_style_lowercase() {
         let parser = CliParser::new(vec!["/b".to_string()]);
         if let Ok(ParseResult::Config(config)) = parser.parse() {
             assert!(config.batch_mode);
@@ -1952,7 +2108,7 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_batch_flag_short_style() {
+    fn parse_batch_flag_short_style() {
         let parser = CliParser::new(vec!["-b".to_string()]);
         if let Ok(ParseResult::Config(config)) = parser.parse() {
             assert!(config.batch_mode);
@@ -1962,7 +2118,7 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_batch_flag_long_style() {
+    fn parse_batch_flag_long_style() {
         let parser = CliParser::new(vec!["--batch".to_string()]);
         if let Ok(ParseResult::Config(config)) = parser.parse() {
             assert!(config.batch_mode);
@@ -1972,7 +2128,7 @@ mod tests {
     }
 
     #[test]
-    fn should_fail_thread_without_batch() {
+    fn parse_thread_without_batch_fails() {
         let parser = CliParser::new(vec!["--thread".to_string(), "4".to_string()]);
         let result = parser.parse();
         assert!(result.is_err());
@@ -1986,7 +2142,7 @@ mod tests {
     }
 
     #[test]
-    fn should_succeed_thread_with_batch() {
+    fn parse_thread_with_batch_succeeds() {
         let parser = CliParser::new(vec![
             "--batch".to_string(),
             "--thread".to_string(),
@@ -2002,15 +2158,14 @@ mod tests {
     }
 
     #[test]
-    fn should_fail_disk_usage_without_batch() {
+    fn parse_disk_usage_without_batch_fails() {
         let parser = CliParser::new(vec!["--disk-usage".to_string()]);
         let result = parser.parse();
         assert!(result.is_err());
-        // 错误来自 Config::validate()，包装为 ParseError
     }
 
     #[test]
-    fn should_succeed_disk_usage_with_batch() {
+    fn parse_disk_usage_with_batch_succeeds() {
         let parser = CliParser::new(vec!["--batch".to_string(), "--disk-usage".to_string()]);
         let result = parser.parse();
         assert!(result.is_ok());
@@ -2022,14 +2177,14 @@ mod tests {
     }
 
     #[test]
-    fn should_fail_json_output_without_batch() {
+    fn parse_json_output_without_batch_fails() {
         let parser = CliParser::new(vec!["--output".to_string(), "tree.json".to_string()]);
         let result = parser.parse();
         assert!(result.is_err());
     }
 
     #[test]
-    fn should_succeed_json_output_with_batch() {
+    fn parse_json_output_with_batch_succeeds() {
         let parser = CliParser::new(vec![
             "--batch".to_string(),
             "--output".to_string(),
@@ -2045,7 +2200,7 @@ mod tests {
     }
 
     #[test]
-    fn should_succeed_txt_output_without_batch() {
+    fn parse_txt_output_without_batch_succeeds() {
         let parser = CliParser::new(vec!["--output".to_string(), "tree.txt".to_string()]);
         let result = parser.parse();
         assert!(result.is_ok());
@@ -2057,12 +2212,10 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_batch_with_multiple_options() {
+    fn parse_batch_with_multiple_options() {
         let temp_dir = create_temp_dir();
-        let parser = parser_with_temp_dir(
-            &temp_dir,
-            vec!["/B", "/F", "/DU", "-t", "16", "-o", "tree.json"],
-        );
+        let parser =
+            parser_with_temp_dir(&temp_dir, vec!["/B", "/F", "/DU", "-t", "16", "-o", "tree.json"]);
 
         if let Ok(ParseResult::Config(config)) = parser.parse() {
             assert!(config.batch_mode);
@@ -2076,10 +2229,197 @@ mod tests {
     }
 
     #[test]
-    fn should_default_to_stream_mode() {
+    fn parse_defaults_to_stream_mode() {
         let parser = CliParser::new(vec!["/F".to_string()]);
         if let Ok(ParseResult::Config(config)) = parser.parse() {
             assert!(!config.batch_mode);
+        } else {
+            panic!("解析失败");
+        }
+    }
+
+    // ========================================================================
+    // Additional Coverage Tests
+    // ========================================================================
+
+    #[test]
+    fn parse_yaml_output_with_batch() {
+        let parser = CliParser::new(vec![
+            "--batch".to_string(),
+            "--output".to_string(),
+            "tree.yaml".to_string(),
+        ]);
+        let result = parser.parse();
+        assert!(result.is_ok());
+
+        if let Ok(ParseResult::Config(config)) = result {
+            assert_eq!(config.output.format, OutputFormat::Yaml);
+        }
+    }
+
+    #[test]
+    fn parse_toml_output_with_batch() {
+        let parser = CliParser::new(vec![
+            "--batch".to_string(),
+            "--output".to_string(),
+            "tree.toml".to_string(),
+        ]);
+        let result = parser.parse();
+        assert!(result.is_ok());
+
+        if let Ok(ParseResult::Config(config)) = result {
+            assert_eq!(config.output.format, OutputFormat::Toml);
+        }
+    }
+
+    #[test]
+    fn parse_mixed_include_exclude_patterns() {
+        let parser = CliParser::new(vec![
+            "--include".to_string(),
+            "*.rs".to_string(),
+            "--exclude".to_string(),
+            "target".to_string(),
+            "-m".to_string(),
+            "*.toml".to_string(),
+            "/X".to_string(),
+            ".git".to_string(),
+        ]);
+
+        if let Ok(ParseResult::Config(config)) = parser.parse() {
+            assert_eq!(config.matching.include_patterns.len(), 2);
+            assert_eq!(config.matching.exclude_patterns.len(), 2);
+            assert!(config.matching.include_patterns.contains(&"*.rs".to_string()));
+            assert!(config.matching.include_patterns.contains(&"*.toml".to_string()));
+            assert!(config.matching.exclude_patterns.contains(&"target".to_string()));
+            assert!(config.matching.exclude_patterns.contains(&".git".to_string()));
+        } else {
+            panic!("解析失败");
+        }
+    }
+
+    #[test]
+    fn parse_equals_syntax_empty_value() {
+        let parser = CliParser::new(vec!["--level=".to_string()]);
+        let result = parser.parse();
+        assert!(matches!(result, Err(CliError::InvalidValue { .. })));
+    }
+
+    #[test]
+    fn parse_float_level_fails() {
+        let parser = CliParser::new(vec!["--level".to_string(), "3.14".to_string()]);
+        let result = parser.parse();
+        assert!(matches!(result, Err(CliError::InvalidValue { .. })));
+    }
+
+    #[test]
+    fn parse_overflow_level() {
+        let parser = CliParser::new(vec![
+            "--level".to_string(),
+            "99999999999999999999999999999".to_string(),
+        ]);
+        let result = parser.parse();
+        assert!(matches!(result, Err(CliError::InvalidValue { .. })));
+    }
+
+    #[test]
+    fn parse_batch_order_independent() {
+        let parser1 = CliParser::new(vec![
+            "--batch".to_string(),
+            "--thread".to_string(),
+            "4".to_string(),
+        ]);
+        let parser2 = CliParser::new(vec![
+            "--thread".to_string(),
+            "4".to_string(),
+            "--batch".to_string(),
+        ]);
+
+        let result1 = parser1.parse();
+        let result2 = parser2.parse();
+
+        assert!(result1.is_ok());
+        assert!(result2.is_ok());
+    }
+
+    #[test]
+    fn parse_size_and_human_readable_combined() {
+        let parser = CliParser::new(vec![
+            "--size".to_string(),
+            "--human-readable".to_string(),
+        ]);
+
+        if let Ok(ParseResult::Config(config)) = parser.parse() {
+            assert!(config.render.show_size);
+            assert!(config.render.human_readable);
+        } else {
+            panic!("解析失败");
+        }
+    }
+
+    #[test]
+    fn parse_cmd_style_thread_lowercase() {
+        let parser = CliParser::new(vec![
+            "/b".to_string(),
+            "/t".to_string(),
+            "8".to_string(),
+        ]);
+
+        if let Ok(ParseResult::Config(config)) = parser.parse() {
+            assert!(config.batch_mode);
+            assert_eq!(config.scan.thread_count.get(), 8);
+        } else {
+            panic!("解析失败");
+        }
+    }
+
+    #[test]
+    fn parse_with_path_at_end() {
+        let temp_dir = create_temp_dir();
+        let path_str = temp_dir.path().to_string_lossy().to_string();
+
+        let parser = CliParser::new(vec!["/F".to_string(), "--ascii".to_string(), path_str]);
+
+        if let Ok(ParseResult::Config(config)) = parser.parse() {
+            assert!(config.scan.show_files);
+            assert_eq!(config.render.charset, CharsetMode::Ascii);
+            assert!(config.path_explicitly_set);
+        } else {
+            panic!("解析失败");
+        }
+    }
+
+    #[test]
+    fn parse_with_path_at_beginning() {
+        let temp_dir = create_temp_dir();
+        let path_str = temp_dir.path().to_string_lossy().to_string();
+
+        let parser = CliParser::new(vec![path_str, "/F".to_string(), "--ascii".to_string()]);
+
+        if let Ok(ParseResult::Config(config)) = parser.parse() {
+            assert!(config.scan.show_files);
+            assert_eq!(config.render.charset, CharsetMode::Ascii);
+            assert!(config.path_explicitly_set);
+        } else {
+            panic!("解析失败");
+        }
+    }
+
+    #[test]
+    fn parse_multiple_different_flags() {
+        let parser = CliParser::new(vec![
+            "/F".to_string(),
+            "/A".to_string(),
+            "/S".to_string(),
+            "/HR".to_string(),
+            "/R".to_string(),
+        ]);
+
+        if let Ok(ParseResult::Config(config)) = parser.parse() {
+            assert!(config.scan.show_files);
+            assert_eq!(config.render.charset, CharsetMode::Ascii);
+            assert!(config.render.show_size);
+            assert!(config.render.human_readable);
+            assert!(config.render.reverse_sort);
         } else {
             panic!("解析失败");
         }
