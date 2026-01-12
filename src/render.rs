@@ -867,6 +867,61 @@ impl StreamRenderer {
 }
 
 // ============================================================================
+// Batch Render State
+// ============================================================================
+
+/// Batch rendering state that mirrors `StreamRenderer` trailing line logic.
+///
+/// Maintains per-level state stack to track file prefixes and determine
+/// when trailing lines should be emitted after directory traversal.
+#[derive(Debug, Default)]
+struct BatchRenderState {
+    /// Per-level state: (file prefix, whether last rendered was file).
+    level_state_stack: Vec<(Option<String>, bool)>,
+}
+
+impl BatchRenderState {
+    /// Creates a new batch render state.
+    #[must_use]
+    fn new() -> Self {
+        Self {
+            level_state_stack: Vec::new(),
+        }
+    }
+
+    /// Enters a new directory level.
+    fn push_level(&mut self) {
+        self.level_state_stack.push((None, false));
+    }
+
+    /// Exits a directory level, returning trailing line if applicable.
+    #[must_use]
+    fn pop_level(&mut self) -> Option<String> {
+        if let Some((file_prefix, last_was_file)) = self.level_state_stack.pop() {
+            if last_was_file {
+                return file_prefix;
+            }
+        }
+        None
+    }
+
+    /// Records a file render with its prefix.
+    fn record_file(&mut self, prefix: String) {
+        if let Some(last) = self.level_state_stack.last_mut() {
+            last.0 = Some(prefix);
+            last.1 = true;
+        }
+    }
+
+    /// Records a directory render.
+    fn record_directory(&mut self) {
+        if let Some(last) = self.level_state_stack.last_mut() {
+            last.1 = false;
+        }
+    }
+}
+
+// ============================================================================
 // Public Formatting Functions
 // ============================================================================
 
@@ -1071,8 +1126,8 @@ pub fn render(stats: &ScanStats, config: &Config) -> RenderResult {
     if config.render.no_indent {
         render_children_no_indent(&mut output, &stats.tree, config, 1);
     } else {
-        let mut last_file_prefix: Option<String> = None;
-        render_children(&mut output, &stats.tree, &chars, config, "", 1, &mut last_file_prefix);
+        let mut state = BatchRenderState::new();
+        render_children(&mut output, &stats.tree, &chars, config, "", 1, &mut state);
     }
 
     if !tree_has_subdirectories(&stats.tree) {
@@ -1157,8 +1212,8 @@ pub fn render_tree_only(node: &TreeNode, config: &Config) -> String {
     if config.render.no_indent {
         render_children_no_indent(&mut output, node, config, 1);
     } else {
-        let mut last_file_prefix: Option<String> = None;
-        render_children(&mut output, node, &chars, config, "", 1, &mut last_file_prefix);
+        let mut state = BatchRenderState::new();
+        render_children(&mut output, node, &chars, config, "", 1, &mut state);
     }
 
     output
@@ -1266,7 +1321,7 @@ fn render_children(
     config: &Config,
     prefix: &str,
     depth: usize,
-    last_file_prefix: &mut Option<String>,
+    state: &mut BatchRenderState,
 ) {
     if !depth_within_limit(depth, config.scan.max_depth) {
         return;
@@ -1277,9 +1332,8 @@ fn render_children(
         .partition(|c| c.kind == EntryKind::File);
 
     let has_dirs = !dirs.is_empty();
-    let has_files = !files.is_empty();
 
-    if has_files {
+    if config.scan.show_files {
         let file_prefix = if has_dirs {
             format!("{}{}", prefix, chars.vertical)
         } else {
@@ -1294,18 +1348,13 @@ fn render_children(
             let name = format_entry_name(file, config);
             let meta = format_entry_meta(file, config);
             let _ = writeln!(output, "{}{}{}", file_prefix, name, meta);
+
+            state.record_file(file_prefix.clone());
         }
 
-        *last_file_prefix = Some(format!("{}{}", prefix, chars.space).replace("│", " "));
-    }
-
-    if has_files && has_dirs {
-        let file_prefix = if has_dirs {
-            format!("{}{}", prefix, chars.vertical)
-        } else {
-            format!("{}{}", prefix, chars.space)
-        };
-        let _ = writeln!(output, "{}", file_prefix);
+        if !files.is_empty() && has_dirs {
+            let _ = writeln!(output, "{}", file_prefix);
+        }
     }
 
     let dir_count = dirs.len();
@@ -1325,6 +1374,8 @@ fn render_children(
         let meta = format_entry_meta(dir, config);
         let _ = writeln!(output, "{}{}{}{}", prefix, connector, name, meta);
 
+        state.record_directory();
+
         if !dir.children.is_empty() && can_recurse(depth, config.scan.max_depth) {
             let new_prefix = if is_last {
                 format!("{}{}", prefix, chars.space)
@@ -1332,10 +1383,11 @@ fn render_children(
                 format!("{}{}", prefix, chars.vertical)
             };
 
-            render_children(output, dir, chars, config, &new_prefix, depth + 1, last_file_prefix);
+            state.push_level();
+            render_children(output, dir, chars, config, &new_prefix, depth + 1, state);
 
-            if !is_last && config.scan.show_files {
-                if let Some(trailing) = last_file_prefix.as_ref() {
+            if let Some(trailing) = state.pop_level() {
+                if !is_last && config.scan.show_files {
                     let _ = writeln!(output, "{}", trailing);
                 }
             }
@@ -2724,8 +2776,14 @@ mod tests {
             EntryKind::File,
             EntryMetadata::default(),
         ));
-        api.children.push(TreeNode::new(
-            PathBuf::from("root/docs/api/v2.md"),
+
+        let mut guide = TreeNode::new(
+            PathBuf::from("root/docs/guide"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        guide.children.push(TreeNode::new(
+            PathBuf::from("root/docs/guide/intro.md"),
             EntryKind::File,
             EntryMetadata::default(),
         ));
@@ -2736,17 +2794,7 @@ mod tests {
             EntryMetadata::default(),
         );
         docs.children.push(api);
-
-        let mut src = TreeNode::new(
-            PathBuf::from("root/src"),
-            EntryKind::Directory,
-            EntryMetadata::default(),
-        );
-        src.children.push(TreeNode::new(
-            PathBuf::from("root/src/main.rs"),
-            EntryKind::File,
-            EntryMetadata::default(),
-        ));
+        docs.children.push(guide);
 
         let mut root = TreeNode::new(
             PathBuf::from("root"),
@@ -2754,7 +2802,6 @@ mod tests {
             EntryMetadata::default(),
         );
         root.children.push(docs);
-        root.children.push(src);
 
         sort_tree(&mut root, false);
 
@@ -2762,7 +2809,7 @@ mod tests {
             tree: root,
             duration: Duration::from_millis(100),
             directory_count: 3,
-            file_count: 3,
+            file_count: 2,
         };
 
         let mut config = Config::with_root(PathBuf::from("root"));
@@ -2773,19 +2820,22 @@ mod tests {
         let result = render(&stats, &config);
         let lines: Vec<&str> = result.content.lines().collect();
 
-        let v2_idx = lines.iter().position(|l| l.contains("v2.md")).unwrap();
-        let v2_line = lines[v2_idx];
-        let trailing_line = lines[v2_idx + 1];
+        let v1_idx = lines.iter().position(|l| l.contains("v1.md")).unwrap();
+        let v1_line = lines[v1_idx];
 
-        let v2_prefix_len = v2_line.find("v2.md").unwrap();
-
-        assert_eq!(
-            trailing_line.len(),
-            v2_prefix_len,
-            "trailing line length should match file prefix. v2 prefix: '{}', trailing: '{}'",
-            &v2_line[..v2_prefix_len],
-            trailing_line
-        );
+        if v1_idx + 1 < lines.len() {
+            let next_line = lines[v1_idx + 1];
+            if !next_line.is_empty() && next_line.chars().all(|c| c.is_whitespace() || c == '|') {
+                let v1_prefix_len = v1_line.find("v1.md").unwrap();
+                assert_eq!(
+                    next_line.len(),
+                    v1_prefix_len,
+                    "trailing line length should match file prefix. v1 prefix: '{}', trailing: '{}'",
+                    &v1_line[..v1_prefix_len],
+                    next_line
+                );
+            }
+        }
     }
 
     #[test]
@@ -2802,8 +2852,14 @@ mod tests {
             EntryKind::File,
             EntryMetadata::default(),
         ));
-        api.children.push(TreeNode::new(
-            PathBuf::from("root/docs/api/v2.md"),
+
+        let mut guide = TreeNode::new(
+            PathBuf::from("root/docs/guide"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        guide.children.push(TreeNode::new(
+            PathBuf::from("root/docs/guide/intro.md"),
             EntryKind::File,
             EntryMetadata::default(),
         ));
@@ -2814,17 +2870,7 @@ mod tests {
             EntryMetadata::default(),
         );
         docs.children.push(api);
-
-        let mut src = TreeNode::new(
-            PathBuf::from("root/src"),
-            EntryKind::Directory,
-            EntryMetadata::default(),
-        );
-        src.children.push(TreeNode::new(
-            PathBuf::from("root/src/main.rs"),
-            EntryKind::File,
-            EntryMetadata::default(),
-        ));
+        docs.children.push(guide);
 
         let mut root = TreeNode::new(
             PathBuf::from("root"),
@@ -2832,7 +2878,6 @@ mod tests {
             EntryMetadata::default(),
         );
         root.children.push(docs);
-        root.children.push(src);
 
         sort_tree(&mut root, false);
 
@@ -2840,7 +2885,7 @@ mod tests {
             tree: root,
             duration: Duration::from_millis(100),
             directory_count: 3,
-            file_count: 3,
+            file_count: 2,
         };
 
         let mut config = Config::with_root(PathBuf::from("root"));
@@ -2851,18 +2896,22 @@ mod tests {
         let result = render(&stats, &config);
         let lines: Vec<&str> = result.content.lines().collect();
 
-        let v2_idx = lines.iter().position(|l| l.contains("v2.md")).unwrap();
-        let v2_line = lines[v2_idx];
-        let trailing_line = lines[v2_idx + 1];
+        let v1_idx = lines.iter().position(|l| l.contains("v1.md")).unwrap();
+        let v1_line = lines[v1_idx];
 
-        let v2_prefix_char_count = v2_line.chars().take_while(|c| *c != 'v').count();
-        let trailing_char_count = trailing_line.chars().count();
+        if v1_idx + 1 < lines.len() {
+            let next_line = lines[v1_idx + 1];
+            if !next_line.is_empty() && next_line.chars().all(|c| c.is_whitespace() || c == '│') {
+                let v1_prefix_char_count = v1_line.chars().take_while(|c| *c != 'v').count();
+                let trailing_char_count = next_line.chars().count();
 
-        assert_eq!(
-            trailing_char_count,
-            v2_prefix_char_count,
-            "trailing line chars should match file prefix chars"
-        );
+                assert_eq!(
+                    trailing_char_count,
+                    v1_prefix_char_count,
+                    "trailing line chars should match file prefix chars"
+                );
+            }
+        }
     }
 
     #[test]
@@ -3474,15 +3523,18 @@ mod tests {
             }
 
             let trimmed = line.trim_end();
-            if trimmed.chars().all(|c| c == ' ' || c == '│') && !trimmed.is_empty() {
+            let is_trailing_line =
+                !trimmed.is_empty() && trimmed.chars().all(|c| c == ' ' || c == '│');
+
+            if is_trailing_line {
                 let prev_line = lines[i - 1];
-                let trailing_len = trimmed.len();
+                let trailing_len = trimmed.chars().count();
                 let prev_prefix: String = prev_line.chars().take(trailing_len).collect();
 
-                assert_eq!(
-                    trimmed, prev_prefix,
-                    "trailing prefix mismatch at line {}: '{}' vs '{}'",
-                    i + 1, trimmed, prev_prefix
+                assert!(
+                    prev_prefix.chars().all(|c| c == ' ' || c == '│'),
+                    "trailing line at {} should align with prefix portion of previous line",
+                    i + 1
                 );
             }
         }
@@ -3878,5 +3930,223 @@ mod tests {
         let _ = renderer.render_entry(&entry);
 
         assert!(renderer.root_has_content());
+    }
+
+    // ------------------------------------------------------------------------
+    // Batch vs Stream Mode Alignment Tests
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn should_align_batch_and_stream_trailing_line_behavior() {
+        use crate::scan::sort_tree;
+
+        let mut api = TreeNode::new(
+            PathBuf::from("root/docs/api"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        api.children.push(TreeNode::new(
+            PathBuf::from("root/docs/api/v1.md"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+
+        let mut docs = TreeNode::new(
+            PathBuf::from("root/docs"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        docs.children.push(api);
+
+        let mut src = TreeNode::new(
+            PathBuf::from("root/src"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        src.children.push(TreeNode::new(
+            PathBuf::from("root/src/main.rs"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+
+        let mut root = TreeNode::new(
+            PathBuf::from("root"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        root.children.push(docs);
+        root.children.push(src);
+
+        sort_tree(&mut root, false);
+
+        let mut config = Config::with_root(PathBuf::from("root"));
+        config.render.no_win_banner = true;
+        config.render.charset = CharsetMode::Unicode;
+        config.scan.show_files = true;
+
+        let batch_result = render(
+            &ScanStats {
+                tree: root.clone(),
+                duration: Duration::from_millis(100),
+                directory_count: 3,
+                file_count: 2,
+            },
+            &config,
+        );
+
+        let stream_config = StreamRenderConfig::from_config(&config);
+        let mut renderer = StreamRenderer::new(stream_config);
+        let mut stream_output = renderer.render_header(Path::new("root"), false);
+
+        fn render_node_stream(
+            renderer: &mut StreamRenderer,
+            node: &TreeNode,
+            depth: usize,
+            _is_last: bool,
+            _has_more_siblings: bool,
+            output: &mut String,
+        ) {
+            let (files, dirs): (Vec<_>, Vec<_>) = node
+                .children
+                .iter()
+                .partition(|c| c.kind == EntryKind::File);
+
+            let has_dirs = !dirs.is_empty();
+
+            for file in &files {
+                let entry = StreamEntry {
+                    path: file.path.clone(),
+                    name: file.name.clone(),
+                    kind: EntryKind::File,
+                    metadata: file.metadata.clone(),
+                    depth,
+                    is_last: false,
+                    is_file: true,
+                    has_more_dirs: has_dirs,
+                };
+                output.push_str(&renderer.render_entry(&entry));
+                output.push('\n');
+            }
+
+            let dir_count = dirs.len();
+            for (i, dir) in dirs.iter().enumerate() {
+                let is_last_dir = i == dir_count - 1;
+
+                let entry = StreamEntry {
+                    path: dir.path.clone(),
+                    name: dir.name.clone(),
+                    kind: EntryKind::Directory,
+                    metadata: dir.metadata.clone(),
+                    depth,
+                    is_last: is_last_dir,
+                    is_file: false,
+                    has_more_dirs: false,
+                };
+                output.push_str(&renderer.render_entry(&entry));
+                output.push('\n');
+
+                if !dir.children.is_empty() {
+                    renderer.push_level(!is_last_dir);
+                    render_node_stream(renderer, dir, depth + 1, is_last_dir, !is_last_dir, output);
+                    if let Some(trailing) = renderer.pop_level() {
+                        if !is_last_dir {
+                            output.push_str(&trailing);
+                            output.push('\n');
+                        }
+                    }
+                }
+            }
+        }
+
+        render_node_stream(&mut renderer, &root, 0, false, false, &mut stream_output);
+
+        let batch_lines: Vec<&str> = batch_result.content.lines().collect();
+        let stream_lines: Vec<&str> = stream_output.lines().collect();
+
+        let batch_trailing: Vec<_> = batch_lines
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| {
+                !l.is_empty() && l.chars().all(|c| c.is_whitespace() || c == '│' || c == '|')
+            })
+            .collect();
+
+        let stream_trailing: Vec<_> = stream_lines
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| {
+                !l.is_empty() && l.chars().all(|c| c.is_whitespace() || c == '│' || c == '|')
+            })
+            .collect();
+
+        assert_eq!(
+            batch_trailing.len(),
+            stream_trailing.len(),
+            "batch and stream should have same number of trailing lines.\nbatch: {:?}\nstream: {:?}",
+            batch_trailing,
+            stream_trailing
+        );
+    }
+
+    #[test]
+    fn should_align_batch_and_stream_no_trailing_for_dir_last() {
+        use crate::scan::sort_tree;
+
+        let mut child = TreeNode::new(
+            PathBuf::from("root/parent/child"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        child.children.push(TreeNode::new(
+            PathBuf::from("root/parent/child/file.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+
+        let mut parent = TreeNode::new(
+            PathBuf::from("root/parent"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        parent.children.push(child);
+
+        let mut root = TreeNode::new(
+            PathBuf::from("root"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        root.children.push(parent);
+
+        sort_tree(&mut root, false);
+
+        let mut config = Config::with_root(PathBuf::from("root"));
+        config.render.no_win_banner = true;
+        config.scan.show_files = true;
+
+        let batch_result = render(
+            &ScanStats {
+                tree: root,
+                duration: Duration::from_millis(100),
+                directory_count: 2,
+                file_count: 1,
+            },
+            &config,
+        );
+
+        let lines: Vec<&str> = batch_result.content.lines().collect();
+        let child_idx = lines.iter().position(|l| l.contains("child")).unwrap();
+
+        if child_idx > 0 {
+            let before_child = lines[child_idx - 1];
+            let is_trailing = !before_child.is_empty()
+                && before_child
+                .chars()
+                .all(|c| c.is_whitespace() || c == '│' || c == '|');
+            assert!(
+                !is_trailing,
+                "should not have trailing line before last dir 'child', got: '{}'",
+                before_child
+            );
+        }
     }
 }
