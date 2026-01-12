@@ -12,7 +12,7 @@
 //!
 //! 文件: src/scan.rs
 //! 作者: WaterRun
-//! 更新于: 2026-01-09
+//! 更新于: 2026-01-12
 
 #![forbid(unsafe_code)]
 
@@ -590,9 +590,64 @@ fn load_gitignore_from_path(dir: &Path) -> Option<Gitignore> {
 // 排序
 // ============================================================================
 
+/// 获取字符的 Windows 风格排序优先级
+///
+/// Windows tree 命令使用的排序规则：
+/// 1. 点号 `.` 和连字符 `-` 等标点符号（按 ASCII 顺序）
+/// 2. 数字 `0-9`
+/// 3. 字母 `A-Za-z`（不区分大小写）
+/// 4. 下划线 `_`（排在字母之后）
+/// 5. 其他高位字符
+///
+/// 返回 (优先级组, 比较用字符)
+#[inline]
+fn windows_char_priority(c: char) -> (u8, char) {
+    match c {
+        '_' => (4, '_'),                           // 下划线排在字母之后
+        'A'..='Z' => (3, c.to_ascii_lowercase()),  // 大写字母
+        'a'..='z' => (3, c),                       // 小写字母
+        '0'..='9' => (2, c),                       // 数字
+        _ if c.is_ascii() => (1, c),               // 其他 ASCII（含 . - 等）
+        _ => (5, c),                               // 非 ASCII 字符
+    }
+}
+
+/// Windows 风格字符串比较
+///
+/// 模拟 Windows tree 命令的排序行为。
+fn windows_compare_names(a: &str, b: &str) -> std::cmp::Ordering {
+    let mut a_chars = a.chars();
+    let mut b_chars = b.chars();
+
+    loop {
+        match (a_chars.next(), b_chars.next()) {
+            (Some(ca), Some(cb)) => {
+                let (pri_a, char_a) = windows_char_priority(ca);
+                let (pri_b, char_b) = windows_char_priority(cb);
+
+                // 先比较优先级组
+                match pri_a.cmp(&pri_b) {
+                    std::cmp::Ordering::Equal => {
+                        // 同组内比较字符
+                        match char_a.cmp(&char_b) {
+                            std::cmp::Ordering::Equal => continue,
+                            other => return other,
+                        }
+                    }
+                    other => return other,
+                }
+            }
+            (Some(_), None) => return std::cmp::Ordering::Greater, // a 更长
+            (None, Some(_)) => return std::cmp::Ordering::Less,    // b 更长
+            (None, None) => return std::cmp::Ordering::Equal,      // 相等
+        }
+    }
+}
+
+
 /// 对树节点进行确定性排序（递归）
 ///
-/// 按名称排序，文件优先（与原生 Windows tree 一致）。
+/// 按 Windows tree 风格排序：文件优先，名称按特定字符优先级排序。
 pub fn sort_tree(node: &mut TreeNode, reverse: bool) {
     // 排序子节点
     node.children.sort_by(|a, b| {
@@ -607,8 +662,8 @@ pub fn sort_tree(node: &mut TreeNode, reverse: bool) {
             return kind_order;
         }
 
-        // 同类型内按名称排序
-        let cmp = a.name.to_lowercase().cmp(&b.name.to_lowercase());
+        // 同类型内按 Windows 风格名称排序
+        let cmp = windows_compare_names(&a.name, &b.name);
 
         if reverse {
             cmp.reverse()
@@ -625,7 +680,7 @@ pub fn sort_tree(node: &mut TreeNode, reverse: bool) {
 
 /// 对条目列表进行排序（用于流式扫描）
 ///
-/// 按名称排序，文件优先（与原生 Windows tree 一致）。
+/// 按 Windows tree 风格排序：文件优先，名称按特定字符优先级排序。
 fn sort_entries(entries: &mut [(PathBuf, Metadata)], reverse: bool) {
     entries.sort_by(|(path_a, meta_a), (path_b, meta_b)| {
         let is_dir_a = meta_a.is_dir();
@@ -642,17 +697,17 @@ fn sort_entries(entries: &mut [(PathBuf, Metadata)], reverse: bool) {
             return kind_order;
         }
 
-        // 同类型内按名称排序
+        // 同类型内按 Windows 风格名称排序
         let name_a = path_a
             .file_name()
-            .map(|s| s.to_string_lossy().to_lowercase())
+            .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
         let name_b = path_b
             .file_name()
-            .map(|s| s.to_string_lossy().to_lowercase())
+            .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
 
-        let cmp = name_a.cmp(&name_b);
+        let cmp = windows_compare_names(&name_a, &name_b);
 
         if reverse {
             cmp.reverse()
@@ -2866,5 +2921,125 @@ mod tests {
         assert_eq!(stats.tree.disk_usage, Some(7));
         let dir_a = stats.tree.children.iter().find(|c| c.name == "a").unwrap();
         assert_eq!(dir_a.disk_usage, Some(7));
+    }
+
+    // ------------------------------------------------------------------------
+    // Windows 风格排序测试
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn test_windows_char_priority_ordering() {
+        // 验证优先级组顺序：标点 < 数字 < 字母 < 下划线
+        let (pri_dot, _) = windows_char_priority('.');
+        let (pri_dash, _) = windows_char_priority('-');
+        let (pri_digit, _) = windows_char_priority('5');
+        let (pri_letter, _) = windows_char_priority('a');
+        let (pri_underscore, _) = windows_char_priority('_');
+
+        assert!(pri_dot < pri_digit, "点号应在数字前");
+        assert!(pri_dash < pri_digit, "连字符应在数字前");
+        assert!(pri_digit < pri_letter, "数字应在字母前");
+        assert!(pri_letter < pri_underscore, "字母应在下划线前");
+    }
+
+    #[test]
+    fn test_windows_compare_names_underscore_after_letter() {
+        // 核心测试：下划线开头应排在字母开头之后
+        assert_eq!(
+            windows_compare_names("_test", "apple"),
+            std::cmp::Ordering::Greater,
+            "_test 应排在 apple 之后"
+        );
+        assert_eq!(
+            windows_compare_names("_zebra", "apple"),
+            std::cmp::Ordering::Greater,
+            "_zebra 应排在 apple 之后"
+        );
+    }
+
+    #[test]
+    fn test_windows_compare_names_utf8_case() {
+        // 原始失败案例：utf8parse vs utf8_iter
+        // 第5个字符：p vs _，字母应在下划线前
+        assert_eq!(
+            windows_compare_names("utf8parse", "utf8_iter"),
+            std::cmp::Ordering::Less,
+            "utf8parse 应排在 utf8_iter 之前"
+        );
+    }
+
+    #[test]
+    fn test_windows_compare_names_special_chars_first() {
+        // 点号和连字符应排在字母前
+        assert_eq!(
+            windows_compare_names(".hidden", "apple"),
+            std::cmp::Ordering::Less,
+            ".hidden 应排在 apple 之前"
+        );
+        assert_eq!(
+            windows_compare_names("-dash", "apple"),
+            std::cmp::Ordering::Less,
+            "-dash 应排在 apple 之前"
+        );
+    }
+
+    #[test]
+    fn test_windows_compare_names_numbers_before_letters() {
+        // 数字应排在字母前
+        assert_eq!(
+            windows_compare_names("123", "abc"),
+            std::cmp::Ordering::Less,
+            "123 应排在 abc 之前"
+        );
+        assert_eq!(
+            windows_compare_names("1file", "afile"),
+            std::cmp::Ordering::Less,
+            "1file 应排在 afile 之前"
+        );
+    }
+
+    #[test]
+    fn test_windows_compare_names_case_insensitive() {
+        // 大小写不敏感
+        assert_eq!(
+            windows_compare_names("Apple", "apple"),
+            std::cmp::Ordering::Equal,
+            "Apple 和 apple 应相等"
+        );
+        assert_eq!(
+            windows_compare_names("ZEBRA", "apple"),
+            std::cmp::Ordering::Greater,
+            "ZEBRA 应排在 apple 之后（按字母顺序）"
+        );
+    }
+
+    #[test]
+    fn test_sort_tree_windows_style() {
+        // 综合测试：验证树排序符合 Windows 风格
+        let mut root = TreeNode::new(
+            PathBuf::from("."),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+
+        // 添加各种名称的子节点
+        let names = vec!["_underscore", "apple", ".dotfile", "123", "Banana"];
+        for name in names {
+            root.children.push(TreeNode::new(
+                PathBuf::from(name),
+                EntryKind::File,
+                EntryMetadata::default(),
+            ));
+        }
+
+        sort_tree(&mut root, false);
+
+        let sorted_names: Vec<_> = root.children.iter().map(|c| c.name.as_str()).collect();
+        // 期望顺序：.dotfile, 123, apple, Banana, _underscore
+        assert_eq!(
+            sorted_names,
+            vec![".dotfile", "123", "apple", "Banana", "_underscore"],
+            "排序应符合 Windows tree 风格"
+        );
     }
 }

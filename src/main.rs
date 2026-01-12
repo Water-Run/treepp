@@ -103,7 +103,7 @@ fn batch_mode(config: &config::Config) -> Result<(), TreeppError> {
 /// - disk_usage 不可用（需要批处理模式）
 fn stream_mode(config: &config::Config) -> Result<(), TreeppError> {
     use crate::error::ScanError;
-    use render::WinBanner;
+    use render::{TreeChars, WinBanner};
     use scan::StreamEvent;
     use std::fs::File;
     use std::io::{BufWriter, Write};
@@ -153,9 +153,23 @@ fn stream_mode(config: &config::Config) -> Result<(), TreeppError> {
                 })?;
             }
         };
+        () => {
+            if !config.output.silent {
+                println!();
+            }
+            if let Some(ref mut writer) = file_writer {
+                writeln!(writer).map_err(|e| {
+                    crate::error::OutputError::WriteFailed {
+                        path: config.output.output_path.clone().unwrap(),
+                        source: e,
+                    }
+                })?;
+            }
+        };
     }
 
     let mut renderer = StreamRenderer::new(StreamRenderConfig::from_config(config));
+    let chars = TreeChars::from_charset(config.render.charset);
 
     // 头部（可含 banner）立即输出
     let header = renderer.render_header(&config.root_path, config.path_explicitly_set);
@@ -164,6 +178,8 @@ fn stream_mode(config: &config::Config) -> Result<(), TreeppError> {
     // 记录是否有子目录和文件
     let mut has_subdirs = false;
     let mut has_files = false;
+    // 记录根级别是否有内容（用于判断是否需要在"没有子文件夹"前输出空行）
+    let mut root_has_rendered_content = false;
 
     // 流式扫描 + 渲染
     let stats = scan::scan_streaming(config, |event| {
@@ -174,6 +190,11 @@ fn stream_mode(config: &config::Config) -> Result<(), TreeppError> {
                     has_subdirs = true;
                 } else {
                     has_files = true;
+                }
+
+                // 记录根级别是否有内容
+                if entry.depth == 0 {
+                    root_has_rendered_content = true;
                 }
 
                 let line = renderer.render_entry(&entry.clone());
@@ -194,7 +215,18 @@ fn stream_mode(config: &config::Config) -> Result<(), TreeppError> {
                 renderer.push_level(!is_last);
             }
             StreamEvent::LeaveDir => {
-                renderer.pop_level();
+                // 获取尾随行（如果有）
+                if let Some(trailing) = renderer.pop_level() {
+                    if !config.output.silent {
+                        println!("{}", trailing);
+                    }
+                    if let Some(ref mut writer) = file_writer {
+                        writeln!(writer, "{}", trailing).map_err(|e| ScanError::WalkError {
+                            message: e.to_string(),
+                            path: None,
+                        })?;
+                    }
+                }
             }
         }
         Ok(())
@@ -204,13 +236,10 @@ fn stream_mode(config: &config::Config) -> Result<(), TreeppError> {
     if !has_subdirs && !config.render.no_win_banner {
         if let Some(drive) = drive_letter_from_path(&config.root_path) {
             if let Ok(banner) = WinBanner::fetch_for_drive(drive) {
-                // 如果有文件但无目录，先输出占位行
-                if has_files && config.scan.show_files {
-                    let space = match config.render.charset {
-                        config::CharsetMode::Unicode => "   ",
-                        config::CharsetMode::Ascii => "    ",
-                    };
-                    writeln_output!(space);
+                // 如果有文件但无目录，输出与文件前缀对齐的空格行
+                // 这个空格行是在文件列表结束后、"没有子文件夹"之前
+                if has_files && config.scan.show_files && !config.render.no_indent {
+                    writeln_output!(chars.space);
                 }
 
                 if !banner.no_subfolder.is_empty() {
@@ -218,8 +247,8 @@ fn stream_mode(config: &config::Config) -> Result<(), TreeppError> {
                 }
             }
         }
-        // 只有在没有子目录时才输出末尾空行
-        writeln_output!("");
+        // 输出末尾空行
+        writeln_output!();
     }
 
     // 末尾统计（如果启用）

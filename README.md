@@ -8,25 +8,24 @@ The `tree` command on Windows has seen virtually no changes since it was release
 
 * ***An expanded parameter set, covering common features such as displaying file sizes, limiting recursion depth, changing output style, writing results to a file, and excluding specified directories (including honoring `.gitignore`)***
 * ***Better performance via a Rust implementation; additionally supports multithreading in batch mode, delivering a significant scanning speed improvement***
-* ***Full compatibility with the original Windows `tree` command’s parameters and output format, while also supporting Unix-style options (such as `-f` and `--files`)***
+* ***Achieves diff-level, bit-for-bit compatibility with the original Windows `tree` command in both parameters and output format, while also supporting Unix-style options (such as `-f` and `--files`).***
 
 **`tree++` is implemented in `Rust`** and is open-sourced on [GitHub](https://github.com/Water-Run/treepp).
-
 
 *Performance comparison (using `C:\Windows` as an example):*
 
 | Type                       | Time (`ms`) | Multiplier |
-|----------------------------|------------:|-----------:|
-| `tree /f` (Windows Native) |  `34367.81` |    `1.00x` |
-| `treepp /f`                |   `8948.63` |    `3.84x` |
-| `treepp /f /nb`            |   `8690.36` |    `3.95x` |
-| `treepp /f /nb /b`         |   `3816.34` |    `9.01x` |
-| `treepp /f /nb /b /t 1`    |  `10672.62` |    `3.22x` |
-| `treepp /f /nb /b /t 2`    |   `6769.22` |    `5.08x` |
-| `treepp /f /nb /b /t 4`    |   `4717.16` |    `7.29x` |
-| `treepp /f /nb /b /t 8`    |   `3797.09` |    `9.05x` |
-| `treepp /f /nb /b /t 16`   |   `3026.32` |   `11.36x` |
-| `treepp /f /nb /b /t 32`   |   `3013.44` |   `11.40x` |
+| -------------------------- | -----------:| ----------:|
+| `tree /f` (Windows Native) | `34367.81`  | `1.00x`    |
+| `treepp /f`                | `8948.63`   | `3.84x`    |
+| `treepp /f /nb`            | `8690.36`   | `3.95x`    |
+| `treepp /f /nb /b`         | `3816.34`   | `9.01x`    |
+| `treepp /f /nb /b /t 1`    | `10672.62`  | `3.22x`    |
+| `treepp /f /nb /b /t 2`    | `6769.22`   | `5.08x`    |
+| `treepp /f /nb /b /t 4`    | `4717.16`   | `7.29x`    |
+| `treepp /f /nb /b /t 8`    | `3797.09`   | `9.05x`    |
+| `treepp /f /nb /b /t 16`   | `3026.32`   | `11.36x`   |
+| `treepp /f /nb /b /t 32`   | `3013.44`   | `11.40x`   |
 
 ## Installation
 
@@ -60,7 +59,7 @@ treepp /f
 ## Quick Reference
 
 | Option Set (Equivalent Forms) | Description                                                 |
-|-------------------------------|-------------------------------------------------------------|
+| ----------------------------- | ----------------------------------------------------------- |
 | `--help` `-h` `/?`            | Show help information                                       |
 | `--version` `-v` `/V`         | Show version information                                    |
 | `--ascii` `-a` `/A`           | Draw the tree using ASCII characters                        |

@@ -280,10 +280,6 @@ pub struct RenderResult {
 // 树形连接符
 // ============================================================================
 
-// ============================================================================
-// 树形连接符
-// ============================================================================
-
 /// 树形连接符集合
 #[derive(Debug, Clone, Copy)]
 pub struct TreeChars {
@@ -304,14 +300,14 @@ impl TreeChars {
             CharsetMode::Unicode => Self {
                 branch: "├─",
                 last_branch: "└─",
-                vertical: "│  ",   // 修改：│ + 2空格 = 3字符显示宽度
-                space: "    ",     // 保持：4空格
+                vertical: "│  ",
+                space: "    ",
             },
             CharsetMode::Ascii => Self {
                 branch: "+---",
                 last_branch: "\\---",
-                vertical: "|   ",  // | + 3空格 = 4字符宽度
-                space: "    ",     // 4空格
+                vertical: "|   ",
+                space: "    ",
             },
         }
     }
@@ -389,8 +385,10 @@ fn format_entry_meta(node: &TreeNode, config: &Config) -> String {
     }
 
     // 目录累计大小
-    if config.render.show_disk_usage && node.kind == EntryKind::Directory
-        && let Some(usage) = node.disk_usage {
+    if config.render.show_disk_usage
+        && node.kind == EntryKind::Directory
+        && let Some(usage) = node.disk_usage
+    {
         let usage_str = if config.render.human_readable {
             format_size_human(usage)
         } else {
@@ -401,7 +399,8 @@ fn format_entry_meta(node: &TreeNode, config: &Config) -> String {
 
     // 修改日期
     if config.render.show_date
-        && let Some(ref modified) = node.metadata.modified {
+        && let Some(ref modified) = node.metadata.modified
+    {
         parts.push(format_datetime(modified));
     }
 
@@ -416,46 +415,43 @@ fn format_entry_meta(node: &TreeNode, config: &Config) -> String {
 // 流式渲染器
 // ============================================================================
 
-/// 流式渲染配置（从 Config 提取渲染相关配置）
+/// 流式渲染配置
 #[derive(Debug, Clone)]
 pub struct StreamRenderConfig {
-    /// 字符集模式
+    /// 字符集
     pub charset: CharsetMode,
+    /// 是否禁用缩进
+    pub no_indent: bool,
+    /// 是否禁用 Windows Banner
+    pub no_win_banner: bool,
+    /// 是否显示报告
+    pub show_report: bool,
+    /// 是否显示文件
+    pub show_files: bool,
     /// 路径显示模式
     pub path_mode: PathMode,
     /// 是否显示文件大小
     pub show_size: bool,
-    /// 是否以人类可读格式显示大小
+    /// 是否使用人类可读的大小格式
     pub human_readable: bool,
-    /// 是否显示最后修改日期
+    /// 是否显示修改日期
     pub show_date: bool,
-    /// 是否显示目录累计大小（流式模式下不支持）
-    pub show_disk_usage: bool,
-    /// 是否不显示树形连接线（仅缩进）
-    pub no_indent: bool,
-    /// 是否显示统计报告
-    pub show_report: bool,
-    /// 是否隐藏 Windows 样板信息
-    pub no_win_banner: bool,
-    /// 是否显示文件
-    pub show_files: bool,
 }
 
 impl StreamRenderConfig {
-    /// 从完整配置创建流式渲染配置
+    /// 从 `Config` 创建 `StreamRenderConfig`
     #[must_use]
     pub fn from_config(config: &Config) -> Self {
         Self {
             charset: config.render.charset,
+            no_indent: config.render.no_indent,
+            no_win_banner: config.render.no_win_banner,
+            show_report: config.render.show_report,
+            show_files: config.scan.show_files,
             path_mode: config.render.path_mode,
             show_size: config.render.show_size,
             human_readable: config.render.human_readable,
             show_date: config.render.show_date,
-            show_disk_usage: config.render.show_disk_usage,
-            no_indent: config.render.no_indent,
-            show_report: config.render.show_report,
-            no_win_banner: config.render.no_win_banner,
-            show_files: config.scan.show_files,
         }
     }
 }
@@ -463,9 +459,6 @@ impl StreamRenderConfig {
 /// 流式渲染器
 ///
 /// 管理树形前缀状态，支持逐条目渲染。
-/// 严格遵循 Windows 原生 tree 的输出格式：
-/// - 文件使用缩进（不使用分支符）
-/// - 目录使用分支符（├─ 或 └─）
 #[derive(Debug)]
 pub struct StreamRenderer {
     /// 前缀栈：记录每层是否还有后续目录（true = 有更多目录）
@@ -476,8 +469,10 @@ pub struct StreamRenderer {
     config: StreamRenderConfig,
     /// 上一个条目是否为文件（用于插入空行）
     last_was_file: bool,
-    /// 当前深度是否有文件输出过
-    depth_has_files: Vec<bool>,
+    /// 每层的状态：(文件前缀, 该层最后渲染的是否为文件)
+    level_state_stack: Vec<(Option<String>, bool)>,
+    /// 是否刚添加过尾随行（用于避免重复添加）
+    trailing_line_emitted: bool,
 }
 
 impl StreamRenderer {
@@ -490,7 +485,8 @@ impl StreamRenderer {
             chars,
             config,
             last_was_file: false,
-            depth_has_files: vec![false],
+            level_state_stack: Vec::new(),
+            trailing_line_emitted: false,
         }
     }
 
@@ -540,12 +536,22 @@ impl StreamRenderer {
     }
 
     /// 渲染单个条目为一行文本
-    ///
-    /// 根据条目类型选择不同的渲染方式：
-    /// - 文件：使用缩进前缀
-    /// - 目录：使用分支连接符
     #[must_use]
     pub fn render_entry(&mut self, entry: &StreamEntry) -> String {
+        // 记录文件前缀用于尾随行，并更新当前层的"最后是否为文件"状态
+        if entry.is_file {
+            let file_prefix = self.build_file_prefix(entry.has_more_dirs);
+            if let Some(last) = self.level_state_stack.last_mut() {
+                last.0 = Some(file_prefix);
+                last.1 = true; // 最后渲染的是文件
+            }
+        } else {
+            // 渲染目录时，更新状态：最后渲染的不是文件
+            if let Some(last) = self.level_state_stack.last_mut() {
+                last.1 = false;
+            }
+        }
+
         if self.config.no_indent {
             return self.render_entry_no_indent(entry);
         }
@@ -553,9 +559,8 @@ impl StreamRenderer {
         let mut output = String::new();
 
         // 检查是否需要插入分隔行（从文件切换到目录）
-        if self.last_was_file && !entry.is_file {
+        if self.config.show_files && self.last_was_file && !entry.is_file {
             let prefix = self.build_prefix();
-            // 分隔行：使用完整的 vertical 块（保留尾随空格）
             let _ = writeln!(output, "{}{}", prefix, self.chars.vertical);
         }
 
@@ -577,7 +582,7 @@ impl StreamRenderer {
         let prefix = self.build_prefix();
         line.push_str(&prefix);
 
-        // 文件使用竖线+空格或纯空格
+        // 文件使用竖线+空格或纯空格（完整宽度）
         if entry.has_more_dirs {
             line.push_str(self.chars.vertical);
         } else {
@@ -593,6 +598,17 @@ impl StreamRenderer {
         line.push_str(&meta);
 
         line
+    }
+
+    /// 构建当前文件的完整前缀（用于尾随行对齐）
+    fn build_file_prefix(&self, has_more_dirs: bool) -> String {
+        let mut prefix = self.build_prefix();
+        if has_more_dirs {
+            prefix.push_str(self.chars.vertical);
+        } else {
+            prefix.push_str(self.chars.space);
+        }
+        prefix
     }
 
     /// 渲染目录条目（使用分支符）
@@ -691,22 +707,42 @@ impl StreamRenderer {
         }
     }
 
-    /// 进入子目录前调用（更新前缀栈）
-    ///
-    /// # Arguments
-    ///
-    /// * `has_more_siblings` - 当前目录是否还有后续兄弟目录
+    /// 进入子目录前调用
     pub fn push_level(&mut self, has_more_siblings: bool) {
         self.prefix_stack.push(has_more_siblings);
+        self.level_state_stack.push((None, false)); // (文件前缀, 最后是否为文件)
         self.last_was_file = false;
-        self.depth_has_files.push(false);
+        self.trailing_line_emitted = false;
     }
 
     /// 离开子目录后调用（恢复前缀栈）
-    pub fn pop_level(&mut self) {
-        self.prefix_stack.pop();
-        self.depth_has_files.pop();
+    ///
+    /// 返回需要输出的尾随行（如果该目录最后渲染的是文件的话）
+    #[must_use]
+    pub fn pop_level(&mut self) -> Option<String> {
+        let level_state = self.level_state_stack.pop();
         self.last_was_file = false;
+
+        // 如果刚添加过尾随行，不再添加
+        if self.trailing_line_emitted {
+            let _ = self.prefix_stack.pop();
+            return None;
+        }
+
+        // 只有当：1) 有文件前缀，且 2) 该层最后渲染的是文件，才输出尾随行
+        let result = if let Some((file_prefix, last_was_file)) = level_state {
+            if self.config.show_files && file_prefix.is_some() && last_was_file && !self.config.no_indent {
+                self.trailing_line_emitted = true;
+                file_prefix
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let _ = self.prefix_stack.pop();
+        result
     }
 
     /// 渲染统计报告
@@ -734,6 +770,18 @@ impl StreamRenderer {
         }
 
         output
+    }
+
+    /// 检查当前是否在根级别（没有进入任何子目录）
+    #[must_use]
+    pub fn is_at_root_level(&self) -> bool {
+        self.prefix_stack.is_empty()
+    }
+
+    /// 检查根级别是否有内容被渲染
+    #[must_use]
+    pub fn root_has_content(&self) -> bool {
+        self.last_was_file || !self.prefix_stack.is_empty()
     }
 }
 
@@ -788,17 +836,20 @@ pub fn render(stats: &ScanStats, config: &Config) -> RenderResult {
 
     // 渲染子节点
     if config.render.no_indent {
-        // 根的直接子项视为 depth = 1
         render_children_no_indent(&mut output, &stats.tree, config, 1);
     } else {
-        // 根的直接子项视为 depth = 1
-        render_children(&mut output, &stats.tree, &chars, config, "", 1);
+        let mut last_file_prefix: Option<String> = None;
+        render_children(&mut output, &stats.tree, &chars, config, "", 1, &mut last_file_prefix);
     }
 
     // 无子目录提示（当目录没有子目录时显示，不考虑文件）
     if !tree_has_subdirectories(&stats.tree) {
         // 如果有文件但无目录，先输出占位行
-        let has_files = stats.tree.children.iter().any(|c| c.kind == EntryKind::File);
+        let has_files = stats
+            .tree
+            .children
+            .iter()
+            .any(|c| c.kind == EntryKind::File);
         if has_files && config.scan.show_files {
             // 输出与文件行同等缩进的占位行
             let _ = writeln!(output, "{}", chars.space);
@@ -829,6 +880,8 @@ pub fn render(stats: &ScanStats, config: &Config) -> RenderResult {
         }
     }
 
+    let output = remove_trailing_pipe_only_line(output);
+
     RenderResult {
         content: output,
         directory_count: stats.directory_count,
@@ -836,7 +889,33 @@ pub fn render(stats: &ScanStats, config: &Config) -> RenderResult {
     }
 }
 
+/// 如果最后一行仅包含竖线和空白字符（且至少有一个竖线），则移除该行
+fn remove_trailing_pipe_only_line(mut output: String) -> String {
+    // 移除末尾的换行符后查找最后一行
+    let trimmed = output.trim_end_matches('\n');
+    if let Some(last_newline_pos) = trimmed.rfind('\n') {
+        let last_line = &trimmed[last_newline_pos + 1..];
+
+        // 检查最后一行是否包含竖线
+        let has_pipe = last_line.chars().any(|c| c == '|' || c == '│');
+
+        // 检查最后一行是否只包含竖线和空白
+        let only_pipes_and_whitespace = !last_line.is_empty()
+            && last_line
+            .chars()
+            .all(|c| c == '|' || c == '│' || c.is_whitespace());
+
+        // 只有当行包含竖线时才移除
+        if has_pipe && only_pipes_and_whitespace {
+            output.truncate(last_newline_pos + 1);
+        }
+    }
+    output
+}
+
 /// 渲染子节点 (带树形连接符)
+///
+/// `last_file_prefix` 用于追踪最近渲染的文件行前缀，以便在目录渲染完成后输出正确对齐的尾随行
 fn render_children(
     output: &mut String,
     node: &TreeNode,
@@ -844,6 +923,7 @@ fn render_children(
     config: &Config,
     prefix: &str,
     depth: usize,
+    last_file_prefix: &mut Option<String>,
 ) {
     if !depth_within_limit(depth, config.scan.max_depth) {
         return;
@@ -853,34 +933,39 @@ fn render_children(
         .into_iter()
         .partition(|c| c.kind == EntryKind::File);
 
-    let has_files = !files.is_empty();
     let has_dirs = !dirs.is_empty();
+    let has_files = !files.is_empty();
 
-    // 文件优先模式
-    for file in &files {
-        if !depth_within_limit(depth, config.scan.max_depth) {
-            continue;
-        }
-
+    // 渲染文件
+    if has_files {
         let file_prefix = if has_dirs {
             format!("{}{}", prefix, chars.vertical)
         } else {
             format!("{}{}", prefix, chars.space)
         };
 
-        let name = format_entry_name(file, config);
-        let meta = format_entry_meta(file, config);
-        let _ = writeln!(output, "{}{}{}", file_prefix, name, meta);
+        for file in &files {
+            if !depth_within_limit(depth, config.scan.max_depth) {
+                continue;
+            }
+
+            let name = format_entry_name(file, config);
+            let meta = format_entry_meta(file, config);
+            let _ = writeln!(output, "{}{}{}", file_prefix, name, meta);
+        }
+
+        // 更新最后文件前缀
+        *last_file_prefix = Some(format!("{}{}", prefix, chars.space).replace("│", " "));
     }
 
-    // 文件列表后的空行（无论是否有目录）
-    if has_files && depth_within_limit(depth, config.scan.max_depth) {
-        let empty_line_prefix = if has_dirs {
+    // 文件和目录之间的分隔行
+    if has_files && has_dirs {
+        let file_prefix = if has_dirs {
             format!("{}{}", prefix, chars.vertical)
         } else {
             format!("{}{}", prefix, chars.space)
         };
-        let _ = writeln!(output, "{}", empty_line_prefix);
+        let _ = writeln!(output, "{}", file_prefix);
     }
 
     // 渲染目录
@@ -909,54 +994,20 @@ fn render_children(
                 format!("{}{}", prefix, chars.vertical)
             };
 
-            // 直接调用 render_children，让递归处理空行
-            render_children(output, dir, chars, config, &new_prefix, depth + 1);
+            // 递归调用
+            render_children(output, dir, chars, config, &new_prefix, depth + 1, last_file_prefix);
+
+            // 子目录渲染完成后，如果有文件内容且不是最后一个目录，输出尾随行
+            if !is_last && config.scan.show_files {
+                if let Some(trailing) = last_file_prefix.as_ref() {
+                    let _ = writeln!(output, "{}", trailing);
+                }
+            }
         }
     }
 }
 
-/// 渲染叶子目录的文件（无子目录的目录）
-///
-/// Native Windows tree 对叶子目录内的文件使用双倍空格缩进：
-/// - 普通目录内的文件：`prefix + vertical/space + 文件名`
-/// - 叶子目录内的文件：`prefix + space + space + 文件名`（双倍缩进）
-fn render_leaf_dir_files(
-    output: &mut String,
-    node: &TreeNode,
-    chars: &TreeChars,
-    config: &Config,
-    prefix: &str,
-    depth: usize,
-) {
-    if !depth_within_limit(depth, config.scan.max_depth) {
-        return;
-    }
-
-    let files: Vec<_> = get_filtered_children(node, config)
-        .into_iter()
-        .filter(|c| c.kind == EntryKind::File)
-        .collect();
-
-    if files.is_empty() {
-        return;
-    }
-
-    // 叶子目录的文件使用双倍 space 缩进（与 Native tree 一致）
-    let file_prefix = format!("{}{}", prefix, chars.space);
-
-    for file in &files {
-        let name = format_entry_name(file, config);
-        let meta = format_entry_meta(file, config);
-        let _ = writeln!(output, "{}{}{}", file_prefix, name, meta);
-    }
-
-    // 文件列表结束后的占位行
-    let _ = writeln!(output, "{}", file_prefix);
-}
-
 /// 渲染子节点 (无树形连接符，仅缩进)
-///
-/// `depth` 为当前即将渲染的子节点深度（根的直接子项 depth = 1）
 fn render_children_no_indent(output: &mut String, node: &TreeNode, config: &Config, depth: usize) {
     if !depth_within_limit(depth, config.scan.max_depth) {
         return;
@@ -1002,6 +1053,7 @@ fn get_filtered_children<'a>(node: &'a TreeNode, config: &Config) -> Vec<&'a Tre
         .collect()
 }
 
+/// 仅渲染树结构（不含 banner 和统计信息）
 pub fn render_tree_only(node: &TreeNode, config: &Config) -> String {
     let mut output = String::new();
     let chars = TreeChars::from_charset(config.render.charset);
@@ -1013,7 +1065,8 @@ pub fn render_tree_only(node: &TreeNode, config: &Config) -> String {
     if config.render.no_indent {
         render_children_no_indent(&mut output, node, config, 1);
     } else {
-        render_children(&mut output, node, &chars, config, "", 1);
+        let mut last_file_prefix: Option<String> = None;
+        render_children(&mut output, node, &chars, config, "", 1, &mut last_file_prefix);
     }
 
     output
@@ -1103,7 +1156,6 @@ mod tests {
 
     #[test]
     fn test_win_banner_parse_with_trailing_empty_lines() {
-        // tree 命令输出末尾可能有空行，但前 4 行是固定的
         let output = "卷 系统 的文件夹 PATH 列表\n卷序列号为 2810-11C7\nC:.\n没有子文件夹 \n\n";
         let banner = WinBanner::parse(output).expect("解析应成功");
 
@@ -1114,10 +1166,10 @@ mod tests {
 
     #[test]
     fn test_win_banner_parse_with_trailing_whitespace() {
-        let output = "卷 系统 的文件夹 PATH 列表  \n  卷序列号为 2810-11C7\nC:.\n没有子文件夹  \n";
+        let output =
+            "卷 系统 的文件夹 PATH 列表  \n  卷序列号为 2810-11C7\nC:.\n没有子文件夹  \n";
         let banner = WinBanner::parse(output).expect("解析应成功");
 
-        // 只 trim 左侧，保留右侧空格
         assert_eq!(banner.volume_line, "卷 系统 的文件夹 PATH 列表  ");
         assert_eq!(banner.serial_line, "卷序列号为 2810-11C7");
         assert_eq!(banner.no_subfolder, "没有子文件夹  ");
@@ -1160,7 +1212,6 @@ mod tests {
 
     #[test]
     fn test_win_banner_parse_more_than_4_lines() {
-        // 即使有超过 4 行，也只取前 4 行的固定位置
         let output = "line1\nline2\nline3\nline4\nline5\nline6";
         let banner = WinBanner::parse(output).expect("多于4行也应解析成功");
 
@@ -1178,7 +1229,6 @@ mod tests {
 
     #[test]
     fn test_win_banner_parse_different_drives() {
-        // 验证不同盘符的输出格式相同
         let output_c = "卷 系统 的文件夹 PATH 列表\n卷序列号为 1234-5678\nC:.\n没有子文件夹";
         let output_d = "卷 数据 的文件夹 PATH 列表\n卷序列号为 ABCD-EF01\nD:.\n没有子文件夹";
 
@@ -1187,7 +1237,6 @@ mod tests {
 
         assert_eq!(banner_c.no_subfolder, "没有子文件夹");
         assert_eq!(banner_d.no_subfolder, "没有子文件夹");
-        // 卷名和序列号会不同
         assert_ne!(banner_c.volume_line, banner_d.volume_line);
         assert_ne!(banner_c.serial_line, banner_d.serial_line);
     }
@@ -1219,7 +1268,6 @@ mod tests {
         let now = SystemTime::now();
         let formatted = format_datetime(&now);
 
-        // 验证格式: YYYY-MM-DD HH:MM:SS (19 字符)
         assert_eq!(formatted.len(), 19);
         assert_eq!(&formatted[4..5], "-");
         assert_eq!(&formatted[7..8], "-");
@@ -1236,11 +1284,9 @@ mod tests {
         let now = SystemTime::now();
         let formatted = format_datetime(&now);
 
-        // 获取当前本地时间进行比较
         let local_now = Local::now();
         let expected_date = local_now.format("%Y-%m-%d").to_string();
 
-        // 日期部分应该匹配本地时间
         assert!(
             formatted.starts_with(&expected_date),
             "格式化时间 {} 应以本地日期 {} 开头",
@@ -1258,18 +1304,17 @@ mod tests {
         let chars = TreeChars::from_charset(CharsetMode::Unicode);
         assert_eq!(chars.branch, "├─");
         assert_eq!(chars.last_branch, "└─");
-        assert_eq!(chars.vertical, "│  ");  // 修改：│ + 2空格
+        assert_eq!(chars.vertical, "│  ");
         assert_eq!(chars.space, "    ");
     }
-
 
     #[test]
     fn test_tree_chars_ascii() {
         let chars = TreeChars::from_charset(CharsetMode::Ascii);
         assert_eq!(chars.branch, "+---");
         assert_eq!(chars.last_branch, "\\---");
-        assert_eq!(chars.vertical, "|   ");  // | + 3空格
-        assert_eq!(chars.space, "    ");     // 4空格
+        assert_eq!(chars.vertical, "|   ");
+        assert_eq!(chars.space, "    ");
     }
 
     // ========================================================================
@@ -1378,6 +1423,7 @@ mod tests {
     fn test_stream_renderer_render_entry_with_size() {
         let mut config = Config::default();
         config.render.show_size = true;
+        config.scan.show_files = true;
         let render_config = StreamRenderConfig::from_config(&config);
         let mut renderer = StreamRenderer::new(render_config);
 
@@ -1426,29 +1472,6 @@ mod tests {
     }
 
     #[test]
-    fn test_stream_renderer_push_pop_level() {
-        let config = Config::default();
-        let render_config = StreamRenderConfig::from_config(&config);
-        let mut renderer = StreamRenderer::new(render_config);
-
-        assert!(renderer.prefix_stack.is_empty());
-
-        renderer.push_level(true);
-        assert_eq!(renderer.prefix_stack.len(), 1);
-        assert_eq!(renderer.prefix_stack[0], true);
-
-        renderer.push_level(false);
-        assert_eq!(renderer.prefix_stack.len(), 2);
-        assert_eq!(renderer.prefix_stack[1], false);
-
-        renderer.pop_level();
-        assert_eq!(renderer.prefix_stack.len(), 1);
-
-        renderer.pop_level();
-        assert!(renderer.prefix_stack.is_empty());
-    }
-
-    #[test]
     fn test_stream_renderer_prefix_with_siblings() {
         let config = Config::default();
         let render_config = StreamRenderConfig::from_config(&config);
@@ -1492,7 +1515,7 @@ mod tests {
 
         let line = renderer.render_entry(&entry);
         assert!(!line.contains("│"));
-        assert!(line.starts_with("    "));  // 保持4空格（space 仍是4字符）
+        assert!(line.starts_with("    "));
     }
 
     #[test]
@@ -1535,8 +1558,6 @@ mod tests {
 
         let report = renderer.render_report(5, 20, Duration::from_millis(100));
 
-        // render_report 只负责统计信息，不负责 gitignore 提示
-        // gitignore 提示是在主 render 函数中处理的
         assert!(report.contains("5 directory"));
         assert!(report.contains("20 files"));
     }
@@ -1570,13 +1591,10 @@ mod tests {
         let mut config = Config::with_root(PathBuf::from("test_root"));
         config.render.no_win_banner = true;
         config.scan.show_files = true;
-        // 禁用路径显式设置标志，避免大写转换问题
         config.path_explicitly_set = false;
 
         let result = render(&stats, &config);
 
-        // 由于 test_root 不是有效 Windows 路径，会触发错误回退
-        // 检查内容中包含相关信息即可
         assert!(result.content.contains("src"));
         assert!(result.content.contains("main.rs"));
         assert!(result.content.contains("Cargo.toml"));
@@ -1861,13 +1879,11 @@ mod tests {
 
         let result = render(&stats, &config);
 
-        // 文件行不应该有分支符
         let lines: Vec<&str> = result.content.lines().collect();
         let file_line = lines.iter().find(|l| l.contains("file.txt")).unwrap();
         assert!(!file_line.contains("├"), "文件不应该使用├");
         assert!(!file_line.contains("└"), "文件不应该使用└");
 
-        // 目录行应该有分支符
         let dir_line = lines.iter().find(|l| l.contains("dir")).unwrap();
         assert!(
             dir_line.contains("├") || dir_line.contains("└"),
@@ -1881,7 +1897,6 @@ mod tests {
 
     #[test]
     fn test_render_disk_usage_without_show_files() {
-        // 创建包含文件的树结构
         let mut root = TreeNode::new(
             PathBuf::from("root"),
             EntryKind::Directory,
@@ -1894,7 +1909,6 @@ mod tests {
             EntryMetadata::default(),
         );
 
-        // 添加文件到子目录
         subdir.children.push(TreeNode::new(
             PathBuf::from("root/subdir/file.txt"),
             EntryKind::File,
@@ -1908,7 +1922,6 @@ mod tests {
         root.children.push(subdir);
         root.disk_usage = Some(1024);
 
-        // 配置：显示 disk_usage 但不显示文件
         let mut config = Config::with_root(PathBuf::from("root"));
         config.render.no_win_banner = true;
         config.batch_mode = true;
@@ -1920,16 +1933,13 @@ mod tests {
             tree: root,
             duration: Duration::from_millis(100),
             directory_count: 1,
-            file_count: 0, // 不显示文件时为 0
+            file_count: 0,
         };
 
         let result = render(&stats, &config);
 
-        // 验证输出包含目录的 disk_usage
         assert!(result.content.contains("1024") || result.content.contains("1.0 KB"));
-        // 验证输出不包含文件名
         assert!(!result.content.contains("file.txt"));
-        // 验证输出包含目录名
         assert!(result.content.contains("subdir"));
     }
 
@@ -1990,7 +2000,6 @@ mod tests {
 
     #[test]
     fn test_render_disk_usage_respects_display_depth() {
-        // 构建手动树：root/dir1/dir2/file (5 bytes)
         let mut dir2 = TreeNode::new(
             PathBuf::from("root/dir1/dir2"),
             EntryKind::Directory,
@@ -1999,7 +2008,10 @@ mod tests {
         dir2.children.push(TreeNode::new(
             PathBuf::from("root/dir1/dir2/file.txt"),
             EntryKind::File,
-            EntryMetadata { size: 5, ..Default::default() },
+            EntryMetadata {
+                size: 5,
+                ..Default::default()
+            },
         ));
 
         let mut dir1 = TreeNode::new(
@@ -2016,7 +2028,6 @@ mod tests {
         );
         root.children.push(dir1);
 
-        // 计算累计大小
         root.compute_disk_usage();
         let directory_count = root.count_directories();
         let file_count = root.count_files();
@@ -2033,17 +2044,1632 @@ mod tests {
         config.render.show_disk_usage = true;
         config.render.show_size = true;
         config.render.human_readable = false;
-        config.scan.show_files = false;      // 只显示目录
-        config.scan.max_depth = Some(1);     // 只显示到 dir1 层
+        config.scan.show_files = false;
+        config.scan.max_depth = Some(1);
 
         let rendered = render(&stats, &config).content;
 
-        // 目录 dir1 应显示，dir2 / file.txt 不应显示
         assert!(rendered.contains("dir1"));
         assert!(!rendered.contains("dir2"));
         assert!(!rendered.contains("file.txt"));
-
-        // 磁盘占用应显示聚合的 5 字节
         assert!(rendered.contains("5"));
+    }
+
+    #[test]
+    fn test_render_files_then_dirs_with_separator() {
+        use crate::scan::sort_tree;
+
+        let mut dir1 = TreeNode::new(
+            PathBuf::from("root/dir1"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        dir1.children.push(TreeNode::new(
+            PathBuf::from("root/dir1/file_a.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+        dir1.children.push(TreeNode::new(
+            PathBuf::from("root/dir1/file_b.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+
+        let mut dir2 = TreeNode::new(
+            PathBuf::from("root/dir2"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        dir2.children.push(TreeNode::new(
+            PathBuf::from("root/dir2/file_c.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+
+        let mut root = TreeNode::new(
+            PathBuf::from("root"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        root.children.push(dir1);
+        root.children.push(dir2);
+
+        sort_tree(&mut root, false);
+
+        let stats = ScanStats {
+            tree: root,
+            duration: Duration::from_millis(100),
+            directory_count: 2,
+            file_count: 3,
+        };
+
+        let mut config = Config::with_root(PathBuf::from("root"));
+        config.render.no_win_banner = true;
+        config.render.charset = CharsetMode::Ascii;
+        config.scan.show_files = true;
+
+        let result = render(&stats, &config);
+        let lines: Vec<&str> = result.content.lines().collect();
+
+        let dir1_idx = lines.iter().position(|l| l.contains("dir1")).unwrap();
+
+        assert!(lines[dir1_idx + 1].contains("file_a.txt"));
+        assert!(lines[dir1_idx + 2].contains("file_b.txt"));
+
+        let separator_line = lines[dir1_idx + 3];
+        assert!(
+            separator_line.trim() == "|" || separator_line.trim().is_empty(),
+            "dir1 渲染完后应有尾随空行，实际: '{}'",
+            separator_line
+        );
+
+        assert!(
+            lines[dir1_idx + 4].contains("dir2"),
+            "尾随空行后应是 dir2，实际: '{}'",
+            lines[dir1_idx + 4]
+        );
+    }
+
+    #[test]
+    fn test_render_no_separator_for_last_dir() {
+        use crate::scan::sort_tree;
+
+        let mut dir1 = TreeNode::new(
+            PathBuf::from("root/dir1"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        dir1.children.push(TreeNode::new(
+            PathBuf::from("root/dir1/file.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+
+        let mut root = TreeNode::new(
+            PathBuf::from("root"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        root.children.push(dir1);
+
+        sort_tree(&mut root, false);
+
+        let stats = ScanStats {
+            tree: root,
+            duration: Duration::from_millis(100),
+            directory_count: 1,
+            file_count: 1,
+        };
+
+        let mut config = Config::with_root(PathBuf::from("root"));
+        config.render.no_win_banner = true;
+        config.render.charset = CharsetMode::Ascii;
+        config.scan.show_files = true;
+
+        let result = render(&stats, &config);
+        let lines: Vec<&str> = result.content.lines().collect();
+
+        let dir1_idx = lines.iter().position(|l| l.contains("dir1")).unwrap();
+        assert!(lines[dir1_idx + 1].contains("file.txt"));
+
+        if lines.len() > dir1_idx + 2 {
+            let after_file = lines[dir1_idx + 2];
+            assert!(
+                !after_file.starts_with("|")
+                    && !after_file.contains("├")
+                    && !after_file.contains("│"),
+                "最后目录使用空格前缀的尾随空行，实际: '{}'",
+                after_file
+            );
+        }
+    }
+
+    #[test]
+    fn test_render_nested_dirs_with_files_ascii() {
+        use crate::scan::sort_tree;
+
+        let mut subdir = TreeNode::new(
+            PathBuf::from("root/dir1/subdir"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        subdir.children.push(TreeNode::new(
+            PathBuf::from("root/dir1/subdir/file2.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+
+        let mut dir1 = TreeNode::new(
+            PathBuf::from("root/dir1"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        dir1.children.push(TreeNode::new(
+            PathBuf::from("root/dir1/file1.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+        dir1.children.push(subdir);
+
+        let mut dir2 = TreeNode::new(
+            PathBuf::from("root/dir2"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        dir2.children.push(TreeNode::new(
+            PathBuf::from("root/dir2/file3.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+
+        let mut root = TreeNode::new(
+            PathBuf::from("root"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        root.children.push(dir1);
+        root.children.push(dir2);
+
+        sort_tree(&mut root, false);
+
+        let stats = ScanStats {
+            tree: root,
+            duration: Duration::from_millis(100),
+            directory_count: 3,
+            file_count: 3,
+        };
+
+        let mut config = Config::with_root(PathBuf::from("root"));
+        config.render.no_win_banner = true;
+        config.render.charset = CharsetMode::Ascii;
+        config.scan.show_files = true;
+
+        let result = render(&stats, &config);
+
+        assert!(result.content.contains("dir1"));
+        assert!(result.content.contains("file1.txt"));
+        assert!(result.content.contains("subdir"));
+        assert!(result.content.contains("file2.txt"));
+        assert!(result.content.contains("dir2"));
+        assert!(result.content.contains("file3.txt"));
+
+        let lines: Vec<&str> = result.content.lines().collect();
+        let dir2_idx = lines.iter().position(|l| l.contains("\\---dir2")).unwrap();
+
+        let before_dir2 = lines[dir2_idx - 1];
+        assert!(
+            before_dir2.starts_with("|"),
+            "dir2 前应有 | 占位行，实际: '{}'",
+            before_dir2
+        );
+    }
+
+    #[test]
+    fn test_render_empty_dir_no_extra_separator() {
+        use crate::scan::sort_tree;
+
+        let dir1 = TreeNode::new(
+            PathBuf::from("root/dir1"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        let dir2 = TreeNode::new(
+            PathBuf::from("root/dir2"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+
+        let mut root = TreeNode::new(
+            PathBuf::from("root"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        root.children.push(dir1);
+        root.children.push(dir2);
+
+        sort_tree(&mut root, false);
+
+        let stats = ScanStats {
+            tree: root,
+            duration: Duration::from_millis(100),
+            directory_count: 2,
+            file_count: 0,
+        };
+
+        let mut config = Config::with_root(PathBuf::from("root"));
+        config.render.no_win_banner = true;
+        config.render.charset = CharsetMode::Ascii;
+        config.scan.show_files = false;
+
+        let result = render(&stats, &config);
+        let lines: Vec<&str> = result.content.lines().collect();
+
+        let dir1_idx = lines.iter().position(|l| l.contains("dir1")).unwrap();
+        let dir2_idx = lines.iter().position(|l| l.contains("dir2")).unwrap();
+
+        assert_eq!(dir2_idx - dir1_idx, 1, "空目录之间不应有占位行");
+    }
+
+    #[test]
+    fn test_stream_renderer_pop_level_returns_trailing_line() {
+        let mut config = Config::default();
+        config.scan.show_files = true;
+        let render_config = StreamRenderConfig::from_config(&config);
+        let mut renderer = StreamRenderer::new(render_config);
+
+        renderer.push_level(true);
+
+        let entry = StreamEntry {
+            path: PathBuf::from("file.txt"),
+            name: "file.txt".to_string(),
+            kind: EntryKind::File,
+            metadata: EntryMetadata::default(),
+            depth: 1,
+            is_last: true,
+            is_file: true,
+            has_more_dirs: false,
+        };
+        let _ = renderer.render_entry(&entry);
+
+        let trailing = renderer.pop_level();
+        assert!(trailing.is_some());
+        let trailing_str = trailing.unwrap();
+        assert!(
+            trailing_str.len() >= 3,
+            "尾随行应保留完整宽度（至少3字符），实际长度: {}",
+            trailing_str.len()
+        );
+    }
+
+    #[test]
+    fn test_stream_renderer_pop_level_no_trailing_for_dir_only() {
+        let mut config = Config::default();
+        config.scan.show_files = true;
+        let render_config = StreamRenderConfig::from_config(&config);
+        let mut renderer = StreamRenderer::new(render_config);
+
+        renderer.push_level(true);
+
+        let entry = StreamEntry {
+            path: PathBuf::from("subdir"),
+            name: "subdir".to_string(),
+            kind: EntryKind::Directory,
+            metadata: EntryMetadata::default(),
+            depth: 1,
+            is_last: true,
+            is_file: false,
+            has_more_dirs: false,
+        };
+        let _ = renderer.render_entry(&entry);
+
+        let trailing = renderer.pop_level();
+        assert!(trailing.is_none());
+    }
+
+    #[test]
+    fn test_stream_renderer_trailing_line_for_last_dir() {
+        let mut config = Config::default();
+        config.scan.show_files = true;
+        let render_config = StreamRenderConfig::from_config(&config);
+        let mut renderer = StreamRenderer::new(render_config);
+
+        renderer.push_level(false);
+
+        let entry = StreamEntry {
+            path: PathBuf::from("file.txt"),
+            name: "file.txt".to_string(),
+            kind: EntryKind::File,
+            metadata: EntryMetadata::default(),
+            depth: 1,
+            is_last: true,
+            is_file: true,
+            has_more_dirs: false,
+        };
+        let _ = renderer.render_entry(&entry);
+
+        let trailing = renderer.pop_level();
+        assert!(trailing.is_some());
+        let trailing_str = trailing.unwrap();
+        assert!(
+            !trailing_str.contains("│"),
+            "最后目录的尾随行不应包含竖线，实际: '{}'",
+            trailing_str
+        );
+        assert!(
+            trailing_str.chars().all(|c| c == ' '),
+            "最后目录的尾随行应全是空格，实际: '{}'",
+            trailing_str
+        );
+    }
+
+    #[test]
+    fn test_render_no_trailing_for_pure_directory_structure() {
+        use crate::scan::sort_tree;
+
+        let mut dir1 = TreeNode::new(
+            PathBuf::from("root/dir1"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        let subdir = TreeNode::new(
+            PathBuf::from("root/dir1/subdir"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        dir1.children.push(subdir);
+
+        let mut root = TreeNode::new(
+            PathBuf::from("root"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        root.children.push(dir1);
+
+        sort_tree(&mut root, false);
+
+        let stats = ScanStats {
+            tree: root,
+            duration: Duration::from_millis(100),
+            directory_count: 2,
+            file_count: 0,
+        };
+
+        let mut config = Config::with_root(PathBuf::from("root"));
+        config.render.no_win_banner = true;
+        config.render.charset = CharsetMode::Ascii;
+        config.scan.show_files = false;
+
+        let result = render(&stats, &config);
+        let lines: Vec<&str> = result.content.lines().collect();
+
+        let dir1_idx = lines.iter().position(|l| l.contains("dir1")).unwrap();
+        let subdir_idx = lines.iter().position(|l| l.contains("subdir")).unwrap();
+
+        assert_eq!(subdir_idx - dir1_idx, 1, "纯目录结构不应有尾随空行");
+    }
+
+    #[test]
+    fn test_trailing_line_alignment_ascii() {
+        use crate::scan::sort_tree;
+
+        let mut api = TreeNode::new(
+            PathBuf::from("root/docs/api"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        api.children.push(TreeNode::new(
+            PathBuf::from("root/docs/api/v1.md"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+        api.children.push(TreeNode::new(
+            PathBuf::from("root/docs/api/v2.md"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+
+        let mut docs = TreeNode::new(
+            PathBuf::from("root/docs"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        docs.children.push(api);
+
+        let mut src = TreeNode::new(
+            PathBuf::from("root/src"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        src.children.push(TreeNode::new(
+            PathBuf::from("root/src/main.rs"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+
+        let mut root = TreeNode::new(
+            PathBuf::from("root"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        root.children.push(docs);
+        root.children.push(src);
+
+        sort_tree(&mut root, false);
+
+        let stats = ScanStats {
+            tree: root,
+            duration: Duration::from_millis(100),
+            directory_count: 3,
+            file_count: 3,
+        };
+
+        let mut config = Config::with_root(PathBuf::from("root"));
+        config.render.no_win_banner = true;
+        config.render.charset = CharsetMode::Ascii;
+        config.scan.show_files = true;
+
+        let result = render(&stats, &config);
+        let lines: Vec<&str> = result.content.lines().collect();
+
+        let v2_idx = lines.iter().position(|l| l.contains("v2.md")).unwrap();
+        let v2_line = lines[v2_idx];
+        let trailing_line = lines[v2_idx + 1];
+
+        let v2_prefix_len = v2_line.find("v2.md").unwrap();
+        let v2_prefix = &v2_line[..v2_prefix_len];
+
+        assert_eq!(
+            trailing_line.len(),
+            v2_prefix.len(),
+            "尾随行长度应与文件前缀相同。v2前缀: '{}', 尾随行: '{}'",
+            v2_prefix,
+            trailing_line
+        );
+    }
+
+    #[test]
+    fn test_trailing_line_alignment_unicode() {
+        use crate::scan::sort_tree;
+
+        let mut api = TreeNode::new(
+            PathBuf::from("root/docs/api"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        api.children.push(TreeNode::new(
+            PathBuf::from("root/docs/api/v1.md"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+        api.children.push(TreeNode::new(
+            PathBuf::from("root/docs/api/v2.md"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+
+        let mut docs = TreeNode::new(
+            PathBuf::from("root/docs"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        docs.children.push(api);
+
+        let mut src = TreeNode::new(
+            PathBuf::from("root/src"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        src.children.push(TreeNode::new(
+            PathBuf::from("root/src/main.rs"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+
+        let mut root = TreeNode::new(
+            PathBuf::from("root"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        root.children.push(docs);
+        root.children.push(src);
+
+        sort_tree(&mut root, false);
+
+        let stats = ScanStats {
+            tree: root,
+            duration: Duration::from_millis(100),
+            directory_count: 3,
+            file_count: 3,
+        };
+
+        let mut config = Config::with_root(PathBuf::from("root"));
+        config.render.no_win_banner = true;
+        config.render.charset = CharsetMode::Unicode;
+        config.scan.show_files = true;
+
+        let result = render(&stats, &config);
+        let lines: Vec<&str> = result.content.lines().collect();
+
+        let v2_idx = lines.iter().position(|l| l.contains("v2.md")).unwrap();
+        let v2_line = lines[v2_idx];
+        let trailing_line = lines[v2_idx + 1];
+
+        // 使用字符数而非字节长度进行比较
+        let v2_prefix_char_count = v2_line.chars().take_while(|c| *c != 'v').count();
+        let trailing_char_count = trailing_line.chars().count();
+
+        assert_eq!(
+            trailing_char_count,
+            v2_prefix_char_count,
+            "尾随行字符数应与文件前缀字符数相同。v2前缀: '{}' ({} 字符), 尾随行: '{}' ({} 字符)",
+            &v2_line.chars().take(v2_prefix_char_count).collect::<String>(),
+            v2_prefix_char_count,
+            trailing_line,
+            trailing_char_count
+        );
+    }
+
+    #[test]
+    fn test_no_trailing_line_when_last_is_directory() {
+        use crate::scan::sort_tree;
+
+        let grandchild = TreeNode::new(
+            PathBuf::from("root/parent/child1/grandchild"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+
+        let mut child1 = TreeNode::new(
+            PathBuf::from("root/parent/child1"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        child1.children.push(grandchild);
+
+        let child2 = TreeNode::new(
+            PathBuf::from("root/parent/child2"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+
+        let mut parent = TreeNode::new(
+            PathBuf::from("root/parent"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        parent.children.push(TreeNode::new(
+            PathBuf::from("root/parent/file1.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+        parent.children.push(TreeNode::new(
+            PathBuf::from("root/parent/file2.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+        parent.children.push(child1);
+        parent.children.push(child2);
+
+        let mut root = TreeNode::new(
+            PathBuf::from("root"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        root.children.push(parent);
+
+        sort_tree(&mut root, false);
+
+        let stats = ScanStats {
+            tree: root,
+            duration: Duration::from_millis(100),
+            directory_count: 4,
+            file_count: 2,
+        };
+
+        let mut config = Config::with_root(PathBuf::from("root"));
+        config.render.no_win_banner = true;
+        config.render.charset = CharsetMode::Unicode;
+        config.scan.show_files = true;
+
+        let result = render(&stats, &config);
+        let lines: Vec<&str> = result.content.lines().collect();
+
+        let child2_idx = lines.iter().position(|l| l.contains("child2")).unwrap();
+
+        if child2_idx + 1 < lines.len() {
+            let after_child2 = lines[child2_idx + 1];
+            let is_trailing_whitespace =
+                !after_child2.is_empty() && after_child2.chars().all(|c| c.is_whitespace());
+            assert!(
+                !is_trailing_whitespace,
+                "最后一个目录后不应有尾随空行，但发现: '{}'",
+                after_child2
+            );
+        }
+    }
+
+    #[test]
+    fn test_only_files_trailing_line_alignment() {
+        let mut root = TreeNode::new(
+            PathBuf::from("root"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        root.children.push(TreeNode::new(
+            PathBuf::from("root/a.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+        root.children.push(TreeNode::new(
+            PathBuf::from("root/b.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+        root.children.push(TreeNode::new(
+            PathBuf::from("root/c.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+
+        let stats = ScanStats {
+            tree: root,
+            duration: Duration::from_millis(100),
+            directory_count: 0,
+            file_count: 3,
+        };
+
+        let mut config = Config::with_root(PathBuf::from("root"));
+        config.render.no_win_banner = true;
+        config.render.charset = CharsetMode::Ascii;
+        config.scan.show_files = true;
+
+        let result = render(&stats, &config);
+        let lines: Vec<&str> = result.content.lines().collect();
+
+        let c_idx = lines.iter().position(|l| l.contains("c.txt")).unwrap();
+        let c_line = lines[c_idx];
+
+        let c_prefix_len = c_line.find("c.txt").unwrap();
+
+        if c_idx + 1 < lines.len() {
+            let next_line = lines[c_idx + 1];
+            if next_line.chars().all(|c| c.is_whitespace()) && !next_line.is_empty() {
+                assert_eq!(
+                    next_line.len(),
+                    c_prefix_len,
+                    "尾随行长度应与文件前缀相同。c前缀长度: {}, 尾随行: '{}' (长度: {})",
+                    c_prefix_len,
+                    next_line,
+                    next_line.len()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_no_duplicate_trailing_lines_for_sibling_dirs() {
+        use crate::scan::sort_tree;
+
+        let mut api = TreeNode::new(
+            PathBuf::from("root/docs/api"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        api.children.push(TreeNode::new(
+            PathBuf::from("root/docs/api/v1.md"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+        api.children.push(TreeNode::new(
+            PathBuf::from("root/docs/api/v2.md"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+
+        let mut docs = TreeNode::new(
+            PathBuf::from("root/docs"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        docs.children.push(TreeNode::new(
+            PathBuf::from("root/docs/guide.md"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+        docs.children.push(api);
+
+        let mut lib = TreeNode::new(
+            PathBuf::from("root/src/lib"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        lib.children.push(TreeNode::new(
+            PathBuf::from("root/src/lib/mod.rs"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+
+        let mut src = TreeNode::new(
+            PathBuf::from("root/src"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        src.children.push(TreeNode::new(
+            PathBuf::from("root/src/main.rs"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+        src.children.push(lib);
+
+        let mut root = TreeNode::new(
+            PathBuf::from("root"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        root.children.push(TreeNode::new(
+            PathBuf::from("root/README.md"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+        root.children.push(docs);
+        root.children.push(src);
+
+        sort_tree(&mut root, false);
+
+        let stats = ScanStats {
+            tree: root,
+            duration: Duration::from_millis(100),
+            directory_count: 4,
+            file_count: 6,
+        };
+
+        let mut config = Config::with_root(PathBuf::from("root"));
+        config.render.no_win_banner = true;
+        config.render.charset = CharsetMode::Unicode;
+        config.scan.show_files = true;
+
+        let result = render(&stats, &config);
+        let lines: Vec<&str> = result.content.lines().collect();
+
+        for i in 0..lines.len().saturating_sub(1) {
+            let current_is_trailing = !lines[i].is_empty()
+                && lines[i]
+                .chars()
+                .all(|c| c.is_whitespace() || c == '│' || c == '|');
+            let next_is_trailing = !lines[i + 1].is_empty()
+                && lines[i + 1]
+                .chars()
+                .all(|c| c.is_whitespace() || c == '│' || c == '|');
+
+            assert!(
+                !(current_is_trailing && next_is_trailing),
+                "发现连续尾随行在第 {} 和 {} 行:\n'{}'\n'{}'",
+                i + 1,
+                i + 2,
+                lines[i],
+                lines[i + 1]
+            );
+        }
+    }
+
+    #[test]
+    fn test_trailing_line_exact_prefix_match_ascii() {
+        use crate::scan::sort_tree;
+
+        let mut api = TreeNode::new(
+            PathBuf::from("root/docs/api"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        api.children.push(TreeNode::new(
+            PathBuf::from("root/docs/api/v1.md"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+        api.children.push(TreeNode::new(
+            PathBuf::from("root/docs/api/v2.md"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+
+        let mut docs = TreeNode::new(
+            PathBuf::from("root/docs"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        docs.children.push(TreeNode::new(
+            PathBuf::from("root/docs/guide.md"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+        docs.children.push(api);
+
+        let mut lib = TreeNode::new(
+            PathBuf::from("root/src/lib"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        lib.children.push(TreeNode::new(
+            PathBuf::from("root/src/lib/mod.rs"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+
+        let mut src = TreeNode::new(
+            PathBuf::from("root/src"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        src.children.push(TreeNode::new(
+            PathBuf::from("root/src/main.rs"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+        src.children.push(lib);
+
+        let mut root = TreeNode::new(
+            PathBuf::from("root"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        root.children.push(TreeNode::new(
+            PathBuf::from("root/README.md"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+        root.children.push(docs);
+        root.children.push(src);
+
+        sort_tree(&mut root, false);
+
+        let stats = ScanStats {
+            tree: root,
+            duration: Duration::from_millis(100),
+            directory_count: 4,
+            file_count: 6,
+        };
+
+        let mut config = Config::with_root(PathBuf::from("root"));
+        config.render.no_win_banner = true;
+        config.render.charset = CharsetMode::Ascii;
+        config.scan.show_files = true;
+
+        let result = render(&stats, &config);
+        let lines: Vec<&str> = result.content.lines().collect();
+
+        for i in 1..lines.len() {
+            let current = lines[i];
+            let previous = lines[i - 1];
+
+            let is_trailing =
+                !current.is_empty() && current.chars().all(|c| c.is_whitespace() || c == '|');
+
+            if is_trailing {
+                let prev_prefix_len = previous
+                    .chars()
+                    .take_while(|c| *c == '|' || *c == '+' || *c == '\\' || *c == '-' || *c == ' ')
+                    .count();
+
+                assert_eq!(
+                    current.len(),
+                    prev_prefix_len,
+                    "尾随行长度应与上一行前缀长度一致。\n上一行: '{}' (前缀长度: {})\n尾随行: '{}' (长度: {})",
+                    previous,
+                    prev_prefix_len,
+                    current,
+                    current.len()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_trailing_line_exact_prefix_match_unicode() {
+        use crate::scan::sort_tree;
+
+        let mut api = TreeNode::new(
+            PathBuf::from("root/docs/api"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        api.children.push(TreeNode::new(
+            PathBuf::from("root/docs/api/v1.md"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+        api.children.push(TreeNode::new(
+            PathBuf::from("root/docs/api/v2.md"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+
+        let mut docs = TreeNode::new(
+            PathBuf::from("root/docs"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        docs.children.push(TreeNode::new(
+            PathBuf::from("root/docs/guide.md"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+        docs.children.push(api);
+
+        let mut lib = TreeNode::new(
+            PathBuf::from("root/src/lib"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        lib.children.push(TreeNode::new(
+            PathBuf::from("root/src/lib/mod.rs"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+
+        let mut src = TreeNode::new(
+            PathBuf::from("root/src"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        src.children.push(TreeNode::new(
+            PathBuf::from("root/src/main.rs"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+        src.children.push(lib);
+
+        let mut root = TreeNode::new(
+            PathBuf::from("root"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        root.children.push(TreeNode::new(
+            PathBuf::from("root/README.md"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+        root.children.push(docs);
+        root.children.push(src);
+
+        sort_tree(&mut root, false);
+
+        let stats = ScanStats {
+            tree: root,
+            duration: Duration::from_millis(100),
+            directory_count: 4,
+            file_count: 6,
+        };
+
+        let mut config = Config::with_root(PathBuf::from("root"));
+        config.render.no_win_banner = true;
+        config.render.charset = CharsetMode::Unicode;
+        config.scan.show_files = true;
+
+        let result = render(&stats, &config);
+        let lines: Vec<&str> = result.content.lines().collect();
+
+        for i in 1..lines.len() {
+            let current = lines[i];
+            let previous = lines[i - 1];
+
+            // 检测尾随行：只包含空格和树形符号
+            let is_trailing = !current.is_empty()
+                && current
+                .chars()
+                .all(|c| c.is_whitespace() || c == '│' || c == '├' || c == '└' || c == '─');
+
+            if is_trailing {
+                // 使用字符数比较，而非字节长度
+                let prev_prefix_char_count = previous
+                    .chars()
+                    .take_while(|c| {
+                        *c == '│' || *c == '├' || *c == '└' || *c == '─' || *c == ' '
+                    })
+                    .count();
+                let trailing_char_count = current.chars().count();
+
+                assert_eq!(
+                    trailing_char_count,
+                    prev_prefix_char_count,
+                    "尾随行字符数应与上一行前缀字符数一致。\n上一行: '{}' (前缀 {} 字符)\n尾随行: '{}' ({} 字符)",
+                    previous,
+                    prev_prefix_char_count,
+                    current,
+                    trailing_char_count
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_file_prefix_consistency_in_nested_dirs() {
+        use crate::scan::sort_tree;
+
+        let mut c = TreeNode::new(
+            PathBuf::from("root/a/b/c"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        c.children.push(TreeNode::new(
+            PathBuf::from("root/a/b/c/file1.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+        c.children.push(TreeNode::new(
+            PathBuf::from("root/a/b/c/file2.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+
+        let mut b = TreeNode::new(
+            PathBuf::from("root/a/b"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        b.children.push(c);
+        b.children.push(TreeNode::new(
+            PathBuf::from("root/a/b/file3.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+
+        let mut a = TreeNode::new(
+            PathBuf::from("root/a"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        a.children.push(b);
+        a.children.push(TreeNode::new(
+            PathBuf::from("root/a/file4.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+
+        let mut d = TreeNode::new(
+            PathBuf::from("root/d"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        d.children.push(TreeNode::new(
+            PathBuf::from("root/d/file5.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+
+        let mut root = TreeNode::new(
+            PathBuf::from("root"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        root.children.push(a);
+        root.children.push(d);
+
+        sort_tree(&mut root, false);
+
+        let stats = ScanStats {
+            tree: root,
+            duration: Duration::from_millis(100),
+            directory_count: 4,
+            file_count: 5,
+        };
+
+        let mut config = Config::with_root(PathBuf::from("root"));
+        config.render.no_win_banner = true;
+        config.render.charset = CharsetMode::Ascii;
+        config.scan.show_files = true;
+
+        let result = render(&stats, &config);
+        let lines: Vec<&str> = result.content.lines().collect();
+
+        for (i, line) in lines.iter().enumerate() {
+            println!("L{:02}: '{}'", i + 1, line);
+        }
+
+        for i in 0..lines.len().saturating_sub(1) {
+            let current = lines[i];
+            let next = lines[i + 1];
+
+            let current_is_file = current.contains(".txt");
+            let next_is_trailing =
+                !next.is_empty() && next.chars().all(|c| c.is_whitespace() || c == '|');
+
+            if current_is_file && next_is_trailing {
+                let current_prefix_len = current
+                    .chars()
+                    .take_while(|c| *c == '|' || *c == '+' || *c == '\\' || *c == '-' || *c == ' ')
+                    .count();
+
+                assert_eq!(
+                    next.len(),
+                    current_prefix_len,
+                    "尾随行应与文件行前缀长度一致。\n文件行: '{}' (前缀长度: {})\n尾随行: '{}' (长度: {})",
+                    current,
+                    current_prefix_len,
+                    next,
+                    next.len()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_stream_renderer_build_file_prefix() {
+        let config = Config::default();
+        let render_config = StreamRenderConfig::from_config(&config);
+        let mut renderer = StreamRenderer::new(render_config);
+
+        renderer.push_level(true);
+
+        let prefix = renderer.build_file_prefix(true);
+        assert_eq!(prefix, "│  │  ", "有后续兄弟时应使用 vertical");
+
+        renderer.push_level(false);
+
+        let prefix = renderer.build_file_prefix(false);
+        assert!(prefix.contains("    "), "没有后续兄弟时应使用 space");
+    }
+
+    #[test]
+    fn test_trailing_line_after_deeply_nested_files() {
+        use crate::scan::sort_tree;
+
+        let mut deep = TreeNode::new(
+            PathBuf::from("root/dir1/subdir/deep"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        deep.children.push(TreeNode::new(
+            PathBuf::from("root/dir1/subdir/deep/file.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+
+        let mut subdir = TreeNode::new(
+            PathBuf::from("root/dir1/subdir"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        subdir.children.push(deep);
+
+        let mut dir1 = TreeNode::new(
+            PathBuf::from("root/dir1"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        dir1.children.push(subdir);
+
+        let mut dir2 = TreeNode::new(
+            PathBuf::from("root/dir2"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        dir2.children.push(TreeNode::new(
+            PathBuf::from("root/dir2/file2.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+
+        let mut root = TreeNode::new(
+            PathBuf::from("root"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        root.children.push(dir1);
+        root.children.push(dir2);
+
+        sort_tree(&mut root, false);
+
+        let stats = ScanStats {
+            tree: root,
+            duration: Duration::from_millis(100),
+            directory_count: 4,
+            file_count: 2,
+        };
+
+        let mut config = Config::with_root(PathBuf::from("root"));
+        config.render.no_win_banner = true;
+        config.render.charset = CharsetMode::Ascii;
+        config.scan.show_files = true;
+
+        let result = render(&stats, &config);
+        let lines: Vec<&str> = result.content.lines().collect();
+
+        let file_idx = lines
+            .iter()
+            .position(|l| l.contains("file.txt") && !l.contains("file2"))
+            .unwrap();
+        let file_line = lines[file_idx];
+
+        if file_idx + 1 < lines.len() {
+            let trailing = lines[file_idx + 1];
+            if !trailing.is_empty() && trailing.chars().all(|c| c.is_whitespace() || c == '|') {
+                let file_prefix_len = file_line
+                    .chars()
+                    .take_while(|c| *c == '|' || *c == '+' || *c == '\\' || *c == '-' || *c == ' ')
+                    .count();
+
+                assert_eq!(
+                    trailing.len(),
+                    file_prefix_len,
+                    "深层嵌套后的尾随行应与文件行前缀一致"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_trailing_line_prefix_matches_previous_line() {
+        use crate::scan::sort_tree;
+
+        // 构建测试树
+        let mut src = TreeNode::new(
+            PathBuf::from("root/src"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        src.children.push(TreeNode::new(
+            PathBuf::from("root/src/main.rs"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+
+        let mut tmp = TreeNode::new(
+            PathBuf::from("root/tmp"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        tmp.children.push(TreeNode::new(
+            PathBuf::from("root/tmp/a.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+
+        let mut root = TreeNode::new(
+            PathBuf::from("root"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        root.children.push(src);
+        root.children.push(tmp);
+
+        sort_tree(&mut root, false);
+
+        let mut config = Config::with_root(PathBuf::from("root"));
+        config.render.no_win_banner = true;
+        config.render.charset = CharsetMode::Unicode;
+        config.scan.show_files = true;
+
+        let output = render_tree_only(&root, &config);
+        let lines: Vec<&str> = output.lines().collect();
+
+        // 找到所有尾随行（纯空白行或只有树形符号的行）
+        for (i, line) in lines.iter().enumerate() {
+            if i == 0 {
+                continue;
+            }
+
+            // 检测尾随行：只包含空格和│的行
+            let trimmed = line.trim_end();
+            if trimmed.chars().all(|c| c == ' ' || c == '│') && !trimmed.is_empty() {
+                // 这是尾随行，检查其前缀是否与上一行匹配
+                let prev_line = lines[i - 1];
+                let trailing_len = trimmed.len();
+
+                // 上一行的前缀（相同长度）应该与尾随行完全一致
+                let prev_prefix: String = prev_line.chars().take(trailing_len).collect();
+
+                assert_eq!(
+                    trimmed, prev_prefix,
+                    "尾随行前缀不匹配\n第{}行(尾随行): {:?}\n第{}行(上一行前缀): {:?}",
+                    i + 1, trimmed,
+                    i, prev_prefix
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_remove_trailing_pipe_only_line_at_end() {
+        use crate::scan::sort_tree;
+
+        // 构建与图示相同的树结构
+        let grandchild = TreeNode::new(
+            PathBuf::from("root/parent/child1/grandchild"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+
+        let mut child1 = TreeNode::new(
+            PathBuf::from("root/parent/child1"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        child1.children.push(grandchild);
+
+        let child2 = TreeNode::new(
+            PathBuf::from("root/parent/child2"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+
+        let mut parent = TreeNode::new(
+            PathBuf::from("root/parent"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        parent.children.push(TreeNode::new(
+            PathBuf::from("root/parent/file1.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+        parent.children.push(TreeNode::new(
+            PathBuf::from("root/parent/file2.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+        parent.children.push(child1);
+        parent.children.push(child2);
+
+        let mut root = TreeNode::new(
+            PathBuf::from("root"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        root.children.push(parent);
+
+        sort_tree(&mut root, false);
+
+        let stats = ScanStats {
+            tree: root,
+            duration: Duration::from_millis(100),
+            directory_count: 4,
+            file_count: 2,
+        };
+
+        let mut config = Config::with_root(PathBuf::from("root"));
+        config.render.no_win_banner = true;
+        config.render.charset = CharsetMode::Ascii;
+        config.scan.show_files = true;
+
+        let result = render(&stats, &config);
+        let lines: Vec<&str> = result.content.lines().collect();
+
+        // 获取最后一个非空行
+        let last_non_empty = lines.iter().rev().find(|l| !l.is_empty());
+
+        if let Some(last_line) = last_non_empty {
+            // 最后一行不应仅包含竖线和空白
+            let only_pipes = last_line.chars().all(|c| c == '|' || c == '│' || c.is_whitespace());
+            assert!(
+                !only_pipes,
+                "最后一行不应仅包含竖线，实际最后一行: '{}'",
+                last_line
+            );
+        }
+    }
+
+    #[test]
+    fn test_remove_trailing_pipe_only_line_helper() {
+        // 含竖线的行应被移除
+        let input = "line1\nline2\n|   \n".to_string();
+        let result = remove_trailing_pipe_only_line(input);
+        assert_eq!(result, "line1\nline2\n");
+
+        // 实际内容不应被移除
+        let input = "line1\nline2\nchild2\n".to_string();
+        let result = remove_trailing_pipe_only_line(input);
+        assert_eq!(result, "line1\nline2\nchild2\n");
+
+        // Unicode 竖线应被移除
+        let input = "line1\nline2\n│   \n".to_string();
+        let result = remove_trailing_pipe_only_line(input);
+        assert_eq!(result, "line1\nline2\n");
+
+        // 纯空白行应保留（不含竖线）
+        let input = "line1\nline2\n    \n".to_string();
+        let result = remove_trailing_pipe_only_line(input);
+        assert_eq!(result, "line1\nline2\n    \n");
+
+        // 空输入
+        let input = "".to_string();
+        let result = remove_trailing_pipe_only_line(input);
+        assert_eq!(result, "");
+
+        // 混合竖线和空格应被移除
+        let input = "line1\nline2\n|   |   \n".to_string();
+        let result = remove_trailing_pipe_only_line(input);
+        assert_eq!(result, "line1\nline2\n");
+    }
+
+    #[test]
+    fn test_stream_renderer_no_trailing_when_last_child_is_dir() {
+        // 测试场景：目录包含文件和子目录，但最后一个子条目是目录
+        // 期望：pop_level 不应返回尾随行
+
+        let mut config = Config::default();
+        config.scan.show_files = true;
+        let render_config = StreamRenderConfig::from_config(&config);
+        let mut renderer = StreamRenderer::new(render_config);
+
+        // 进入 parent 目录
+        renderer.push_level(false);
+
+        // 渲染 file1.txt
+        let file1 = StreamEntry {
+            path: PathBuf::from("file1.txt"),
+            name: "file1.txt".to_string(),
+            kind: EntryKind::File,
+            metadata: EntryMetadata::default(),
+            depth: 1,
+            is_last: false,
+            is_file: true,
+            has_more_dirs: true,
+        };
+        let _ = renderer.render_entry(&file1);
+
+        // 渲染 file2.txt
+        let file2 = StreamEntry {
+            path: PathBuf::from("file2.txt"),
+            name: "file2.txt".to_string(),
+            kind: EntryKind::File,
+            metadata: EntryMetadata::default(),
+            depth: 1,
+            is_last: false,
+            is_file: true,
+            has_more_dirs: true,
+        };
+        let _ = renderer.render_entry(&file2);
+
+        // 渲染 child1 目录
+        let child1 = StreamEntry {
+            path: PathBuf::from("child1"),
+            name: "child1".to_string(),
+            kind: EntryKind::Directory,
+            metadata: EntryMetadata::default(),
+            depth: 1,
+            is_last: false,
+            is_file: false,
+            has_more_dirs: false,
+        };
+        let _ = renderer.render_entry(&child1);
+
+        // 进入 child1，渲染 grandchild，离开 child1
+        renderer.push_level(true);
+        let grandchild = StreamEntry {
+            path: PathBuf::from("grandchild"),
+            name: "grandchild".to_string(),
+            kind: EntryKind::Directory,
+            metadata: EntryMetadata::default(),
+            depth: 2,
+            is_last: true,
+            is_file: false,
+            has_more_dirs: false,
+        };
+        let _ = renderer.render_entry(&grandchild);
+        let _ = renderer.pop_level(); // 离开 child1
+
+        // 渲染 child2 目录（最后一个子条目）
+        let child2 = StreamEntry {
+            path: PathBuf::from("child2"),
+            name: "child2".to_string(),
+            kind: EntryKind::Directory,
+            metadata: EntryMetadata::default(),
+            depth: 1,
+            is_last: true,
+            is_file: false,
+            has_more_dirs: false,
+        };
+        let _ = renderer.render_entry(&child2);
+
+        // 进入并离开 child2（空目录）
+        renderer.push_level(false);
+        let child2_trailing = renderer.pop_level();
+        assert!(
+            child2_trailing.is_none(),
+            "空目录 child2 不应有尾随行"
+        );
+
+        // 离开 parent 目录
+        let parent_trailing = renderer.pop_level();
+
+        // 关键断言：parent 的最后一个子条目是 child2（目录），不是文件
+        // 所以不应该有尾随行
+        assert!(
+            parent_trailing.is_none(),
+            "parent 的最后子条目是目录，不应有尾随行，但得到: {:?}",
+            parent_trailing
+        );
+    }
+
+    #[test]
+    fn test_stream_renderer_trailing_when_last_child_is_file() {
+        // 测试场景：目录的最后一个子条目是文件
+        // 期望：pop_level 应返回尾随行
+
+        let mut config = Config::default();
+        config.scan.show_files = true;
+        let render_config = StreamRenderConfig::from_config(&config);
+        let mut renderer = StreamRenderer::new(render_config);
+
+        // 进入目录
+        renderer.push_level(true); // 有后续兄弟
+
+        // 渲染 subdir 目录
+        let subdir = StreamEntry {
+            path: PathBuf::from("subdir"),
+            name: "subdir".to_string(),
+            kind: EntryKind::Directory,
+            metadata: EntryMetadata::default(),
+            depth: 1,
+            is_last: false,
+            is_file: false,
+            has_more_dirs: false,
+        };
+        let _ = renderer.render_entry(&subdir);
+
+        // 渲染 file.txt（最后一个子条目）
+        let file = StreamEntry {
+            path: PathBuf::from("file.txt"),
+            name: "file.txt".to_string(),
+            kind: EntryKind::File,
+            metadata: EntryMetadata::default(),
+            depth: 1,
+            is_last: true,
+            is_file: true,
+            has_more_dirs: false,
+        };
+        let _ = renderer.render_entry(&file);
+
+        // 离开目录
+        let trailing = renderer.pop_level();
+
+        // 关键断言：最后一个子条目是文件，应该有尾随行
+        assert!(
+            trailing.is_some(),
+            "最后子条目是文件，应有尾随行"
+        );
+    }
+
+    #[test]
+    fn test_render_files_only_has_trailing_space_line() {
+        let mut root = TreeNode::new(
+            PathBuf::from("root"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        root.children.push(TreeNode::new(
+            PathBuf::from("root/a.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+        root.children.push(TreeNode::new(
+            PathBuf::from("root/b.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+        root.children.push(TreeNode::new(
+            PathBuf::from("root/c.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+
+        let stats = ScanStats {
+            tree: root,
+            duration: Duration::from_millis(100),
+            directory_count: 0,
+            file_count: 3,
+        };
+
+        let mut config = Config::with_root(PathBuf::from("root"));
+        config.render.no_win_banner = true;
+        config.render.charset = CharsetMode::Ascii;
+        config.scan.show_files = true;
+
+        let result = render(&stats, &config);
+        let lines: Vec<&str> = result.content.lines().collect();
+
+        let c_idx = lines.iter().position(|l| l.contains("c.txt")).unwrap();
+        assert!(c_idx + 1 < lines.len(), "c.txt 后应有尾随行");
+        assert_eq!(lines[c_idx + 1], "    ", "尾随行应为4个空格");
     }
 }
