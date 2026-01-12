@@ -42,7 +42,7 @@ treepp /v
 ```plaintext
 tree++ version 0.1.0
 
-A Much Better Windows `tree` Command.
+A Much Better Windows tree Command.
 
 author: WaterRun
 link: https://github.com/Water-Run/treepp

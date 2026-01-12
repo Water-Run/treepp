@@ -6,7 +6,7 @@
 //!
 //! 文件: src/config.rs
 //! 作者: WaterRun
-//! 更新于: 2026-01-09
+//! 更新于: 2026-01-12
 
 #![forbid(unsafe_code)]
 
@@ -190,21 +190,27 @@ impl CharsetMode {
         }
     }
 
-    /// 获取纵向连接线符号（包含后续空格，总宽度4字符）
+    /// 获取纵向连接线符号（用于有后续兄弟的子项前缀）
+    ///
+    /// Unicode 模式: "│  " (竖线 + 2空格 = 3字符位置，与分支符宽度一致)
+    /// ASCII 模式: "|   " (| + 3空格 = 4字符，与分支符宽度一致)
     #[must_use]
     pub const fn vertical(&self) -> &'static str {
         match self {
-            Self::Unicode => "│   ",  // 竖线 + 3空格 = 4字符
-            Self::Ascii => "|   ",    // | + 3空格 = 4字符
+            Self::Unicode => "│  ", // 竖线(1宽) + 2空格 = 3字符位置
+            Self::Ascii => "|   ",  // | + 3空格 = 4字符
         }
     }
 
-    /// 获取空白缩进（4字符宽度）
+    /// 获取空白缩进（用于最后兄弟的子项前缀）
+    ///
+    /// Unicode 模式: 3空格（与竖线缩进宽度一致）
+    /// ASCII 模式: 4空格（与竖线缩进宽度一致）
     #[must_use]
     pub const fn indent(&self) -> &'static str {
         match self {
-            Self::Unicode => "    ",  // 4空格
-            Self::Ascii => "    ",    // 4空格
+            Self::Unicode => "   ", // 3空格
+            Self::Ascii => "    ",  // 4空格
         }
     }
 }
@@ -733,8 +739,8 @@ mod tests {
         let mode = CharsetMode::Unicode;
         assert_eq!(mode.branch(), "├─");
         assert_eq!(mode.last_branch(), "└─");
-        assert_eq!(mode.vertical(), "│   ");  // 竖线 + 3空格 = 4字符
-        assert_eq!(mode.indent(), "    ");    // 4空格
+        assert_eq!(mode.vertical(), "│  "); // 竖线 + 2空格
+        assert_eq!(mode.indent(), "   ");   // 3空格
     }
 
     #[test]
@@ -742,8 +748,8 @@ mod tests {
         let mode = CharsetMode::Ascii;
         assert_eq!(mode.branch(), "+---");
         assert_eq!(mode.last_branch(), "\\---");
-        assert_eq!(mode.vertical(), "|   ");
-        assert_eq!(mode.indent(), "    ");
+        assert_eq!(mode.vertical(), "|   "); // | + 3空格
+        assert_eq!(mode.indent(), "    ");   // 4空格
     }
 
     #[test]

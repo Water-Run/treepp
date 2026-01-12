@@ -17,7 +17,7 @@
 //!
 //! 文件: src/main.rs
 //! 作者: WaterRun
-//! 更新于: 2026-01-09
+//! 更新于: 2026-01-12
 
 #![forbid(unsafe_code)]
 #![deny(warnings)]
@@ -161,16 +161,19 @@ fn stream_mode(config: &config::Config) -> Result<(), TreeppError> {
     let header = renderer.render_header(&config.root_path, config.path_explicitly_set);
     write_output!(header);
 
-    // 记录是否有子目录
+    // 记录是否有子目录和文件
     let mut has_subdirs = false;
+    let mut has_files = false;
 
     // 流式扫描 + 渲染
     let stats = scan::scan_streaming(config, |event| {
         match event {
             StreamEvent::Entry(ref entry) => {
-                // 记录是否有目录
+                // 记录是否有目录或文件
                 if entry.kind == scan::EntryKind::Directory {
                     has_subdirs = true;
+                } else {
+                    has_files = true;
                 }
 
                 let line = renderer.render_entry(&entry.clone());
@@ -201,6 +204,15 @@ fn stream_mode(config: &config::Config) -> Result<(), TreeppError> {
     if !has_subdirs && !config.render.no_win_banner {
         if let Some(drive) = drive_letter_from_path(&config.root_path) {
             if let Ok(banner) = WinBanner::fetch_for_drive(drive) {
+                // 如果有文件但无目录，先输出占位行
+                if has_files && config.scan.show_files {
+                    let space = match config.render.charset {
+                        config::CharsetMode::Unicode => "   ",
+                        config::CharsetMode::Ascii => "    ",
+                    };
+                    writeln_output!(space);
+                }
+
                 if !banner.no_subfolder.is_empty() {
                     writeln_output!(banner.no_subfolder);
                 }

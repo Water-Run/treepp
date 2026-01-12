@@ -12,7 +12,7 @@
 //!
 //! 文件: src/render.rs
 //! 作者: WaterRun
-//! 更新于: 2026-01-09
+//! 更新于: 2026-01-12
 
 #![forbid(unsafe_code)]
 
@@ -164,12 +164,12 @@ impl WinBanner {
             });
         }
 
-        // 第1行: 卷信息
-        let volume_line = lines[0].trim().to_string();
-        // 第2行: 序列号
-        let serial_line = lines[1].trim().to_string();
-        // 第4行: 无子文件夹提示（固定位置）
-        let no_subfolder = lines[3].trim().to_string();
+        // 第1行: 卷信息（只 trim 左侧，保留右侧空格）
+        let volume_line = lines[0].trim_start().to_string();
+        // 第2行: 序列号（只 trim 左侧，保留右侧空格）
+        let serial_line = lines[1].trim_start().to_string();
+        // 第4行: 无子文件夹提示（只 trim 左侧，保留右侧空格）
+        let no_subfolder = lines[3].trim_start().to_string();
 
         Ok(Self {
             volume_line,
@@ -280,6 +280,10 @@ pub struct RenderResult {
 // 树形连接符
 // ============================================================================
 
+// ============================================================================
+// 树形连接符
+// ============================================================================
+
 /// 树形连接符集合
 #[derive(Debug, Clone, Copy)]
 pub struct TreeChars {
@@ -294,21 +298,14 @@ pub struct TreeChars {
 }
 
 impl TreeChars {
-    /// 根据字符集模式创建连接符集合
-    ///
-    /// 格式与 Windows tree 命令保持一致：
-    /// - Unicode: ├─, └─, │   (│后3空格), 4空格
-    /// - ASCII: +---, \---, |   (|后3空格), 4空格
-    ///
-    /// 两种模式的缩进宽度都是4字符。
     #[must_use]
     pub fn from_charset(charset: CharsetMode) -> Self {
         match charset {
             CharsetMode::Unicode => Self {
                 branch: "├─",
                 last_branch: "└─",
-                vertical: "│   ",  // 竖线 + 3空格 = 4字符宽度
-                space: "    ",     // 4空格
+                vertical: "│  ",   // 修改：│ + 2空格 = 3字符显示宽度
+                space: "    ",     // 保持：4空格
             },
             CharsetMode::Ascii => Self {
                 branch: "+---",
@@ -558,11 +555,8 @@ impl StreamRenderer {
         // 检查是否需要插入分隔行（从文件切换到目录）
         if self.last_was_file && !entry.is_file {
             let prefix = self.build_prefix();
-            let separator = match self.config.charset {
-                CharsetMode::Unicode => "│",
-                CharsetMode::Ascii => "|",
-            };
-            let _ = writeln!(output, "{}{}", prefix, separator);
+            // 分隔行：使用完整的 vertical 块（保留尾随空格）
+            let _ = writeln!(output, "{}{}", prefix, self.chars.vertical);
         }
 
         if entry.is_file {
@@ -803,6 +797,13 @@ pub fn render(stats: &ScanStats, config: &Config) -> RenderResult {
 
     // 无子目录提示（当目录没有子目录时显示，不考虑文件）
     if !tree_has_subdirectories(&stats.tree) {
+        // 如果有文件但无目录，先输出占位行
+        let has_files = stats.tree.children.iter().any(|c| c.kind == EntryKind::File);
+        if has_files && config.scan.show_files {
+            // 输出与文件行同等缩进的占位行
+            let _ = writeln!(output, "{}", chars.space);
+        }
+
         if let Some(b) = &banner {
             if !b.no_subfolder.is_empty() {
                 output.push_str(&b.no_subfolder);
@@ -836,8 +837,6 @@ pub fn render(stats: &ScanStats, config: &Config) -> RenderResult {
 }
 
 /// 渲染子节点 (带树形连接符)
-///
-/// `depth` 为当前即将渲染的子节点深度（根的直接子项 depth = 1）
 fn render_children(
     output: &mut String,
     node: &TreeNode,
@@ -846,12 +845,10 @@ fn render_children(
     prefix: &str,
     depth: usize,
 ) {
-    // 如果当前层级本身已超出显示深度，直接返回（仍然保留统计，不影响 /DU）
     if !depth_within_limit(depth, config.scan.max_depth) {
         return;
     }
 
-    // 分离文件和目录（保持排序后的相对顺序）
     let (files, dirs): (Vec<_>, Vec<_>) = get_filtered_children(node, config)
         .into_iter()
         .partition(|c| c.kind == EntryKind::File);
@@ -859,14 +856,12 @@ fn render_children(
     let has_files = !files.is_empty();
     let has_dirs = !dirs.is_empty();
 
-    // 文件优先模式（与原生 Windows tree 一致）
+    // 文件优先模式
     for file in &files {
-        // 文件仅在显示深度内才输出
         if !depth_within_limit(depth, config.scan.max_depth) {
             continue;
         }
 
-        // 文件行前缀：如果后面还有目录，用竖线；否则用空格
         let file_prefix = if has_dirs {
             format!("{}{}", prefix, chars.vertical)
         } else {
@@ -878,19 +873,19 @@ fn render_children(
         let _ = writeln!(output, "{}{}{}", file_prefix, name, meta);
     }
 
-    // 文件和目录之间的分隔行（仅当两者都存在且有显示内容时）
-    if has_files && has_dirs && depth_within_limit(depth, config.scan.max_depth) {
-        let separator = match config.render.charset {
-            CharsetMode::Unicode => "│",
-            CharsetMode::Ascii => "|",
+    // 文件列表后的空行（无论是否有目录）
+    if has_files && depth_within_limit(depth, config.scan.max_depth) {
+        let empty_line_prefix = if has_dirs {
+            format!("{}{}", prefix, chars.vertical)
+        } else {
+            format!("{}{}", prefix, chars.space)
         };
-        let _ = writeln!(output, "{}{}", prefix, separator);
+        let _ = writeln!(output, "{}", empty_line_prefix);
     }
 
-    // 渲染目录（使用分支符）
+    // 渲染目录
     let dir_count = dirs.len();
     for (i, dir) in dirs.iter().enumerate() {
-        // 目录自身是否在显示深度内
         if !depth_within_limit(depth, config.scan.max_depth) {
             continue;
         }
@@ -906,16 +901,57 @@ fn render_children(
         let meta = format_entry_meta(dir, config);
         let _ = writeln!(output, "{}{}{}{}", prefix, connector, name, meta);
 
-        // 递归渲染子目录：仅当下一层仍在显示深度内
+        // 递归渲染子目录
         if !dir.children.is_empty() && can_recurse(depth, config.scan.max_depth) {
             let new_prefix = if is_last {
                 format!("{}{}", prefix, chars.space)
             } else {
                 format!("{}{}", prefix, chars.vertical)
             };
+
+            // 直接调用 render_children，让递归处理空行
             render_children(output, dir, chars, config, &new_prefix, depth + 1);
         }
     }
+}
+
+/// 渲染叶子目录的文件（无子目录的目录）
+///
+/// Native Windows tree 对叶子目录内的文件使用双倍空格缩进：
+/// - 普通目录内的文件：`prefix + vertical/space + 文件名`
+/// - 叶子目录内的文件：`prefix + space + space + 文件名`（双倍缩进）
+fn render_leaf_dir_files(
+    output: &mut String,
+    node: &TreeNode,
+    chars: &TreeChars,
+    config: &Config,
+    prefix: &str,
+    depth: usize,
+) {
+    if !depth_within_limit(depth, config.scan.max_depth) {
+        return;
+    }
+
+    let files: Vec<_> = get_filtered_children(node, config)
+        .into_iter()
+        .filter(|c| c.kind == EntryKind::File)
+        .collect();
+
+    if files.is_empty() {
+        return;
+    }
+
+    // 叶子目录的文件使用双倍 space 缩进（与 Native tree 一致）
+    let file_prefix = format!("{}{}", prefix, chars.space);
+
+    for file in &files {
+        let name = format_entry_name(file, config);
+        let meta = format_entry_meta(file, config);
+        let _ = writeln!(output, "{}{}{}", file_prefix, name, meta);
+    }
+
+    // 文件列表结束后的占位行
+    let _ = writeln!(output, "{}", file_prefix);
 }
 
 /// 渲染子节点 (无树形连接符，仅缩进)
@@ -1057,23 +1093,23 @@ mod tests {
 
     #[test]
     fn test_win_banner_parse_valid_4_lines() {
-        let output = "卷 系统 的文件夹 PATH 列表\n卷序列号为 2810-11C7\nC:.\n没有子文件夹";
+        let output = "卷 系统 的文件夹 PATH 列表\n卷序列号为 2810-11C7\nC:.\n没有子文件夹 ";
         let banner = WinBanner::parse(output).expect("解析应成功");
 
         assert_eq!(banner.volume_line, "卷 系统 的文件夹 PATH 列表");
         assert_eq!(banner.serial_line, "卷序列号为 2810-11C7");
-        assert_eq!(banner.no_subfolder, "没有子文件夹");
+        assert_eq!(banner.no_subfolder, "没有子文件夹 ");
     }
 
     #[test]
     fn test_win_banner_parse_with_trailing_empty_lines() {
         // tree 命令输出末尾可能有空行，但前 4 行是固定的
-        let output = "卷 系统 的文件夹 PATH 列表\n卷序列号为 2810-11C7\nC:.\n没有子文件夹\n\n";
+        let output = "卷 系统 的文件夹 PATH 列表\n卷序列号为 2810-11C7\nC:.\n没有子文件夹 \n\n";
         let banner = WinBanner::parse(output).expect("解析应成功");
 
         assert_eq!(banner.volume_line, "卷 系统 的文件夹 PATH 列表");
         assert_eq!(banner.serial_line, "卷序列号为 2810-11C7");
-        assert_eq!(banner.no_subfolder, "没有子文件夹");
+        assert_eq!(banner.no_subfolder, "没有子文件夹 ");
     }
 
     #[test]
@@ -1081,19 +1117,20 @@ mod tests {
         let output = "卷 系统 的文件夹 PATH 列表  \n  卷序列号为 2810-11C7\nC:.\n没有子文件夹  \n";
         let banner = WinBanner::parse(output).expect("解析应成功");
 
-        assert_eq!(banner.volume_line, "卷 系统 的文件夹 PATH 列表");
+        // 只 trim 左侧，保留右侧空格
+        assert_eq!(banner.volume_line, "卷 系统 的文件夹 PATH 列表  ");
         assert_eq!(banner.serial_line, "卷序列号为 2810-11C7");
-        assert_eq!(banner.no_subfolder, "没有子文件夹");
+        assert_eq!(banner.no_subfolder, "没有子文件夹  ");
     }
 
     #[test]
     fn test_win_banner_parse_english_locale() {
-        let output = "Folder PATH listing for volume OS\nVolume serial number is ABCD-1234\nC:.\nNo subfolders exist";
+        let output = "Folder PATH listing for volume OS\nVolume serial number is ABCD-1234\nC:.\nNo subfolders exist ";
         let banner = WinBanner::parse(output).expect("解析应成功");
 
         assert_eq!(banner.volume_line, "Folder PATH listing for volume OS");
         assert_eq!(banner.serial_line, "Volume serial number is ABCD-1234");
-        assert_eq!(banner.no_subfolder, "No subfolders exist");
+        assert_eq!(banner.no_subfolder, "No subfolders exist ");
     }
 
     #[test]
@@ -1221,17 +1258,18 @@ mod tests {
         let chars = TreeChars::from_charset(CharsetMode::Unicode);
         assert_eq!(chars.branch, "├─");
         assert_eq!(chars.last_branch, "└─");
-        assert_eq!(chars.vertical, "│   ");  // 竖线 + 3空格 = 4字符
-        assert_eq!(chars.space, "    ");     // 4空格
+        assert_eq!(chars.vertical, "│  ");  // 修改：│ + 2空格
+        assert_eq!(chars.space, "    ");
     }
+
 
     #[test]
     fn test_tree_chars_ascii() {
         let chars = TreeChars::from_charset(CharsetMode::Ascii);
         assert_eq!(chars.branch, "+---");
         assert_eq!(chars.last_branch, "\\---");
-        assert_eq!(chars.vertical, "|   ");
-        assert_eq!(chars.space, "    ");
+        assert_eq!(chars.vertical, "|   ");  // | + 3空格
+        assert_eq!(chars.space, "    ");     // 4空格
     }
 
     // ========================================================================
@@ -1454,7 +1492,7 @@ mod tests {
 
         let line = renderer.render_entry(&entry);
         assert!(!line.contains("│"));
-        assert!(line.starts_with("    "));  // 4空格
+        assert!(line.starts_with("    "));  // 保持4空格（space 仍是4字符）
     }
 
     #[test]
