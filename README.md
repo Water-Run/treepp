@@ -15,17 +15,16 @@ The `tree` command on Windows has seen virtually no changes since it was release
 *Performance comparison (using `C:\Windows` as an example):*
 
 | Type                       | Time (`ms`) | Multiplier |
-| -------------------------- | -----------:| ----------:|
-| `tree /f` (Windows Native) | `34367.81`  | `1.00x`    |
-| `treepp /f`                | `8948.63`   | `3.84x`    |
-| `treepp /f /nb`            | `8690.36`   | `3.95x`    |
-| `treepp /f /nb /b`         | `3816.34`   | `9.01x`    |
-| `treepp /f /nb /b /t 1`    | `10672.62`  | `3.22x`    |
-| `treepp /f /nb /b /t 2`    | `6769.22`   | `5.08x`    |
-| `treepp /f /nb /b /t 4`    | `4717.16`   | `7.29x`    |
-| `treepp /f /nb /b /t 8`    | `3797.09`   | `9.05x`    |
-| `treepp /f /nb /b /t 16`   | `3026.32`   | `11.36x`   |
-| `treepp /f /nb /b /t 32`   | `3013.44`   | `11.40x`   |
+|----------------------------|------------:|-----------:|
+| `tree /f` (Windows Native) |  `20721.90` |    `1.00x` |
+| `treepp /f`                |   `7467.99` |    `2.77x` |
+| `treepp /f /nb`            |   `7392.34` |    `2.80x` |
+| `treepp /f /nb /b`         |   `3226.38` |    `6.42x` |
+| `treepp /f /nb /b /t 1`    |   `9123.00` |    `2.27x` |
+| `treepp /f /nb /b /t 2`    |   `5767.71` |    `3.59x` |
+| `treepp /f /nb /b /t 4`    |   `3948.73` |    `5.25x` |
+| `treepp /f /nb /b /t 8`    |   `3166.81` |    `6.54x` |
+| `treepp /f /nb /b /t 16`   |   `2704.67` |    `7.66x` |
 
 ## Installation
 
@@ -59,7 +58,7 @@ treepp /f
 ## Quick Reference
 
 | Option Set (Equivalent Forms) | Description                                                 |
-| ----------------------------- | ----------------------------------------------------------- |
+|-------------------------------|-------------------------------------------------------------|
 | `--help` `-h` `/?`            | Show help information                                       |
 | `--version` `-v` `/V`         | Show version information                                    |
 | `--ascii` `-a` `/A`           | Draw the tree using ASCII characters                        |
