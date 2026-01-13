@@ -69,4 +69,5 @@ target/
 **/target/
 
 
-/.github
+.github/
+.release/
