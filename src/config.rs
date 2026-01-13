@@ -7,7 +7,7 @@
 //!
 //! File: src/config.rs
 //! Author: WaterRun
-//! Date: 2026-01-12
+//! Date: 2026-01-13
 
 #![forbid(unsafe_code)]
 
@@ -399,8 +399,6 @@ pub struct MatchOptions {
     pub include_patterns: Vec<String>,
     /// Exclude patterns (ignore matching items).
     pub exclude_patterns: Vec<String>,
-    /// Whether to prune empty directories.
-    pub prune_empty: bool,
 }
 
 /// Render options.
@@ -991,20 +989,12 @@ mod tests {
     mod match_options_tests {
         use super::*;
 
-        #[test]
-        fn default_is_empty() {
-            let opts = MatchOptions::default();
-            assert!(opts.include_patterns.is_empty());
-            assert!(opts.exclude_patterns.is_empty());
-            assert!(!opts.prune_empty);
-        }
 
         #[test]
         fn clone_produces_equal_copy() {
             let opts = MatchOptions {
                 include_patterns: vec!["*.rs".to_string()],
                 exclude_patterns: vec!["target".to_string()],
-                prune_empty: true,
             };
             let cloned = opts.clone();
             assert_eq!(opts, cloned);
@@ -1482,7 +1472,6 @@ mod tests {
             config.scan.respect_gitignore = true;
             config.matching.include_patterns = vec!["*.rs".to_string()];
             config.matching.exclude_patterns = vec!["target".to_string()];
-            config.matching.prune_empty = true;
             config.render.charset = CharsetMode::Ascii;
             config.render.path_mode = PathMode::Full;
             config.render.show_size = true;

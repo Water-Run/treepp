@@ -27,7 +27,7 @@
 //!
 //! File: src/cli.rs
 //! Author: WaterRun
-//! Date: 2026-01-12
+//! Date: 2026-01-13
 
 #![forbid(unsafe_code)]
 
@@ -220,13 +220,6 @@ const ARG_DEFINITIONS: &[ArgDef] = &[
         cmd_patterns: &["/X"],
         short_patterns: &["-I"],
         long_patterns: &["--exclude"],
-    },
-    ArgDef {
-        canonical: "prune",
-        kind: ArgKind::Flag,
-        cmd_patterns: &["/P"],
-        short_patterns: &["-P"],
-        long_patterns: &["--prune"],
     },
     ArgDef {
         canonical: "gitignore",
@@ -694,7 +687,6 @@ impl CliParser {
                     config.matching.exclude_patterns.push(value.clone());
                 }
             }
-            "prune" => config.matching.prune_empty = true,
             "ascii" => config.render.charset = CharsetMode::Ascii,
             "full-path" => config.render.path_mode = PathMode::Full,
             "size" => config.render.show_size = true,
@@ -791,7 +783,6 @@ Options:
   --include, -m, /M <PATTERN> Show only files matching the pattern
   --disk-usage, -u, /DU       Show cumulative directory sizes (requires --batch)
   --report, -e, /RP           Show summary statistics at the end
-  --prune, -P, /P             Prune empty directories
   --no-win-banner, -N, /NB    Do not show the Windows native tree banner/header
   --silent, -l, /SI           Silent mode (requires --output)
   --output, -o, /O <FILE>     Write output to a file (.txt, .json, .yml, .toml)
@@ -891,7 +882,6 @@ mod tests {
             assert!(!config.scan.respect_gitignore);
             assert!(config.matching.include_patterns.is_empty());
             assert!(config.matching.exclude_patterns.is_empty());
-            assert!(!config.matching.prune_empty);
             assert_eq!(config.render.charset, CharsetMode::Unicode);
             assert_eq!(config.render.path_mode, PathMode::Relative);
             assert!(!config.render.show_size);
@@ -1086,7 +1076,7 @@ mod tests {
         let temp_dir = create_temp_dir();
         let parser = parser_with_temp_dir(
             &temp_dir,
-            vec!["/F", "-a", "--size", "/HR", "-d", "--reverse", "--prune"],
+            vec!["/F", "-a", "--size", "/HR", "-d", "--reverse"],
         );
 
         if let Ok(ParseResult::Config(config)) = parser.parse() {
@@ -1096,7 +1086,6 @@ mod tests {
             assert!(config.render.human_readable);
             assert!(config.render.show_date);
             assert!(config.render.reverse_sort);
-            assert!(config.matching.prune_empty);
         } else {
             panic!("解析失败");
         }
@@ -1580,18 +1569,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_prune_all_styles() {
-        for flag in &["--prune", "-P", "/P"] {
-            let parser = CliParser::new(vec![flag.to_string()]);
-            if let Ok(ParseResult::Config(config)) = parser.parse() {
-                assert!(config.matching.prune_empty, "测试 {flag}");
-            } else {
-                panic!("解析 {flag} 失败");
-            }
-        }
-    }
-
-    #[test]
     fn parse_gitignore_all_styles() {
         for flag in &["--gitignore", "-g", "/G", "/g"] {
             let parser = CliParser::new(vec![flag.to_string()]);
@@ -1769,7 +1746,6 @@ mod tests {
         assert!(help.contains("--include"));
         assert!(help.contains("--exclude"));
         assert!(help.contains("--silent"));
-        assert!(help.contains("--prune"));
         assert!(help.contains("--reverse"));
         assert!(help.contains("--no-win-banner"));
         assert!(help.contains("--disk-usage"));
@@ -1931,7 +1907,7 @@ mod tests {
             &temp_dir,
             vec![
                 "/B", "/F", "-a", "--level", "5", "-s", "-H", "-r", "--include", "*.rs",
-                "--exclude", "target", "--prune", "-g", "--report", "-N", "--thread", "4",
+                "--exclude", "target", "-g", "--report", "-N", "--thread", "4",
                 "--disk-usage",
             ],
         );
@@ -1946,7 +1922,6 @@ mod tests {
             assert!(config.render.reverse_sort);
             assert_eq!(config.matching.include_patterns, vec!["*.rs"]);
             assert_eq!(config.matching.exclude_patterns, vec!["target"]);
-            assert!(config.matching.prune_empty);
             assert!(config.scan.respect_gitignore);
             assert!(config.render.show_report);
             assert!(config.render.no_win_banner);

@@ -12,7 +12,7 @@
 //!
 //! File: src/scan.rs
 //! Author: WaterRun
-//! Date: 2026-01-12
+//! Date: 2026-01-13
 
 #![forbid(unsafe_code)]
 
@@ -383,80 +383,6 @@ impl TreeNode {
 
         self.disk_usage = Some(total);
         total
-    }
-
-    /// Checks if this is an empty directory.
-    ///
-    /// A directory is considered empty if it has no children, or if all
-    /// children are themselves empty directories.
-    ///
-    /// # Returns
-    ///
-    /// `true` if this is an empty directory, `false` otherwise.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use std::path::PathBuf;
-    /// use treepp::scan::{TreeNode, EntryKind, EntryMetadata};
-    ///
-    /// let empty = TreeNode::new(
-    ///     PathBuf::from("empty"),
-    ///     EntryKind::Directory,
-    ///     EntryMetadata::default(),
-    /// );
-    /// assert!(empty.is_empty_dir());
-    ///
-    /// let file = TreeNode::new(
-    ///     PathBuf::from("file.txt"),
-    ///     EntryKind::File,
-    ///     EntryMetadata::default(),
-    /// );
-    /// assert!(!file.is_empty_dir());
-    /// ```
-    #[must_use]
-    pub fn is_empty_dir(&self) -> bool {
-        if self.kind != EntryKind::Directory {
-            return false;
-        }
-        self.children.is_empty() || self.children.iter().all(Self::is_empty_dir)
-    }
-
-    /// Recursively removes empty directories from the tree.
-    ///
-    /// After this operation, no directory node will be empty (unless it
-    /// is the root and was originally empty).
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use std::path::PathBuf;
-    /// use treepp::scan::{TreeNode, EntryKind, EntryMetadata};
-    ///
-    /// let mut root = TreeNode::new(
-    ///     PathBuf::from("."),
-    ///     EntryKind::Directory,
-    ///     EntryMetadata::default(),
-    /// );
-    /// root.children.push(TreeNode::new(
-    ///     PathBuf::from("empty"),
-    ///     EntryKind::Directory,
-    ///     EntryMetadata::default(),
-    /// ));
-    /// root.prune_empty_dirs();
-    /// assert!(root.children.is_empty());
-    /// ```
-    pub fn prune_empty_dirs(&mut self) {
-        for child in &mut self.children {
-            child.prune_empty_dirs();
-        }
-        self.children.retain(|c| {
-            if c.kind == EntryKind::Directory {
-                !c.is_empty_dir()
-            } else {
-                true
-            }
-        });
     }
 }
 
@@ -942,7 +868,6 @@ struct ScanContext {
     respect_gitignore: bool,
     rules: CompiledRules,
     reverse: bool,
-    prune_empty: bool,
     needs_size: bool,
     gitignore_cache: Arc<GitignoreCache>,
 }
@@ -957,7 +882,6 @@ impl ScanContext {
             respect_gitignore: config.scan.respect_gitignore,
             rules: CompiledRules::compile(config)?,
             reverse: config.render.reverse_sort,
-            prune_empty: config.matching.prune_empty,
             needs_size: config.needs_size_info(),
             gitignore_cache: Arc::new(GitignoreCache::new()),
         })
@@ -1140,10 +1064,6 @@ pub fn scan(config: &Config) -> TreeppResult<ScanStats> {
 
     if ctx.needs_size {
         tree.compute_disk_usage();
-    }
-
-    if ctx.prune_empty {
-        tree.prune_empty_dirs();
     }
 
     sort_tree(&mut tree, ctx.reverse);
@@ -1364,6 +1284,10 @@ where
 
     Ok((dir_count, file_count))
 }
+
+// ============================================================================
+// Unit Tests
+// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -1756,56 +1680,6 @@ mod tests {
     }
 
     #[test]
-    fn tree_node_is_empty_dir_when_empty() {
-        let empty = TreeNode::new(
-            PathBuf::from("empty"),
-            EntryKind::Directory,
-            EntryMetadata::default(),
-        );
-        assert!(empty.is_empty_dir());
-    }
-
-    #[test]
-    fn tree_node_is_empty_dir_returns_false_for_file() {
-        let file = TreeNode::new(
-            PathBuf::from("file.txt"),
-            EntryKind::File,
-            EntryMetadata::default(),
-        );
-        assert!(!file.is_empty_dir());
-    }
-
-    #[test]
-    fn tree_node_is_empty_dir_with_content() {
-        let mut with_content = TreeNode::new(
-            PathBuf::from("dir"),
-            EntryKind::Directory,
-            EntryMetadata::default(),
-        );
-        with_content.children.push(TreeNode::new(
-            PathBuf::from("file.txt"),
-            EntryKind::File,
-            EntryMetadata::default(),
-        ));
-        assert!(!with_content.is_empty_dir());
-    }
-
-    #[test]
-    fn tree_node_is_empty_dir_with_nested_empty() {
-        let mut root = TreeNode::new(
-            PathBuf::from("root"),
-            EntryKind::Directory,
-            EntryMetadata::default(),
-        );
-        root.children.push(TreeNode::new(
-            PathBuf::from("empty_child"),
-            EntryKind::Directory,
-            EntryMetadata::default(),
-        ));
-        assert!(root.is_empty_dir());
-    }
-
-    #[test]
     fn tree_node_compute_disk_usage_single_file() {
         let mut file = TreeNode::new(
             PathBuf::from("file.txt"),
@@ -1892,79 +1766,6 @@ mod tests {
         );
         root.compute_disk_usage();
         assert_eq!(root.disk_usage, Some(0));
-    }
-
-    #[test]
-    fn tree_node_prune_empty_dirs_removes_empty() {
-        let mut root = TreeNode::new(
-            PathBuf::from("."),
-            EntryKind::Directory,
-            EntryMetadata::default(),
-        );
-        root.children.push(TreeNode::new(
-            PathBuf::from("empty"),
-            EntryKind::Directory,
-            EntryMetadata::default(),
-        ));
-        root.children.push(TreeNode::new(
-            PathBuf::from("file.txt"),
-            EntryKind::File,
-            EntryMetadata::default(),
-        ));
-
-        assert_eq!(root.children.len(), 2);
-        root.prune_empty_dirs();
-        assert_eq!(root.children.len(), 1);
-        assert_eq!(root.children[0].name, "file.txt");
-    }
-
-    #[test]
-    fn tree_node_prune_empty_dirs_keeps_non_empty() {
-        let mut root = TreeNode::new(
-            PathBuf::from("."),
-            EntryKind::Directory,
-            EntryMetadata::default(),
-        );
-
-        let mut non_empty = TreeNode::new(
-            PathBuf::from("non_empty"),
-            EntryKind::Directory,
-            EntryMetadata::default(),
-        );
-        non_empty.children.push(TreeNode::new(
-            PathBuf::from("file.txt"),
-            EntryKind::File,
-            EntryMetadata::default(),
-        ));
-        root.children.push(non_empty);
-
-        root.prune_empty_dirs();
-        assert_eq!(root.children.len(), 1);
-        assert_eq!(root.children[0].name, "non_empty");
-    }
-
-    #[test]
-    fn tree_node_prune_empty_dirs_recursive() {
-        let mut root = TreeNode::new(
-            PathBuf::from("."),
-            EntryKind::Directory,
-            EntryMetadata::default(),
-        );
-
-        let mut level1 = TreeNode::new(
-            PathBuf::from("level1"),
-            EntryKind::Directory,
-            EntryMetadata::default(),
-        );
-        level1.children.push(TreeNode::new(
-            PathBuf::from("empty_nested"),
-            EntryKind::Directory,
-            EntryMetadata::default(),
-        ));
-        root.children.push(level1);
-
-        root.prune_empty_dirs();
-        assert!(root.children.is_empty());
     }
 
     #[test]
@@ -2605,18 +2406,6 @@ mod tests {
     }
 
     #[test]
-    fn scan_with_prune() {
-        let dir = setup_test_dir();
-        let mut config = Config::with_root(dir.path().to_path_buf());
-        config.scan.show_files = true;
-        config.matching.prune_empty = true;
-
-        let stats = scan(&config).expect("扫描失败");
-
-        assert_eq!(stats.directory_count, 2);
-    }
-
-    #[test]
     fn scan_with_include() {
         let dir = setup_test_dir();
         let mut config = Config::with_root(dir.path().to_path_buf());
@@ -3239,7 +3028,6 @@ mod tests {
         config.scan.max_depth = Some(5);
         config.scan.respect_gitignore = true;
         config.render.reverse_sort = true;
-        config.matching.prune_empty = true;
         config.matching.include_patterns = vec!["*.rs".to_string()];
         config.matching.exclude_patterns = vec!["test_*".to_string()];
 
@@ -3249,7 +3037,6 @@ mod tests {
         assert_eq!(ctx.max_depth, Some(5));
         assert!(ctx.respect_gitignore);
         assert!(ctx.reverse);
-        assert!(ctx.prune_empty);
     }
 
     #[test]

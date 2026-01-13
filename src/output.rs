@@ -9,7 +9,7 @@
 //!
 //! File: src/output.rs
 //! Author: WaterRun
-//! Date: 2026-01-12
+//! Date: 2026-01-13
 
 #![forbid(unsafe_code)]
 
@@ -199,11 +199,6 @@ fn to_json_value(node: &TreeNode, config: &Config) -> Value {
             .children
             .iter()
             .filter(|c| config.scan.show_files || c.kind == EntryKind::Directory)
-            .filter(|c| {
-                !config.matching.prune_empty
-                    || c.kind != EntryKind::Directory
-                    || !c.is_empty_dir()
-            })
             .collect();
 
         for child in children {

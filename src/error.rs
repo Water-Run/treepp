@@ -13,7 +13,7 @@
 //!
 //! File: src/error.rs
 //! Author: WaterRun
-//! Date: 2026-01-12
+//! Date: 2026-01-13
 
 #![forbid(unsafe_code)]
 
@@ -786,6 +786,10 @@ pub const fn is_recoverable(err: &ScanError) -> bool {
             | ScanError::PathNotFound { .. }
     )
 }
+
+// ============================================================================
+// Unit Tests
+// ============================================================================
 
 #[cfg(test)]
 mod tests {

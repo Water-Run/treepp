@@ -96,7 +96,6 @@ Options:
   --include, -m, /M <PATTERN> Show only files matching the pattern
   --disk-usage, -u, /DU       Show cumulative directory sizes (requires --batch)
   --report, -e, /RP           Show summary statistics at the end
-  --prune, -P, /P             Prune empty directories
   --no-win-banner, -N, /NB    Do not show the Windows native tree banner/header
   --silent, -l, /SI           Silent mode (requires --output)
   --output, -o, /O <FILE>     Write output to a file (.txt, .json, .yml, .toml)
@@ -611,45 +610,6 @@ D:.
         scan.rs
 
 1 directory, 15 files in 0.002s
-```
-
-### `/P`: 修剪空目录
-
-**功能：** 隐藏不包含任何文件的目录节点（递归判断：仅含空子目录的目录也视为空）。
-
-**语法：**
-
-```powershell
-treepp (--prune | -P | /P) [<PATH>]
-```
-
-**示例：**
-
-假设存在空目录 `empty_dir`，使用 `/P` 后将不会显示：
-
-```powershell
-PS D:\数据\Rust\tree++> treepp /p /f
-卷 存储 的文件夹 PATH 列表
-卷序列号为 26E9-52C1
-D:.
-│  .gitignore
-│  Cargo.lock
-│  Cargo.toml
-│  LICENSE
-│  OPTIONS-zh.md
-│  OPTIONS.md
-│  README-zh.md
-│  README.md
-│
-└─src
-        cli.rs
-        config.rs
-        error.rs
-        main.rs
-        output.rs
-        render.rs
-        scan.rs
-
 ```
 
 ### `/NB`: 不显示 Windows 原生样板信息

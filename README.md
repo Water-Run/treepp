@@ -75,7 +75,6 @@ treepp /f
 | `--include` `-m` `/M`         | Show only matching files                                    |
 | `--disk-usage` `-u` `/DU`     | Show cumulative directory size                              |
 | `--report` `-e` `/RP`         | Show trailing summary statistics                            |
-| `--prune` `-P` `/P`           | Prune empty directories                                     |
 | `--no-win-banner` `-N` `/NB`  | Hide the Windows-native tree banner output                  |
 | `--silent` `-l` `/SI`         | Silent terminal output (use with `output`)                  |
 | `--output` `-o` `/O`          | Output results to a file (`.txt`, `.json`, `.yml`, `.toml`) |

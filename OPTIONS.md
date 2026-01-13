@@ -95,7 +95,6 @@ Options:
   --include, -m, /M <PATTERN> Show only files matching the pattern
   --disk-usage, -u, /DU       Show cumulative directory sizes (requires --batch)
   --report, -e, /RP           Show summary statistics at the end
-  --prune, -P, /P             Prune empty directories
   --no-win-banner, -N, /NB    Do not show the Windows native tree banner/header
   --silent, -l, /SI           Silent mode (requires --output)
   --output, -o, /O <FILE>     Write output to a file (.txt, .json, .yml, .toml)
@@ -601,44 +600,6 @@ D:.
         scan.rs
 
 1 directory, 15 files in 0.002s
-```
-
-### `/P`: Prune Empty Directories
-
-**Function:** Hides directory nodes that don't contain any files (recursive check: directories containing only empty subdirectories are also considered empty).
-
-**Syntax:**
-
-```powershell
-treepp (--prune | -P | /P) [<PATH>]
-```
-
-**Example:**
-
-Assuming an empty directory `empty_dir` exists, using `/P` will not display it:
-
-```powershell
-PS D:\Data\Rust\tree++> treepp /p /f
-Folder PATH listing for volume Storage
-Volume serial number is 26E9-52C1
-D:.
-│  .gitignore
-│  Cargo.lock
-│  Cargo.toml
-│  LICENSE
-│  OPTIONS-zh.md
-│  OPTIONS.md
-│  README-zh.md
-│  README.md
-│
-└─src
-        cli.rs
-        config.rs
-        error.rs
-        main.rs
-        output.rs
-        render.rs
-        scan.rs
 ```
 
 ### `/NB`: No Windows Banner

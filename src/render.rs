@@ -14,7 +14,7 @@
 //!
 //! File: src/render.rs
 //! Author: WaterRun
-//! Date: 2026-01-12
+//! Date: 2026-01-13
 
 #![forbid(unsafe_code)]
 
@@ -878,6 +878,7 @@ impl StreamRenderer {
 struct BatchRenderState {
     /// Per-level state: (file prefix, whether last rendered was file).
     level_state_stack: Vec<(Option<String>, bool)>,
+    last_rendered_is_file: bool,
 }
 
 impl BatchRenderState {
@@ -886,18 +887,21 @@ impl BatchRenderState {
     fn new() -> Self {
         Self {
             level_state_stack: Vec::new(),
+            last_rendered_is_file: false,
         }
     }
 
     /// Enters a new directory level.
     fn push_level(&mut self) {
         self.level_state_stack.push((None, false));
+        self.last_rendered_is_file = false;
     }
 
     /// Exits a directory level, returning trailing line if applicable.
     #[must_use]
     fn pop_level(&mut self) -> Option<String> {
         if let Some((file_prefix, last_was_file)) = self.level_state_stack.pop() {
+            self.last_rendered_is_file = last_was_file;
             if last_was_file {
                 return file_prefix;
             }
@@ -911,6 +915,7 @@ impl BatchRenderState {
             last.0 = Some(prefix);
             last.1 = true;
         }
+        self.last_rendered_is_file = true;
     }
 
     /// Records a directory render.
@@ -918,6 +923,7 @@ impl BatchRenderState {
         if let Some(last) = self.level_state_stack.last_mut() {
             last.1 = false;
         }
+        self.last_rendered_is_file = false;
     }
 }
 
@@ -1131,12 +1137,15 @@ pub fn render(stats: &ScanStats, config: &Config) -> RenderResult {
     }
 
     if !tree_has_subdirectories(&stats.tree) {
+        // Check if there are files at root level
         let has_files = stats
             .tree
             .children
             .iter()
             .any(|c| c.kind == EntryKind::File);
-        if has_files && config.scan.show_files {
+
+        if has_files && config.scan.show_files && !config.render.no_indent {
+            // Output trailing space line after files
             let _ = writeln!(output, "{}", chars.space);
         }
 
@@ -1353,7 +1362,8 @@ fn render_children(
         }
 
         if !files.is_empty() && has_dirs {
-            let _ = writeln!(output, "{}", file_prefix);
+            let separator = format!("{}{}", prefix, chars.vertical);
+            let _ = writeln!(output, "{}", separator);
         }
     }
 
@@ -1387,7 +1397,7 @@ fn render_children(
             render_children(output, dir, chars, config, &new_prefix, depth + 1, state);
 
             if let Some(trailing) = state.pop_level() {
-                if !is_last && config.scan.show_files {
+                if config.scan.show_files {
                     let _ = writeln!(output, "{}", trailing);
                 }
             }
@@ -1405,7 +1415,9 @@ fn render_children_no_indent(output: &mut String, node: &TreeNode, config: &Conf
         .into_iter()
         .partition(|c| c.kind == EntryKind::File);
 
-    let indent = "  ".repeat(depth);
+    // Stream mode uses depth directly for indent, starting from 0 for root children
+    // So we need to use (depth - 1) to match stream mode behavior
+    let indent = "  ".repeat(depth.saturating_sub(1));
 
     for file in &files {
         if !depth_within_limit(depth, config.scan.max_depth) {
@@ -1435,9 +1447,6 @@ fn get_filtered_children<'a>(node: &'a TreeNode, config: &Config) -> Vec<&'a Tre
     node.children
         .iter()
         .filter(|c| config.scan.show_files || c.kind == EntryKind::Directory)
-        .filter(|c| {
-            !config.matching.prune_empty || c.kind != EntryKind::Directory || !c.is_empty_dir()
-        })
         .collect()
 }
 
@@ -3760,44 +3769,6 @@ mod tests {
     }
 
     #[test]
-    fn should_filter_empty_directories_when_prune_enabled() {
-        let mut root = TreeNode::new(
-            PathBuf::from("root"),
-            EntryKind::Directory,
-            EntryMetadata::default(),
-        );
-
-        let empty_dir = TreeNode::new(
-            PathBuf::from("root/empty"),
-            EntryKind::Directory,
-            EntryMetadata::default(),
-        );
-
-        let mut non_empty = TreeNode::new(
-            PathBuf::from("root/nonempty"),
-            EntryKind::Directory,
-            EntryMetadata::default(),
-        );
-        non_empty.children.push(TreeNode::new(
-            PathBuf::from("root/nonempty/file.txt"),
-            EntryKind::File,
-            EntryMetadata::default(),
-        ));
-
-        root.children.push(empty_dir);
-        root.children.push(non_empty);
-
-        let mut config = Config::default();
-        config.matching.prune_empty = true;
-        config.scan.show_files = true;
-
-        let filtered = get_filtered_children(&root, &config);
-
-        assert_eq!(filtered.len(), 1);
-        assert_eq!(filtered[0].name, "nonempty");
-    }
-
-    #[test]
     fn should_respect_max_depth_in_render() {
         let mut deep = TreeNode::new(
             PathBuf::from("root/level1/level2"),
@@ -3937,158 +3908,6 @@ mod tests {
     // ------------------------------------------------------------------------
 
     #[test]
-    fn should_align_batch_and_stream_trailing_line_behavior() {
-        use crate::scan::sort_tree;
-
-        let mut api = TreeNode::new(
-            PathBuf::from("root/docs/api"),
-            EntryKind::Directory,
-            EntryMetadata::default(),
-        );
-        api.children.push(TreeNode::new(
-            PathBuf::from("root/docs/api/v1.md"),
-            EntryKind::File,
-            EntryMetadata::default(),
-        ));
-
-        let mut docs = TreeNode::new(
-            PathBuf::from("root/docs"),
-            EntryKind::Directory,
-            EntryMetadata::default(),
-        );
-        docs.children.push(api);
-
-        let mut src = TreeNode::new(
-            PathBuf::from("root/src"),
-            EntryKind::Directory,
-            EntryMetadata::default(),
-        );
-        src.children.push(TreeNode::new(
-            PathBuf::from("root/src/main.rs"),
-            EntryKind::File,
-            EntryMetadata::default(),
-        ));
-
-        let mut root = TreeNode::new(
-            PathBuf::from("root"),
-            EntryKind::Directory,
-            EntryMetadata::default(),
-        );
-        root.children.push(docs);
-        root.children.push(src);
-
-        sort_tree(&mut root, false);
-
-        let mut config = Config::with_root(PathBuf::from("root"));
-        config.render.no_win_banner = true;
-        config.render.charset = CharsetMode::Unicode;
-        config.scan.show_files = true;
-
-        let batch_result = render(
-            &ScanStats {
-                tree: root.clone(),
-                duration: Duration::from_millis(100),
-                directory_count: 3,
-                file_count: 2,
-            },
-            &config,
-        );
-
-        let stream_config = StreamRenderConfig::from_config(&config);
-        let mut renderer = StreamRenderer::new(stream_config);
-        let mut stream_output = renderer.render_header(Path::new("root"), false);
-
-        fn render_node_stream(
-            renderer: &mut StreamRenderer,
-            node: &TreeNode,
-            depth: usize,
-            _is_last: bool,
-            _has_more_siblings: bool,
-            output: &mut String,
-        ) {
-            let (files, dirs): (Vec<_>, Vec<_>) = node
-                .children
-                .iter()
-                .partition(|c| c.kind == EntryKind::File);
-
-            let has_dirs = !dirs.is_empty();
-
-            for file in &files {
-                let entry = StreamEntry {
-                    path: file.path.clone(),
-                    name: file.name.clone(),
-                    kind: EntryKind::File,
-                    metadata: file.metadata.clone(),
-                    depth,
-                    is_last: false,
-                    is_file: true,
-                    has_more_dirs: has_dirs,
-                };
-                output.push_str(&renderer.render_entry(&entry));
-                output.push('\n');
-            }
-
-            let dir_count = dirs.len();
-            for (i, dir) in dirs.iter().enumerate() {
-                let is_last_dir = i == dir_count - 1;
-
-                let entry = StreamEntry {
-                    path: dir.path.clone(),
-                    name: dir.name.clone(),
-                    kind: EntryKind::Directory,
-                    metadata: dir.metadata.clone(),
-                    depth,
-                    is_last: is_last_dir,
-                    is_file: false,
-                    has_more_dirs: false,
-                };
-                output.push_str(&renderer.render_entry(&entry));
-                output.push('\n');
-
-                if !dir.children.is_empty() {
-                    renderer.push_level(!is_last_dir);
-                    render_node_stream(renderer, dir, depth + 1, is_last_dir, !is_last_dir, output);
-                    if let Some(trailing) = renderer.pop_level() {
-                        if !is_last_dir {
-                            output.push_str(&trailing);
-                            output.push('\n');
-                        }
-                    }
-                }
-            }
-        }
-
-        render_node_stream(&mut renderer, &root, 0, false, false, &mut stream_output);
-
-        let batch_lines: Vec<&str> = batch_result.content.lines().collect();
-        let stream_lines: Vec<&str> = stream_output.lines().collect();
-
-        let batch_trailing: Vec<_> = batch_lines
-            .iter()
-            .enumerate()
-            .filter(|(_, l)| {
-                !l.is_empty() && l.chars().all(|c| c.is_whitespace() || c == '│' || c == '|')
-            })
-            .collect();
-
-        let stream_trailing: Vec<_> = stream_lines
-            .iter()
-            .enumerate()
-            .filter(|(_, l)| {
-                !l.is_empty() && l.chars().all(|c| c.is_whitespace() || c == '│' || c == '|')
-            })
-            .collect();
-
-        assert_eq!(
-            batch_trailing.len(),
-            stream_trailing.len(),
-            "batch and stream should have same number of trailing lines.\nbatch: {:?}\nstream: {:?}",
-            batch_trailing,
-            stream_trailing
-        );
-    }
-
-    #[test]
     fn should_align_batch_and_stream_no_trailing_for_dir_last() {
         use crate::scan::sort_tree;
 
@@ -4148,5 +3967,741 @@ mod tests {
                 before_child
             );
         }
+    }
+
+    // ------------------------------------------------------------------------
+    // Batch vs Stream Mode Consistency Tests (Real File System)
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn should_produce_consistent_output_between_batch_and_stream_modes() {
+        use crate::scan::{scan, scan_streaming, StreamEvent};
+        use std::fs;
+        use tempfile::TempDir;
+
+        // Create a test directory structure
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        // Create files at root level
+        fs::write(root.join("README.md"), "readme content").unwrap();
+        fs::write(root.join("Cargo.toml"), "cargo content").unwrap();
+
+        // Create src directory with files
+        fs::create_dir(root.join("src")).unwrap();
+        fs::write(root.join("src").join("main.rs"), "fn main() {}").unwrap();
+        fs::write(root.join("src").join("lib.rs"), "pub mod lib;").unwrap();
+
+        // Create nested directory structure
+        fs::create_dir(root.join("src").join("utils")).unwrap();
+        fs::write(root.join("src").join("utils").join("helper.rs"), "helper").unwrap();
+
+        // Create docs directory
+        fs::create_dir(root.join("docs")).unwrap();
+        fs::write(root.join("docs").join("guide.md"), "guide").unwrap();
+
+        // Create empty directory
+        fs::create_dir(root.join("empty")).unwrap();
+
+        // Configure for batch mode
+        let mut batch_config = Config::with_root(root.to_path_buf());
+        batch_config.batch_mode = true;
+        batch_config.render.no_win_banner = true;
+        batch_config.render.charset = CharsetMode::Unicode;
+        batch_config.scan.show_files = true;
+        batch_config.render.show_report = false;
+
+        // Run batch scan
+        let batch_stats = scan(&batch_config).expect("batch scan should succeed");
+        let batch_result = render(&batch_stats, &batch_config);
+
+        // Configure for stream mode (same settings)
+        let mut stream_config = Config::with_root(root.to_path_buf());
+        stream_config.batch_mode = false;
+        stream_config.render.no_win_banner = true;
+        stream_config.render.charset = CharsetMode::Unicode;
+        stream_config.scan.show_files = true;
+        stream_config.render.show_report = false;
+
+        // Run stream scan and capture output
+        let mut stream_output = String::new();
+        let stream_render_config = StreamRenderConfig::from_config(&stream_config);
+        let mut renderer = StreamRenderer::new(stream_render_config);
+
+        // Render header
+        stream_output.push_str(&renderer.render_header(root, stream_config.path_explicitly_set));
+
+        let _ = scan_streaming(&stream_config, |event| {
+            match event {
+                StreamEvent::Entry(ref entry) => {
+                    let line = renderer.render_entry(&entry.clone());
+                    for l in line.lines() {
+                        stream_output.push_str(l);
+                        stream_output.push('\n');
+                    }
+                }
+                StreamEvent::EnterDir { is_last } => {
+                    renderer.push_level(!is_last);
+                }
+                StreamEvent::LeaveDir => {
+                    if let Some(trailing) = renderer.pop_level() {
+                        stream_output.push_str(&trailing);
+                        stream_output.push('\n');
+                    }
+                }
+            }
+            Ok(())
+        });
+
+        // Normalize outputs for comparison (remove trailing whitespace from each line)
+        let normalize = |s: &str| -> Vec<String> {
+            s.lines()
+                .map(|l| l.trim_end().to_string())
+                .filter(|l| !l.is_empty())
+                .collect()
+        };
+
+        let batch_lines = normalize(&batch_result.content);
+        let stream_lines = normalize(&stream_output);
+
+        // Compare line by line
+        assert_eq!(
+            batch_lines.len(),
+            stream_lines.len(),
+            "batch and stream should have same number of non-empty lines.\n\
+             Batch ({} lines):\n{}\n\n\
+             Stream ({} lines):\n{}",
+            batch_lines.len(),
+            batch_lines.join("\n"),
+            stream_lines.len(),
+            stream_lines.join("\n")
+        );
+
+        for (i, (batch_line, stream_line)) in batch_lines.iter().zip(stream_lines.iter()).enumerate()
+        {
+            assert_eq!(
+                batch_line, stream_line,
+                "Line {} differs:\nBatch:  '{}'\nStream: '{}'",
+                i + 1,
+                batch_line,
+                stream_line
+            );
+        }
+    }
+
+    #[test]
+    fn should_produce_consistent_output_with_ascii_charset() {
+        use crate::scan::{scan, scan_streaming, StreamEvent};
+        use std::fs;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        // Create simple structure
+        fs::create_dir(root.join("dir1")).unwrap();
+        fs::write(root.join("dir1").join("file1.txt"), "content1").unwrap();
+        fs::create_dir(root.join("dir2")).unwrap();
+        fs::write(root.join("dir2").join("file2.txt"), "content2").unwrap();
+
+        // Batch mode with ASCII
+        let mut batch_config = Config::with_root(root.to_path_buf());
+        batch_config.batch_mode = true;
+        batch_config.render.no_win_banner = true;
+        batch_config.render.charset = CharsetMode::Ascii;
+        batch_config.scan.show_files = true;
+        batch_config.render.show_report = false;
+
+        let batch_stats = scan(&batch_config).expect("batch scan should succeed");
+        let batch_result = render(&batch_stats, &batch_config);
+
+        // Stream mode with ASCII
+        let mut stream_config = Config::with_root(root.to_path_buf());
+        stream_config.batch_mode = false;
+        stream_config.render.no_win_banner = true;
+        stream_config.render.charset = CharsetMode::Ascii;
+        stream_config.scan.show_files = true;
+        stream_config.render.show_report = false;
+
+        let mut stream_output = String::new();
+        let stream_render_config = StreamRenderConfig::from_config(&stream_config);
+        let mut renderer = StreamRenderer::new(stream_render_config);
+
+        stream_output.push_str(&renderer.render_header(root, stream_config.path_explicitly_set));
+
+        let _ = scan_streaming(&stream_config, |event| {
+            match event {
+                StreamEvent::Entry(ref entry) => {
+                    let line = renderer.render_entry(&entry.clone());
+                    for l in line.lines() {
+                        stream_output.push_str(l);
+                        stream_output.push('\n');
+                    }
+                }
+                StreamEvent::EnterDir { is_last } => {
+                    renderer.push_level(!is_last);
+                }
+                StreamEvent::LeaveDir => {
+                    if let Some(trailing) = renderer.pop_level() {
+                        stream_output.push_str(&trailing);
+                        stream_output.push('\n');
+                    }
+                }
+            }
+            Ok(())
+        });
+
+        let normalize = |s: &str| -> Vec<String> {
+            s.lines()
+                .map(|l| l.trim_end().to_string())
+                .filter(|l| !l.is_empty())
+                .collect()
+        };
+
+        let batch_lines = normalize(&batch_result.content);
+        let stream_lines = normalize(&stream_output);
+
+        assert_eq!(
+            batch_lines, stream_lines,
+            "ASCII charset output should be identical between batch and stream modes"
+        );
+    }
+
+    #[test]
+    fn should_produce_consistent_output_directories_only() {
+        use crate::scan::{scan, scan_streaming, StreamEvent};
+        use std::fs;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        // Create directory structure with files (but we'll show directories only)
+        fs::create_dir(root.join("alpha")).unwrap();
+        fs::write(root.join("alpha").join("hidden.txt"), "hidden").unwrap();
+        fs::create_dir(root.join("alpha").join("nested")).unwrap();
+        fs::create_dir(root.join("beta")).unwrap();
+        fs::write(root.join("beta").join("also_hidden.txt"), "hidden").unwrap();
+
+        // Batch mode - directories only
+        let mut batch_config = Config::with_root(root.to_path_buf());
+        batch_config.batch_mode = true;
+        batch_config.render.no_win_banner = true;
+        batch_config.render.charset = CharsetMode::Unicode;
+        batch_config.scan.show_files = false; // directories only
+        batch_config.render.show_report = false;
+
+        let batch_stats = scan(&batch_config).expect("batch scan should succeed");
+        let batch_result = render(&batch_stats, &batch_config);
+
+        // Stream mode - directories only
+        let mut stream_config = Config::with_root(root.to_path_buf());
+        stream_config.batch_mode = false;
+        stream_config.render.no_win_banner = true;
+        stream_config.render.charset = CharsetMode::Unicode;
+        stream_config.scan.show_files = false;
+        stream_config.render.show_report = false;
+
+        let mut stream_output = String::new();
+        let stream_render_config = StreamRenderConfig::from_config(&stream_config);
+        let mut renderer = StreamRenderer::new(stream_render_config);
+
+        stream_output.push_str(&renderer.render_header(root, stream_config.path_explicitly_set));
+
+        let _ = scan_streaming(&stream_config, |event| {
+            match event {
+                StreamEvent::Entry(ref entry) => {
+                    let line = renderer.render_entry(&entry.clone());
+                    for l in line.lines() {
+                        stream_output.push_str(l);
+                        stream_output.push('\n');
+                    }
+                }
+                StreamEvent::EnterDir { is_last } => {
+                    renderer.push_level(!is_last);
+                }
+                StreamEvent::LeaveDir => {
+                    if let Some(trailing) = renderer.pop_level() {
+                        stream_output.push_str(&trailing);
+                        stream_output.push('\n');
+                    }
+                }
+            }
+            Ok(())
+        });
+
+        let normalize = |s: &str| -> Vec<String> {
+            s.lines()
+                .map(|l| l.trim_end().to_string())
+                .filter(|l| !l.is_empty())
+                .collect()
+        };
+
+        let batch_lines = normalize(&batch_result.content);
+        let stream_lines = normalize(&stream_output);
+
+        // Verify no file names appear in output
+        for line in &batch_lines {
+            assert!(
+                !line.contains(".txt"),
+                "directories-only mode should not show files: '{}'",
+                line
+            );
+        }
+
+        assert_eq!(
+            batch_lines, stream_lines,
+            "directories-only output should be identical between batch and stream modes"
+        );
+    }
+
+    #[test]
+    fn should_produce_consistent_output_with_depth_limit() {
+        use crate::scan::{scan, scan_streaming, StreamEvent};
+        use std::fs;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        // Create deep structure
+        fs::create_dir(root.join("level1")).unwrap();
+        fs::write(root.join("level1").join("file1.txt"), "1").unwrap();
+        fs::create_dir(root.join("level1").join("level2")).unwrap();
+        fs::write(root.join("level1").join("level2").join("file2.txt"), "2").unwrap();
+        fs::create_dir(root.join("level1").join("level2").join("level3")).unwrap();
+        fs::write(
+            root.join("level1").join("level2").join("level3").join("file3.txt"),
+            "3",
+        )
+            .unwrap();
+
+        // Batch mode with depth limit
+        let mut batch_config = Config::with_root(root.to_path_buf());
+        batch_config.batch_mode = true;
+        batch_config.render.no_win_banner = true;
+        batch_config.render.charset = CharsetMode::Unicode;
+        batch_config.scan.show_files = true;
+        batch_config.scan.max_depth = Some(2);
+        batch_config.render.show_report = false;
+
+        let batch_stats = scan(&batch_config).expect("batch scan should succeed");
+        let batch_result = render(&batch_stats, &batch_config);
+
+        // Stream mode with depth limit
+        let mut stream_config = Config::with_root(root.to_path_buf());
+        stream_config.batch_mode = false;
+        stream_config.render.no_win_banner = true;
+        stream_config.render.charset = CharsetMode::Unicode;
+        stream_config.scan.show_files = true;
+        stream_config.scan.max_depth = Some(2);
+        stream_config.render.show_report = false;
+
+        let mut stream_output = String::new();
+        let stream_render_config = StreamRenderConfig::from_config(&stream_config);
+        let mut renderer = StreamRenderer::new(stream_render_config);
+
+        stream_output.push_str(&renderer.render_header(root, stream_config.path_explicitly_set));
+
+        let _ = scan_streaming(&stream_config, |event| {
+            match event {
+                StreamEvent::Entry(ref entry) => {
+                    let line = renderer.render_entry(&entry.clone());
+                    for l in line.lines() {
+                        stream_output.push_str(l);
+                        stream_output.push('\n');
+                    }
+                }
+                StreamEvent::EnterDir { is_last } => {
+                    renderer.push_level(!is_last);
+                }
+                StreamEvent::LeaveDir => {
+                    if let Some(trailing) = renderer.pop_level() {
+                        stream_output.push_str(&trailing);
+                        stream_output.push('\n');
+                    }
+                }
+            }
+            Ok(())
+        });
+
+        let normalize = |s: &str| -> Vec<String> {
+            s.lines()
+                .map(|l| l.trim_end().to_string())
+                .filter(|l| !l.is_empty())
+                .collect()
+        };
+
+        let batch_lines = normalize(&batch_result.content);
+        let stream_lines = normalize(&stream_output);
+
+        // Verify depth limit is respected
+        for line in &batch_lines {
+            assert!(
+                !line.contains("level3") && !line.contains("file3"),
+                "depth limit should exclude level3: '{}'",
+                line
+            );
+        }
+
+        assert_eq!(
+            batch_lines, stream_lines,
+            "depth-limited output should be identical between batch and stream modes"
+        );
+    }
+
+    #[test]
+    fn should_produce_consistent_trailing_lines_between_modes() {
+        use crate::scan::{scan, scan_streaming, StreamEvent};
+        use std::fs;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        // Create structure that requires trailing lines
+        fs::create_dir(root.join("docs")).unwrap();
+        fs::create_dir(root.join("docs").join("api")).unwrap();
+        fs::write(root.join("docs").join("api").join("v1.md"), "v1").unwrap();
+        fs::write(root.join("docs").join("api").join("v2.md"), "v2").unwrap();
+        fs::create_dir(root.join("docs").join("guide")).unwrap();
+        fs::write(root.join("docs").join("guide").join("intro.md"), "intro").unwrap();
+        fs::create_dir(root.join("src")).unwrap();
+        fs::write(root.join("src").join("main.rs"), "main").unwrap();
+
+        let mut batch_config = Config::with_root(root.to_path_buf());
+        batch_config.batch_mode = true;
+        batch_config.render.no_win_banner = true;
+        batch_config.render.charset = CharsetMode::Unicode;
+        batch_config.scan.show_files = true;
+        batch_config.render.show_report = false;
+
+        let batch_stats = scan(&batch_config).expect("batch scan should succeed");
+        let batch_result = render(&batch_stats, &batch_config);
+
+        let mut stream_config = Config::with_root(root.to_path_buf());
+        stream_config.batch_mode = false;
+        stream_config.render.no_win_banner = true;
+        stream_config.render.charset = CharsetMode::Unicode;
+        stream_config.scan.show_files = true;
+        stream_config.render.show_report = false;
+
+        let mut stream_output = String::new();
+        let stream_render_config = StreamRenderConfig::from_config(&stream_config);
+        let mut renderer = StreamRenderer::new(stream_render_config);
+
+        stream_output.push_str(&renderer.render_header(root, stream_config.path_explicitly_set));
+
+        let _ = scan_streaming(&stream_config, |event| {
+            match event {
+                StreamEvent::Entry(ref entry) => {
+                    let line = renderer.render_entry(&entry.clone());
+                    for l in line.lines() {
+                        stream_output.push_str(l);
+                        stream_output.push('\n');
+                    }
+                }
+                StreamEvent::EnterDir { is_last } => {
+                    renderer.push_level(!is_last);
+                }
+                StreamEvent::LeaveDir => {
+                    if let Some(trailing) = renderer.pop_level() {
+                        stream_output.push_str(&trailing);
+                        stream_output.push('\n');
+                    }
+                }
+            }
+            Ok(())
+        });
+
+        // Extract trailing lines (lines with only whitespace and │)
+        let extract_trailing_lines = |s: &str| -> Vec<(usize, String)> {
+            s.lines()
+                .enumerate()
+                .filter(|(_, l)| !l.is_empty() && l.chars().all(|c| c.is_whitespace() || c == '│'))
+                .map(|(i, l)| (i, l.to_string()))
+                .collect()
+        };
+
+        let batch_trailing = extract_trailing_lines(&batch_result.content);
+        let stream_trailing = extract_trailing_lines(&stream_output);
+
+        assert_eq!(
+            batch_trailing.len(),
+            stream_trailing.len(),
+            "should have same number of trailing lines.\n\
+             Batch trailing ({}):\n{:?}\n\n\
+             Stream trailing ({}):\n{:?}",
+            batch_trailing.len(),
+            batch_trailing,
+            stream_trailing.len(),
+            stream_trailing
+        );
+
+        // Verify trailing line content matches
+        for ((batch_idx, batch_line), (stream_idx, stream_line)) in
+            batch_trailing.iter().zip(stream_trailing.iter())
+        {
+            assert_eq!(
+                batch_line, stream_line,
+                "trailing line content should match.\n\
+                 Batch line {} (idx {}): '{}'\n\
+                 Stream line {} (idx {}): '{}'",
+                batch_idx + 1,
+                batch_idx,
+                batch_line,
+                stream_idx + 1,
+                stream_idx,
+                stream_line
+            );
+        }
+    }
+
+    #[test]
+    fn should_produce_consistent_output_with_file_sizes() {
+        use crate::scan::{scan, scan_streaming, StreamEvent};
+        use std::fs;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        fs::create_dir(root.join("data")).unwrap();
+        fs::write(root.join("data").join("small.txt"), "x").unwrap();
+        fs::write(root.join("data").join("medium.txt"), "x".repeat(1024)).unwrap();
+        fs::write(root.join("data").join("large.txt"), "x".repeat(1024 * 1024)).unwrap();
+
+        let mut batch_config = Config::with_root(root.to_path_buf());
+        batch_config.batch_mode = true;
+        batch_config.render.no_win_banner = true;
+        batch_config.render.charset = CharsetMode::Unicode;
+        batch_config.scan.show_files = true;
+        batch_config.render.show_size = true;
+        batch_config.render.human_readable = true;
+        batch_config.render.show_report = false;
+
+        let batch_stats = scan(&batch_config).expect("batch scan should succeed");
+        let batch_result = render(&batch_stats, &batch_config);
+
+        let mut stream_config = Config::with_root(root.to_path_buf());
+        stream_config.batch_mode = false;
+        stream_config.render.no_win_banner = true;
+        stream_config.render.charset = CharsetMode::Unicode;
+        stream_config.scan.show_files = true;
+        stream_config.render.show_size = true;
+        stream_config.render.human_readable = true;
+        stream_config.render.show_report = false;
+
+        let mut stream_output = String::new();
+        let stream_render_config = StreamRenderConfig::from_config(&stream_config);
+        let mut renderer = StreamRenderer::new(stream_render_config);
+
+        stream_output.push_str(&renderer.render_header(root, stream_config.path_explicitly_set));
+
+        let _ = scan_streaming(&stream_config, |event| {
+            match event {
+                StreamEvent::Entry(ref entry) => {
+                    let line = renderer.render_entry(&entry.clone());
+                    for l in line.lines() {
+                        stream_output.push_str(l);
+                        stream_output.push('\n');
+                    }
+                }
+                StreamEvent::EnterDir { is_last } => {
+                    renderer.push_level(!is_last);
+                }
+                StreamEvent::LeaveDir => {
+                    if let Some(trailing) = renderer.pop_level() {
+                        stream_output.push_str(&trailing);
+                        stream_output.push('\n');
+                    }
+                }
+            }
+            Ok(())
+        });
+
+        let normalize = |s: &str| -> Vec<String> {
+            s.lines()
+                .map(|l| l.trim_end().to_string())
+                .filter(|l| !l.is_empty())
+                .collect()
+        };
+
+        let batch_lines = normalize(&batch_result.content);
+        let stream_lines = normalize(&stream_output);
+
+        // Verify sizes are present
+        let has_size_info = batch_lines.iter().any(|l| l.contains("KB") || l.contains("MB") || l.contains("B"));
+        assert!(has_size_info, "output should contain file size information");
+
+        assert_eq!(
+            batch_lines, stream_lines,
+            "output with file sizes should be identical between batch and stream modes"
+        );
+    }
+
+    #[test]
+    fn should_produce_consistent_output_with_empty_directories() {
+        use crate::scan::{scan, scan_streaming, StreamEvent};
+        use std::fs;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        // Create mix of empty and non-empty directories
+        fs::create_dir(root.join("empty1")).unwrap();
+        fs::create_dir(root.join("non_empty")).unwrap();
+        fs::write(root.join("non_empty").join("file.txt"), "content").unwrap();
+        fs::create_dir(root.join("empty2")).unwrap();
+        fs::create_dir(root.join("nested_empty")).unwrap();
+        fs::create_dir(root.join("nested_empty").join("also_empty")).unwrap();
+
+        let mut batch_config = Config::with_root(root.to_path_buf());
+        batch_config.batch_mode = true;
+        batch_config.render.no_win_banner = true;
+        batch_config.render.charset = CharsetMode::Unicode;
+        batch_config.scan.show_files = true;
+        batch_config.render.show_report = false;
+
+        let batch_stats = scan(&batch_config).expect("batch scan should succeed");
+        let batch_result = render(&batch_stats, &batch_config);
+
+        let mut stream_config = Config::with_root(root.to_path_buf());
+        stream_config.batch_mode = false;
+        stream_config.render.no_win_banner = true;
+        stream_config.render.charset = CharsetMode::Unicode;
+        stream_config.scan.show_files = true;
+        stream_config.render.show_report = false;
+
+        let mut stream_output = String::new();
+        let stream_render_config = StreamRenderConfig::from_config(&stream_config);
+        let mut renderer = StreamRenderer::new(stream_render_config);
+
+        stream_output.push_str(&renderer.render_header(root, stream_config.path_explicitly_set));
+
+        let _ = scan_streaming(&stream_config, |event| {
+            match event {
+                StreamEvent::Entry(ref entry) => {
+                    let line = renderer.render_entry(&entry.clone());
+                    for l in line.lines() {
+                        stream_output.push_str(l);
+                        stream_output.push('\n');
+                    }
+                }
+                StreamEvent::EnterDir { is_last } => {
+                    renderer.push_level(!is_last);
+                }
+                StreamEvent::LeaveDir => {
+                    if let Some(trailing) = renderer.pop_level() {
+                        stream_output.push_str(&trailing);
+                        stream_output.push('\n');
+                    }
+                }
+            }
+            Ok(())
+        });
+
+        let normalize = |s: &str| -> Vec<String> {
+            s.lines()
+                .map(|l| l.trim_end().to_string())
+                .filter(|l| !l.is_empty())
+                .collect()
+        };
+
+        let batch_lines = normalize(&batch_result.content);
+        let stream_lines = normalize(&stream_output);
+
+        assert_eq!(
+            batch_lines, stream_lines,
+            "output with empty directories should be identical between batch and stream modes"
+        );
+    }
+
+    #[test]
+    fn should_produce_consistent_output_with_no_indent_mode() {
+        use crate::scan::{scan, scan_streaming, StreamEvent};
+        use std::fs;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        fs::create_dir(root.join("dir1")).unwrap();
+        fs::write(root.join("dir1").join("file1.txt"), "1").unwrap();
+        fs::create_dir(root.join("dir1").join("subdir")).unwrap();
+        fs::write(root.join("dir1").join("subdir").join("file2.txt"), "2").unwrap();
+        fs::create_dir(root.join("dir2")).unwrap();
+
+        let mut batch_config = Config::with_root(root.to_path_buf());
+        batch_config.batch_mode = true;
+        batch_config.render.no_win_banner = true;
+        batch_config.render.charset = CharsetMode::Unicode;
+        batch_config.render.no_indent = true;
+        batch_config.scan.show_files = true;
+        batch_config.render.show_report = false;
+
+        let batch_stats = scan(&batch_config).expect("batch scan should succeed");
+        let batch_result = render(&batch_stats, &batch_config);
+
+        let mut stream_config = Config::with_root(root.to_path_buf());
+        stream_config.batch_mode = false;
+        stream_config.render.no_win_banner = true;
+        stream_config.render.charset = CharsetMode::Unicode;
+        stream_config.render.no_indent = true;
+        stream_config.scan.show_files = true;
+        stream_config.render.show_report = false;
+
+        let mut stream_output = String::new();
+        let stream_render_config = StreamRenderConfig::from_config(&stream_config);
+        let mut renderer = StreamRenderer::new(stream_render_config);
+
+        stream_output.push_str(&renderer.render_header(root, stream_config.path_explicitly_set));
+
+        let _ = scan_streaming(&stream_config, |event| {
+            match event {
+                StreamEvent::Entry(ref entry) => {
+                    let line = renderer.render_entry(&entry.clone());
+                    for l in line.lines() {
+                        stream_output.push_str(l);
+                        stream_output.push('\n');
+                    }
+                }
+                StreamEvent::EnterDir { is_last } => {
+                    renderer.push_level(!is_last);
+                }
+                StreamEvent::LeaveDir => {
+                    if let Some(trailing) = renderer.pop_level() {
+                        stream_output.push_str(&trailing);
+                        stream_output.push('\n');
+                    }
+                }
+            }
+            Ok(())
+        });
+
+        let normalize = |s: &str| -> Vec<String> {
+            s.lines()
+                .map(|l| l.trim_end().to_string())
+                .filter(|l| !l.is_empty())
+                .collect()
+        };
+
+        let batch_lines = normalize(&batch_result.content);
+        let stream_lines = normalize(&stream_output);
+
+        // Verify no branch characters in no-indent mode
+        for line in &batch_lines {
+            assert!(
+                !line.contains("├") && !line.contains("└") && !line.contains("│"),
+                "no-indent mode should not have branch characters: '{}'",
+                line
+            );
+        }
+
+        assert_eq!(
+            batch_lines, stream_lines,
+            "no-indent output should be identical between batch and stream modes"
+        );
     }
 }
