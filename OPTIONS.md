@@ -397,6 +397,27 @@ D:.
         cli.rs
 ```
 
+# `/AL`: Display Hidden Files
+
+**Function:** Displays files and directories with the Windows hidden attribute. By default, `tree++` ignores files and directories that have the hidden attribute set.
+
+**Syntax:**
+
+```powershell
+treepp (--all | -k | /AL) [<PATH>]
+```
+
+**Example (using a typical presentation example):**
+
+```powershell
+PS D:\Demo> treepp /al /f
+Folder PATH listing for volume Storage
+Volume serial number is 26E9-52C1
+D:\Presentation Example
+    tree++Introduction.pptx
+    ~$tree++Introduction.pptx
+```
+
 ### `/DT`: Show Last Modified Date
 
 **Function:** Appends last modification time for files/directories in `YYYY-MM-DD HH:MM:SS` format (local timezone).

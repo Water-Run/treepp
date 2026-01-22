@@ -7,7 +7,7 @@
 //!
 //! File: src/config.rs
 //! Author: WaterRun
-//! Date: 2026-01-13
+//! Date: 2026-01-22
 
 #![forbid(unsafe_code)]
 
@@ -345,6 +345,7 @@ pub enum PathMode {
 /// assert!(!opts.show_files);
 /// assert_eq!(opts.thread_count.get(), 8);
 /// assert!(!opts.respect_gitignore);
+/// assert!(!opts.show_hidden);
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScanOptions {
@@ -356,6 +357,8 @@ pub struct ScanOptions {
     pub thread_count: NonZeroUsize,
     /// Whether to respect `.gitignore` rules.
     pub respect_gitignore: bool,
+    /// Whether to show hidden files (Windows hidden attribute).
+    pub show_hidden: bool,
 }
 
 impl Default for ScanOptions {
@@ -368,6 +371,7 @@ impl Default for ScanOptions {
     ///
     /// let opts = ScanOptions::default();
     /// assert_eq!(opts.thread_count.get(), 8);
+    /// assert!(!opts.show_hidden);
     /// ```
     fn default() -> Self {
         Self {
@@ -375,6 +379,7 @@ impl Default for ScanOptions {
             show_files: false,
             thread_count: NonZeroUsize::new(8).expect("8 is non-zero"),
             respect_gitignore: false,
+            show_hidden: false,
         }
     }
 }
@@ -980,6 +985,7 @@ mod tests {
                 show_files: true,
                 thread_count: NonZeroUsize::new(4).unwrap(),
                 respect_gitignore: true,
+                show_hidden: false,
             };
             let cloned = opts.clone();
             assert_eq!(opts, cloned);
@@ -1655,5 +1661,11 @@ mod tests {
             let result = config.validate();
             assert!(result.is_ok());
         }
+    }
+
+    #[test]
+    fn default_show_hidden_is_false() {
+        let opts = ScanOptions::default();
+        assert!(!opts.show_hidden);
     }
 }

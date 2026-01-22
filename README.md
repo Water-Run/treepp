@@ -28,7 +28,7 @@ The `tree` command on Windows has seen virtually no changes since it was release
 
 ## Installation
 
-Download `tree++.zip` from [Release](https://github.com/Water-Run/treepp/releases/tag/0.1.0), extract it to a suitable directory, and add that directory to your environment variables.
+Download `tree++.zip` from [Release](https://github.com/Water-Run/treepp/releases), extract it to a suitable directory, and add that directory to your environment variables.
 
 Open Windows Terminal and run:
 
@@ -67,6 +67,7 @@ treepp /f
 | `--human-readable` `-H` `/HR` | Show file sizes in human-readable form                      |
 | `--no-indent` `-i` `/NI`      | Do not show tree connector lines                            |
 | `--reverse` `-r` `/R`         | Sort in reverse order                                       |
+| `--all` `-k` `/AL`            | Show hidden files                                           |
 | `--size` `-s` `/S`            | Show file size (bytes)                                      |
 | `--date` `-d` `/DT`           | Show last modified date                                     |
 | `--exclude` `-I` `/X`         | Exclude matching files                                      |

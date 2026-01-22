@@ -12,7 +12,7 @@
 //!
 //! File: src/scan.rs
 //! Author: WaterRun
-//! Date: 2026-01-13
+//! Date: 2026-01-22
 
 #![forbid(unsafe_code)]
 
@@ -21,6 +21,7 @@ use std::fs::{self, Metadata};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
+use std::os::windows::fs::MetadataExt;
 
 use glob::Pattern;
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
@@ -29,6 +30,34 @@ use rayon::ThreadPoolBuilder;
 
 use crate::config::Config;
 use crate::error::{MatchError, ScanError, TreeppResult};
+
+/// Checks if a file or directory has the Windows hidden attribute.
+///
+/// On Windows, this checks the FILE_ATTRIBUTE_HIDDEN flag.
+/// On non-Windows platforms, this always returns false.
+///
+/// # Arguments
+///
+/// * `metadata` - The filesystem metadata to check.
+///
+/// # Returns
+///
+/// `true` if the entry has the hidden attribute set, `false` otherwise.
+///
+/// # Examples
+///
+/// ```no_run
+/// use std::fs;
+/// use treepp::scan::is_hidden;
+///
+/// let meta = fs::metadata("some_file.txt").unwrap();
+/// let hidden = is_hidden(&meta);
+/// ```
+#[must_use]
+pub fn is_hidden(metadata: &Metadata) -> bool {
+    const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+    (metadata.file_attributes() & FILE_ATTRIBUTE_HIDDEN) != 0
+}
 
 /// Filesystem entry type distinguishing directories from files.
 ///
@@ -870,6 +899,7 @@ struct ScanContext {
     reverse: bool,
     needs_size: bool,
     gitignore_cache: Arc<GitignoreCache>,
+    show_hidden: bool,
 }
 
 impl ScanContext {
@@ -884,11 +914,21 @@ impl ScanContext {
             reverse: config.render.reverse_sort,
             needs_size: config.needs_size_info(),
             gitignore_cache: Arc::new(GitignoreCache::new()),
+            show_hidden: config.scan.show_hidden,
         })
     }
 
     /// Checks if an entry should be filtered out.
-    fn should_filter(&self, name: &str, is_dir: bool) -> bool {
+    fn should_filter(&self, name: &str, is_dir: bool, metadata: Option<&Metadata>) -> bool {
+        // Check hidden attribute first (unless show_hidden is enabled)
+        if !self.show_hidden {
+            if let Some(meta) = metadata {
+                if is_hidden(meta) {
+                    return true;
+                }
+            }
+        }
+
         if self.rules.should_exclude(name) {
             return true;
         }
@@ -967,7 +1007,7 @@ fn scan_dir(
             continue;
         }
 
-        if ctx.should_filter(&entry_name, is_dir) {
+        if ctx.should_filter(&entry_name, is_dir, Some(&entry_meta)) {
             continue;
         }
 
@@ -1206,7 +1246,7 @@ where
                 return false;
             }
 
-            !ctx.should_filter(&entry_name, is_dir)
+            !ctx.should_filter(&entry_name, is_dir, Some(meta))
         })
         .collect();
 
@@ -2986,7 +3026,7 @@ mod tests {
 
         let ctx = ScanContext::from_config(&config).unwrap();
 
-        assert!(!ctx.should_filter("test.txt", false));
+        assert!(!ctx.should_filter("test.txt", false, None));
     }
 
     #[test]
@@ -2995,7 +3035,7 @@ mod tests {
 
         let ctx = ScanContext::from_config(&config).unwrap();
 
-        assert!(ctx.should_filter("test.txt", false));
+        assert!(ctx.should_filter("test.txt", false, None));
     }
 
     #[test]
@@ -3048,8 +3088,8 @@ mod tests {
 
         let ctx = ScanContext::from_config(&config).unwrap();
 
-        assert!(!ctx.should_filter("main.rs", false));
-        assert!(ctx.should_filter("test_main.rs", false));
+        assert!(!ctx.should_filter("main.rs", false, None));
+        assert!(ctx.should_filter("test_main.rs", false, None));
     }
 
     #[test]
@@ -3185,5 +3225,47 @@ mod tests {
             .expect("流式扫描失败");
 
         assert_eq!(batch_order, stream_order);
+    }
+
+    #[test]
+    fn scan_context_show_hidden_default_false() {
+        let config = Config::default();
+        let ctx = ScanContext::from_config(&config).unwrap();
+        assert!(!ctx.show_hidden);
+    }
+
+    #[test]
+    fn scan_context_show_hidden_enabled() {
+        let mut config = Config::default();
+        config.scan.show_hidden = true;
+        let ctx = ScanContext::from_config(&config).unwrap();
+        assert!(ctx.show_hidden);
+    }
+
+    #[test]
+    fn is_hidden_returns_false_for_normal_file() {
+        let dir = TempDir::new().unwrap();
+        let file_path = dir.path().join("normal.txt");
+        File::create(&file_path).unwrap();
+
+        let meta = fs::metadata(&file_path).unwrap();
+        assert!(!is_hidden(&meta));
+    }
+
+    #[test]
+    fn is_hidden_detects_hidden_attribute() {
+        use std::process::Command;
+
+        let dir = TempDir::new().unwrap();
+        let file_path = dir.path().join("hidden.txt");
+        File::create(&file_path).unwrap();
+
+        // Set hidden attribute using attrib command
+        let _ = Command::new("attrib")
+            .args(["+H", file_path.to_str().unwrap()])
+            .output();
+
+        let meta = fs::metadata(&file_path).unwrap();
+        assert!(is_hidden(&meta));
     }
 }

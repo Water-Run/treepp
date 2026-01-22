@@ -27,7 +27,7 @@
 //!
 //! File: src/cli.rs
 //! Author: WaterRun
-//! Date: 2026-01-13
+//! Date: 2026-01-22
 
 #![forbid(unsafe_code)]
 
@@ -227,6 +227,13 @@ const ARG_DEFINITIONS: &[ArgDef] = &[
         cmd_patterns: &["/G"],
         short_patterns: &["-g"],
         long_patterns: &["--gitignore"],
+    },
+    ArgDef {
+        canonical: "all",
+        kind: ArgKind::Flag,
+        cmd_patterns: &["/AL"],
+        short_patterns: &["-k"],
+        long_patterns: &["--all"],
     },
     // Output control
     ArgDef {
@@ -653,6 +660,7 @@ impl CliParser {
             "batch" => config.batch_mode = true,
             "files" => config.scan.show_files = true,
             "gitignore" => config.scan.respect_gitignore = true,
+            "all" => config.scan.show_hidden = true,
             "level" => {
                 let value = matched.value.as_ref().expect("level requires a value");
                 let depth: usize = value.parse().map_err(|_| CliError::InvalidValue {
@@ -789,6 +797,7 @@ Options:
                               Note: JSON/YAML/TOML formats require --batch
   --thread, -t, /T <N>        Number of scanning threads (requires --batch, default: 8)
   --gitignore, -g, /G         Respect .gitignore
+  --all, -k, /AL              Show hidden files (Windows hidden attribute)
 
 More info: https://github.com/Water-Run/treepp"#
 }
@@ -809,7 +818,7 @@ More info: https://github.com/Water-Run/treepp"#
 /// ```
 #[must_use]
 pub fn version_text() -> &'static str {
-    r#"tree++ version 0.1.0
+    r#"tree++ version 0.2.0
 
 A much better Windows tree command.
 
@@ -1747,6 +1756,7 @@ mod tests {
         assert!(help.contains("--exclude"));
         assert!(help.contains("--silent"));
         assert!(help.contains("--reverse"));
+        assert!(help.contains("--all"));
         assert!(help.contains("--no-win-banner"));
         assert!(help.contains("--disk-usage"));
         assert!(help.contains("--human-readable"));
@@ -1770,7 +1780,7 @@ mod tests {
     #[test]
     fn version_text_contains_required_info() {
         let version = version_text();
-        assert!(version.contains("0.1.0"));
+        assert!(version.contains("0.2.0"));
         assert!(version.contains("WaterRun"));
         assert!(version.contains("github.com"));
     }
@@ -2395,6 +2405,46 @@ mod tests {
             assert!(config.render.show_size);
             assert!(config.render.human_readable);
             assert!(config.render.reverse_sort);
+        } else {
+            panic!("解析失败");
+        }
+    }
+
+    #[test]
+    fn parse_all_flag_cmd_style() {
+        let parser = CliParser::new(vec!["/AL".to_string()]);
+        if let Ok(ParseResult::Config(config)) = parser.parse() {
+            assert!(config.scan.show_hidden);
+        } else {
+            panic!("解析失败");
+        }
+    }
+
+    #[test]
+    fn parse_all_flag_cmd_style_lowercase() {
+        let parser = CliParser::new(vec!["/al".to_string()]);
+        if let Ok(ParseResult::Config(config)) = parser.parse() {
+            assert!(config.scan.show_hidden);
+        } else {
+            panic!("解析失败");
+        }
+    }
+
+    #[test]
+    fn parse_all_flag_short_style() {
+        let parser = CliParser::new(vec!["-k".to_string()]);
+        if let Ok(ParseResult::Config(config)) = parser.parse() {
+            assert!(config.scan.show_hidden);
+        } else {
+            panic!("解析失败");
+        }
+    }
+
+    #[test]
+    fn parse_all_flag_long_style() {
+        let parser = CliParser::new(vec!["--all".to_string()]);
+        if let Ok(ParseResult::Config(config)) = parser.parse() {
+            assert!(config.scan.show_hidden);
         } else {
             panic!("解析失败");
         }

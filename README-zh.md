@@ -28,7 +28,7 @@ Windows上的`tree`命令自从近40年前发布以来几乎就没有改动. 在
 
 ## 安装
 
-从[Release](https://github.com/Water-Run/treepp/releases/tag/0.1.0)下载`tree++.zip`, 解压到合适目录, 并将目录添加至环境变量.  
+从[Release](https://github.com/Water-Run/treepp/releases)下载`tree++.zip`, 解压到合适目录, 并将目录添加至环境变量.  
 
 开启Windows终端, 执行:  
 
@@ -39,7 +39,7 @@ treepp /v
 有输出:  
 
 ```plaintext
-tree++ version 0.1.0
+tree++ version 0.2.0
 
 A Much Better Windows tree Command.
 
@@ -67,6 +67,7 @@ treepp /f
 | `--human-readable` `-H` `/HR` | 以人类可读方式显示文件大小                              |
 | `--no-indent` `-i` `/NI`      | 不显示树形连接线                                   |
 | `--reverse` `-r` `/R`         | 逆序排序                                       |
+| `--all` `-k` `/AL`            | 显示隐藏文件                                     |
 | `--size` `-s` `/S`            | 显示文件大小(字节)                                 |
 | `--date` `-d` `/DT`           | 显示最后修改日期                                   |
 | `--exclude` `-I` `/X`         | 排除匹配的文件                                    |
