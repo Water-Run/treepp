@@ -39,7 +39,7 @@ treepp /v
 有输出:  
 
 ```plaintext
-tree++ version 0.2.0
+tree++ version 0.3.0
 
 A Much Better Windows tree Command.
 

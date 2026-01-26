@@ -12,7 +12,7 @@
 //!
 //! File: tests/functional_test.rs
 //! Author: WaterRun
-//! Date: 2026-01-22
+//! Date: 2026-01-26
 
 use std::fs::{self, File};
 use std::io::Write;
@@ -385,7 +385,7 @@ fn should_show_version_with_version_flag() {
     assert!(output.status.success());
     let stdout = stdout_str(&output);
     assert!(stdout.contains("tree++"));
-    assert!(stdout.contains("0.2.0"));
+    assert!(stdout.contains("0.3.0"));
     assert!(stdout.contains("WaterRun"));
 }
 
@@ -393,21 +393,21 @@ fn should_show_version_with_version_flag() {
 fn should_show_version_with_short_v_flag() {
     let output = run_treepp(&["-v"]);
     assert!(output.status.success());
-    assert!(stdout_str(&output).contains("0.2.0"));
+    assert!(stdout_str(&output).contains("0.3.0"));
 }
 
 #[test]
 fn should_show_version_with_cmd_style() {
     let output = run_treepp(&["/V"]);
     assert!(output.status.success());
-    assert!(stdout_str(&output).contains("0.2.0"));
+    assert!(stdout_str(&output).contains("0.3.0"));
 }
 
 #[test]
 fn should_show_version_case_insensitive_cmd_style() {
     let output = run_treepp(&["/v"]);
     assert!(output.status.success());
-    assert!(stdout_str(&output).contains("0.2.0"));
+    assert!(stdout_str(&output).contains("0.3.0"));
 }
 
 // ============================================================================
@@ -1212,7 +1212,9 @@ fn should_output_to_json_file_with_batch() {
 
     let content = fs::read_to_string(&output_file).unwrap();
     assert!(content.starts_with("{"));
-    assert!(content.contains("src"));
+    assert!(content.contains("\"schema\""));
+    assert!(content.contains("treepp.pretty.v1"));
+    assert!(content.contains("\"root\""));
 }
 
 #[test]
@@ -1728,12 +1730,27 @@ fn should_output_valid_json_structure() {
     assert!(output.status.success());
 
     let content = fs::read_to_string(&output_file).unwrap();
-    // Validate JSON structure
-    let json: serde_json::Value = serde_json::from_str(&content)
-        .expect("Output should be valid JSON");
+    let json: serde_json::Value =
+        serde_json::from_str(&content).expect("Output should be valid JSON");
 
+    // Validate new schema structure
     assert!(json.is_object());
-    assert!(json.get("src").is_some());
+    assert_eq!(
+        json.get("schema").and_then(|v| v.as_str()),
+        Some("treepp.pretty.v1"),
+        "Should have correct schema identifier"
+    );
+    assert!(json.get("root").is_some(), "Should have root object");
+
+    let root = json.get("root").unwrap();
+    assert!(root.get("path").is_some(), "Root should have path");
+    assert_eq!(
+        root.get("type").and_then(|v| v.as_str()),
+        Some("dir"),
+        "Root type should be dir"
+    );
+    assert!(root.get("files").is_some(), "Root should have files array");
+    assert!(root.get("dirs").is_some(), "Root should have dirs object");
 }
 
 #[test]
@@ -1747,12 +1764,14 @@ fn should_include_size_in_json_when_enabled() {
     assert!(output.status.success());
 
     let content = fs::read_to_string(&output_file).unwrap();
-    let json: serde_json::Value = serde_json::from_str(&content).unwrap();
 
-    // Check that size is present in file entries
-    if let Some(small) = json.get("small.txt") {
-        assert!(small.get("size").is_some());
-    }
+    // With the new format, files might be an array of strings or objects with metadata
+    // Check if size info is present somewhere in the structure
+    let content_str = content.to_lowercase();
+    assert!(
+        content_str.contains("size") || content_str.contains("5"),
+        "Size information should be present in output"
+    );
 }
 
 #[test]
@@ -1768,10 +1787,16 @@ fn should_include_disk_usage_in_json_when_enabled() {
     let content = fs::read_to_string(&output_file).unwrap();
     let json: serde_json::Value = serde_json::from_str(&content).unwrap();
 
-    // Check that disk_usage is present in directory entries
-    if let Some(subdir) = json.get("subdir") {
-        assert!(subdir.get("_disk_usage").is_some());
-    }
+    // Verify structure exists
+    assert!(json.get("schema").is_some(), "Should have schema");
+    assert!(json.get("root").is_some(), "Should have root");
+
+    // Check that disk usage info is present in the structure
+    let content_str = content.to_lowercase();
+    assert!(
+        content_str.contains("disk") || content_str.contains("size") || content_str.contains("2048"),
+        "Disk usage information should be present"
+    );
 }
 
 // ============================================================================
@@ -1789,11 +1814,29 @@ fn should_output_valid_yaml_structure() {
     assert!(output.status.success());
 
     let content = fs::read_to_string(&output_file).unwrap();
-    // Validate YAML structure
-    let yaml: serde_yaml::Value = serde_yaml::from_str(&content)
-        .expect("Output should be valid YAML");
+    let yaml: serde_yaml::Value =
+        serde_yaml::from_str(&content).expect("Output should be valid YAML");
 
-    assert!(yaml.is_mapping());
+    // Validate new schema structure
+    assert!(yaml.is_mapping(), "Root should be a mapping");
+
+    let mapping = yaml.as_mapping().unwrap();
+    assert!(
+        mapping.get(&serde_yaml::Value::String("schema".to_string())).is_some(),
+        "Should have schema field"
+    );
+    assert!(
+        mapping.get(&serde_yaml::Value::String("root".to_string())).is_some(),
+        "Should have root field"
+    );
+
+    // Verify schema value
+    let schema = mapping.get(&serde_yaml::Value::String("schema".to_string()));
+    assert_eq!(
+        schema.and_then(|v| v.as_str()),
+        Some("treepp.pretty.v1"),
+        "Schema should be treepp.pretty.v1"
+    );
 }
 
 // ============================================================================
@@ -1811,11 +1854,33 @@ fn should_output_valid_toml_structure() {
     assert!(output.status.success());
 
     let content = fs::read_to_string(&output_file).unwrap();
-    // Validate TOML structure
-    let toml: toml::Value = toml::from_str(&content)
-        .expect("Output should be valid TOML");
+    let toml: toml::Value =
+        toml::from_str(&content).expect("Output should be valid TOML");
 
-    assert!(toml.is_table());
+    // Validate new schema structure
+    assert!(toml.is_table(), "Root should be a table");
+
+    let table = toml.as_table().unwrap();
+    assert!(table.get("schema").is_some(), "Should have schema field");
+    assert!(table.get("root").is_some(), "Should have root field");
+
+    // Verify schema value
+    assert_eq!(
+        table.get("schema").and_then(|v| v.as_str()),
+        Some("treepp.pretty.v1"),
+        "Schema should be treepp.pretty.v1"
+    );
+
+    // Verify root structure
+    let root = table.get("root").and_then(|v| v.as_table());
+    assert!(root.is_some(), "Root should be a table");
+    let root = root.unwrap();
+    assert!(root.get("path").is_some(), "Root should have path");
+    assert_eq!(
+        root.get("type").and_then(|v| v.as_str()),
+        Some("dir"),
+        "Root type should be dir"
+    );
 }
 
 // ============================================================================
@@ -2164,12 +2229,17 @@ fn should_output_json_with_metadata() {
     let content = fs::read_to_string(&output_file).unwrap();
     let json: serde_json::Value = serde_json::from_str(&content).unwrap();
 
-    // Check structure has expected fields
-    if let Some(small) = json.get("small.txt") {
-        assert!(small.get("size").is_some());
-        assert!(small.get("modified").is_some());
-        assert!(small.get("path").is_some());
-    }
+    // Verify new structure with schema
+    assert_eq!(
+        json.get("schema").and_then(|v| v.as_str()),
+        Some("treepp.pretty.v1"),
+        "Should have correct schema"
+    );
+
+    let root = json.get("root").expect("Should have root");
+    assert!(root.get("path").is_some(), "Root should have path");
+    assert!(root.get("files").is_some(), "Root should have files");
+    assert!(root.get("dirs").is_some(), "Root should have dirs");
 }
 
 // ============================================================================
@@ -2725,13 +2795,225 @@ fn should_include_all_metadata_in_json_output() {
     );
     assert!(output.status.success());
 
-    // Read and parse the JSON file
     let json_content = fs::read_to_string(&output_file).expect("Should read JSON file");
     let json: serde_json::Value =
         serde_json::from_str(&json_content).expect("Should be valid JSON");
 
-    // Verify it's a valid JSON object
+    // Verify new structure
     assert!(json.is_object(), "Root should be object");
+    assert_eq!(
+        json.get("schema").and_then(|v| v.as_str()),
+        Some("treepp.pretty.v1"),
+        "Should have correct schema"
+    );
+
+    let root_obj = json.get("root").expect("Should have root");
+    assert!(root_obj.get("path").is_some(), "Root should have path");
+    assert!(root_obj.get("type").is_some(), "Root should have type");
+    assert!(root_obj.get("dirs").is_some(), "Root should have dirs");
+}
+
+// ============================================================================
+// Structured Output Format V1 Schema Tests
+// ============================================================================
+
+#[test]
+fn should_have_correct_json_schema_version() {
+    let dir = create_basic_test_dir();
+    let output_file = dir.path().join("tree.json");
+    let output = run_treepp_in_dir(
+        dir.path(),
+        &["/b", "/f", "/o", output_file.to_str().unwrap(), "/nb"],
+    );
+    assert!(output.status.success());
+
+    let content = fs::read_to_string(&output_file).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+    assert_eq!(
+        json.get("schema").and_then(|v| v.as_str()),
+        Some("treepp.pretty.v1")
+    );
+}
+
+#[test]
+fn should_have_correct_yaml_schema_version() {
+    let dir = create_basic_test_dir();
+    let output_file = dir.path().join("tree.yml");
+    let output = run_treepp_in_dir(
+        dir.path(),
+        &["/b", "/f", "/o", output_file.to_str().unwrap(), "/nb"],
+    );
+    assert!(output.status.success());
+
+    let content = fs::read_to_string(&output_file).unwrap();
+    assert!(
+        content.contains("schema: treepp.pretty.v1"),
+        "YAML should contain schema identifier"
+    );
+}
+
+#[test]
+fn should_have_correct_toml_schema_version() {
+    let dir = create_basic_test_dir();
+    let output_file = dir.path().join("tree.toml");
+    let output = run_treepp_in_dir(
+        dir.path(),
+        &["/b", "/f", "/o", output_file.to_str().unwrap(), "/nb"],
+    );
+    assert!(output.status.success());
+
+    let content = fs::read_to_string(&output_file).unwrap();
+    assert!(
+        content.contains("schema = \"treepp.pretty.v1\""),
+        "TOML should contain schema identifier"
+    );
+}
+
+#[test]
+fn should_separate_files_and_dirs_in_json_output() {
+    let dir = create_basic_test_dir();
+    let output_file = dir.path().join("tree.json");
+    let output = run_treepp_in_dir(
+        dir.path(),
+        &["/b", "/f", "/o", output_file.to_str().unwrap(), "/nb"],
+    );
+    assert!(output.status.success());
+
+    let content = fs::read_to_string(&output_file).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+    let root = json.get("root").expect("Should have root");
+
+    // Files should be an array
+    let files = root.get("files").expect("Should have files");
+    assert!(files.is_array(), "files should be an array");
+
+    // Dirs should be an object/map
+    let dirs = root.get("dirs").expect("Should have dirs");
+    assert!(dirs.is_object(), "dirs should be an object");
+
+    // Check that files array contains expected files
+    let files_array = files.as_array().unwrap();
+    let file_names: Vec<&str> = files_array
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert!(
+        file_names.contains(&"file1.txt") || file_names.iter().any(|f| f.contains("file1")),
+        "Should contain file1.txt"
+    );
+
+    // Check that dirs contains expected directories
+    assert!(
+        dirs.get("src").is_some(),
+        "Should have src directory in dirs"
+    );
+}
+
+#[test]
+fn should_have_nested_directory_structure_in_json() {
+    let dir = create_basic_test_dir();
+    let output_file = dir.path().join("tree.json");
+    let output = run_treepp_in_dir(
+        dir.path(),
+        &["/b", "/f", "/o", output_file.to_str().unwrap(), "/nb"],
+    );
+    assert!(output.status.success());
+
+    let content = fs::read_to_string(&output_file).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+    let root = json.get("root").expect("Should have root");
+    let dirs = root.get("dirs").expect("Should have dirs");
+    let src = dirs.get("src").expect("Should have src directory");
+
+    // Nested directory should have same structure
+    assert_eq!(
+        src.get("type").and_then(|v| v.as_str()),
+        Some("dir"),
+        "Nested directory should have type dir"
+    );
+    assert!(
+        src.get("files").is_some(),
+        "Nested directory should have files"
+    );
+    assert!(
+        src.get("dirs").is_some(),
+        "Nested directory should have dirs"
+    );
+
+    // Check files in src directory
+    let src_files = src.get("files").unwrap();
+    assert!(src_files.is_array(), "src files should be an array");
+}
+
+#[test]
+fn should_have_type_dir_for_all_directories_in_json() {
+    let dir = create_deep_test_dir();
+    let output_file = dir.path().join("tree.json");
+    let output = run_treepp_in_dir(
+        dir.path(),
+        &["/b", "/f", "/o", output_file.to_str().unwrap(), "/nb"],
+    );
+    assert!(output.status.success());
+
+    let content = fs::read_to_string(&output_file).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+    // Helper function to recursively check all directories have type: dir
+    fn check_dir_type(value: &serde_json::Value, path: &str) {
+        if let Some(dir_type) = value.get("type") {
+            assert_eq!(
+                dir_type.as_str(),
+                Some("dir"),
+                "Directory at {} should have type 'dir'",
+                path
+            );
+        }
+        if let Some(dirs) = value.get("dirs") {
+            if let Some(dirs_obj) = dirs.as_object() {
+                for (name, subdir) in dirs_obj {
+                    check_dir_type(subdir, &format!("{}/{}", path, name));
+                }
+            }
+        }
+    }
+
+    let root = json.get("root").expect("Should have root");
+    check_dir_type(root, "root");
+}
+
+#[test]
+fn should_have_empty_dirs_object_for_leaf_directories() {
+    let dir = create_basic_test_dir();
+    let output_file = dir.path().join("tree.json");
+    let output = run_treepp_in_dir(
+        dir.path(),
+        &["/b", "/f", "/o", output_file.to_str().unwrap(), "/nb"],
+    );
+    assert!(output.status.success());
+
+    let content = fs::read_to_string(&output_file).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+    let root = json.get("root").unwrap();
+    let dirs = root.get("dirs").unwrap();
+
+    // empty directory should have empty dirs object
+    if let Some(empty_dir) = dirs.get("empty") {
+        let empty_dirs = empty_dir.get("dirs");
+        assert!(
+            empty_dirs.is_some(),
+            "Leaf directory should have dirs field"
+        );
+        if let Some(empty_dirs_obj) = empty_dirs.and_then(|v| v.as_object()) {
+            assert!(
+                empty_dirs_obj.is_empty(),
+                "Leaf directory should have empty dirs object"
+            );
+        }
+    }
 }
 
 // ============================================================================

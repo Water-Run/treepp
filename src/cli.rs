@@ -27,7 +27,7 @@
 //!
 //! File: src/cli.rs
 //! Author: WaterRun
-//! Date: 2026-01-22
+//! Date: 2026-01-26
 
 #![forbid(unsafe_code)]
 
@@ -818,7 +818,7 @@ More info: https://github.com/Water-Run/treepp"#
 /// ```
 #[must_use]
 pub fn version_text() -> &'static str {
-    r#"tree++ version 0.2.0
+    r#"tree++ version 0.3.0
 
 A much better Windows tree command.
 
@@ -1780,7 +1780,7 @@ mod tests {
     #[test]
     fn version_text_contains_required_info() {
         let version = version_text();
-        assert!(version.contains("0.2.0"));
+        assert!(version.contains("0.3.0"));
         assert!(version.contains("WaterRun"));
         assert!(version.contains("github.com"));
     }

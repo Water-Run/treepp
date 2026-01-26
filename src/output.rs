@@ -9,7 +9,7 @@
 //!
 //! File: src/output.rs
 //! Author: WaterRun
-//! Date: 2026-01-13
+//! Date: 2026-01-26
 
 #![forbid(unsafe_code)]
 
@@ -17,12 +17,20 @@ use std::fs::{self, File};
 use std::io::{self, BufWriter, Stdout, StdoutLock, Write};
 use std::path::Path;
 
-use serde_json::{Map, Value};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::config::{Config, OutputFormat};
 use crate::error::OutputError;
 use crate::render::RenderResult;
 use crate::scan::{EntryKind, TreeNode};
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+/// Schema version for structured output formats.
+const SCHEMA_VERSION: &str = "treepp.pretty.v1";
 
 // ============================================================================
 // Streaming Writer
@@ -136,14 +144,96 @@ impl<'a> StreamWriter<'a> {
 }
 
 // ============================================================================
+// Structured Output Schema
+// ============================================================================
+
+/// Directory node in the structured output format.
+///
+/// Represents a directory with its files and subdirectories.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DirNode {
+    /// Node type, always "dir" for directories.
+    #[serde(rename = "type")]
+    pub node_type: String,
+    /// List of file names in this directory.
+    pub files: Vec<String>,
+    /// Map of subdirectory names to their nodes.
+    pub dirs: std::collections::BTreeMap<String, DirNode>,
+    /// File size in bytes (only when show_size is enabled).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+    /// Disk usage for directory (only when show_disk_usage is enabled).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disk_usage: Option<u64>,
+    /// Last modification date (only when show_date is enabled).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modified: Option<String>,
+}
+
+impl DirNode {
+    /// Creates a new directory node.
+    #[must_use]
+    fn new() -> Self {
+        Self {
+            node_type: "dir".to_string(),
+            files: Vec::new(),
+            dirs: std::collections::BTreeMap::new(),
+            size: None,
+            disk_usage: None,
+            modified: None,
+        }
+    }
+}
+
+/// File entry with optional metadata.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FileEntry {
+    /// File name.
+    pub name: String,
+    /// File size in bytes (only when show_size is enabled).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+    /// Last modification date (only when show_date is enabled).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modified: Option<String>,
+}
+
+/// Root node in the structured output format.
+///
+/// Contains the root path and directory structure.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RootNode {
+    /// Root path display string.
+    pub path: String,
+    /// Node type, always "dir".
+    #[serde(rename = "type")]
+    pub node_type: String,
+    /// List of file names or file entries in root directory.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<Value>,
+    /// Map of subdirectory names to their nodes.
+    pub dirs: std::collections::BTreeMap<String, DirNode>,
+    /// Disk usage for root directory (only when show_disk_usage is enabled).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disk_usage: Option<u64>,
+}
+
+/// Top-level structure for structured output.
+///
+/// Contains schema version and root node.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct StructuredOutput {
+    /// Schema version identifier.
+    pub schema: String,
+    /// Root directory node.
+    pub root: RootNode,
+}
+
+// ============================================================================
 // Serialization Functions
 // ============================================================================
 
-/// Converts a `TreeNode` to a JSON `Value` with a concise tree structure.
-///
-/// The output format is:
-/// - Directory: object with child names as keys
-/// - File: object containing requested metadata, empty if no metadata
+/// Converts a `TreeNode` to a `DirNode` for structured output.
 ///
 /// # Arguments
 ///
@@ -152,108 +242,165 @@ impl<'a> StreamWriter<'a> {
 ///
 /// # Returns
 ///
-/// A `serde_json::Value` representing the node.
-fn to_json_value(node: &TreeNode, config: &Config) -> Value {
-    let is_file = node.kind == EntryKind::File;
+/// A `DirNode` representing the directory structure.
+fn tree_to_dir_node(node: &TreeNode, config: &Config) -> DirNode {
+    let mut dir_node = DirNode::new();
 
-    if is_file {
-        let mut obj = Map::new();
-
-        if config.render.show_size {
-            obj.insert("size".to_string(), Value::Number(node.metadata.size.into()));
-        }
-
-        if config.render.show_disk_usage {
-            if let Some(usage) = node.disk_usage {
-                obj.insert("disk_usage".to_string(), Value::Number(usage.into()));
-            }
-        }
-
-        if config.render.show_date {
-            if let Some(ref modified) = node.metadata.modified {
-                obj.insert(
-                    "modified".to_string(),
-                    Value::String(crate::render::format_datetime(modified)),
-                );
-            }
-        }
-
-        if config.render.path_mode == crate::config::PathMode::Full {
-            obj.insert(
-                "path".to_string(),
-                Value::String(node.path.to_string_lossy().into_owned()),
-            );
-        }
-
-        Value::Object(obj)
-    } else {
-        let mut obj = Map::new();
-
-        if config.render.show_disk_usage {
-            if let Some(usage) = node.disk_usage {
-                obj.insert("_disk_usage".to_string(), Value::Number(usage.into()));
-            }
-        }
-
-        let children: Vec<&TreeNode> = node
-            .children
-            .iter()
-            .filter(|c| config.scan.show_files || c.kind == EntryKind::Directory)
-            .collect();
-
-        for child in children {
-            obj.insert(child.name.clone(), to_json_value(child, config));
-        }
-
-        Value::Object(obj)
+    if config.render.show_disk_usage {
+        dir_node.disk_usage = node.disk_usage;
     }
+
+    if config.render.show_date {
+        if let Some(ref modified) = node.metadata.modified {
+            dir_node.modified = Some(crate::render::format_datetime(modified));
+        }
+    }
+
+    let (files, dirs): (Vec<_>, Vec<_>) = node
+        .children
+        .iter()
+        .partition(|c| c.kind == EntryKind::File);
+
+    for file in files {
+        if config.scan.show_files {
+            dir_node.files.push(file.name.clone());
+        }
+    }
+
+    for subdir in dirs {
+        let sub_dir_node = tree_to_dir_node(subdir, config);
+        dir_node.dirs.insert(subdir.name.clone(), sub_dir_node);
+    }
+
+    dir_node
 }
 
-/// Converts a JSON `Value` to a TOML `Value`.
+/// Converts a `TreeNode` to a `DirNode` with detailed file metadata.
 ///
 /// # Arguments
 ///
-/// * `value` - The JSON value to convert.
+/// * `node` - The tree node to convert.
+/// * `config` - Configuration controlling which metadata to include.
 ///
 /// # Returns
 ///
-/// The equivalent TOML value.
-///
-/// # Errors
-///
-/// Returns `OutputError` if conversion fails (currently infallible for valid JSON).
-fn json_to_toml(value: &Value) -> Result<toml::Value, OutputError> {
-    match value {
-        Value::Null => Ok(toml::Value::String("null".to_string())),
-        Value::Bool(b) => Ok(toml::Value::Boolean(*b)),
-        Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Ok(toml::Value::Integer(i))
-            } else if let Some(f) = n.as_f64() {
-                Ok(toml::Value::Float(f))
+/// A tuple of (files as Value array, dirs as BTreeMap).
+fn tree_to_detailed_content(
+    node: &TreeNode,
+    config: &Config,
+) -> (Vec<Value>, std::collections::BTreeMap<String, DirNode>) {
+    let mut files = Vec::new();
+    let mut dirs = std::collections::BTreeMap::new();
+
+    let (file_nodes, dir_nodes): (Vec<_>, Vec<_>) = node
+        .children
+        .iter()
+        .partition(|c| c.kind == EntryKind::File);
+
+    let needs_file_metadata =
+        (config.render.show_size || config.render.show_date) && config.scan.show_files;
+
+    for file in file_nodes {
+        if config.scan.show_files {
+            if needs_file_metadata {
+                let mut file_obj = serde_json::Map::new();
+                file_obj.insert("name".to_string(), Value::String(file.name.clone()));
+
+                if config.render.show_size {
+                    file_obj.insert(
+                        "size".to_string(),
+                        Value::Number(file.metadata.size.into()),
+                    );
+                }
+
+                if config.render.show_date {
+                    if let Some(ref modified) = file.metadata.modified {
+                        file_obj.insert(
+                            "modified".to_string(),
+                            Value::String(crate::render::format_datetime(modified)),
+                        );
+                    }
+                }
+
+                files.push(Value::Object(file_obj));
             } else {
-                Ok(toml::Value::String(n.to_string()))
+                files.push(Value::String(file.name.clone()));
             }
-        }
-        Value::String(s) => Ok(toml::Value::String(s.clone())),
-        Value::Array(arr) => {
-            let toml_arr: Result<Vec<_>, _> = arr.iter().map(json_to_toml).collect();
-            Ok(toml::Value::Array(toml_arr?))
-        }
-        Value::Object(obj) => {
-            let mut table = toml::map::Map::new();
-            for (k, v) in obj {
-                table.insert(k.clone(), json_to_toml(v)?);
-            }
-            Ok(toml::Value::Table(table))
         }
     }
+
+    for subdir in dir_nodes {
+        let sub_dir_node = tree_to_dir_node(subdir, config);
+        dirs.insert(subdir.name.clone(), sub_dir_node);
+    }
+
+    (files, dirs)
+}
+
+/// Creates the structured output from a tree node.
+///
+/// # Arguments
+///
+/// * `node` - The root tree node.
+/// * `config` - Configuration controlling serialization options.
+///
+/// # Returns
+///
+/// A `StructuredOutput` structure ready for serialization.
+fn create_structured_output(node: &TreeNode, config: &Config) -> StructuredOutput {
+    let root_path = format_root_path(&config.root_path);
+    let (files, dirs) = tree_to_detailed_content(node, config);
+
+    let mut root = RootNode {
+        path: root_path,
+        node_type: "dir".to_string(),
+        files,
+        dirs,
+        disk_usage: None,
+    };
+
+    if config.render.show_disk_usage {
+        root.disk_usage = node.disk_usage;
+    }
+
+    StructuredOutput {
+        schema: SCHEMA_VERSION.to_string(),
+        root,
+    }
+}
+
+/// Formats the root path for display in structured output.
+///
+/// # Arguments
+///
+/// * `path` - The root path.
+///
+/// # Returns
+///
+/// A formatted path string.
+fn format_root_path(path: &Path) -> String {
+    use std::path::Component;
+
+    if let Some(Component::Prefix(prefix)) = path.components().next() {
+        let prefix_str = prefix.as_os_str().to_string_lossy();
+        let chars: Vec<char> = prefix_str.chars().collect();
+
+        if chars.len() >= 2 && chars[1] == ':' {
+            return format!("{}:.", chars[0].to_ascii_uppercase());
+        }
+
+        if prefix_str.starts_with(r"\\?\") && chars.len() >= 6 && chars[5] == ':' {
+            return format!("{}:.", chars[4].to_ascii_uppercase());
+        }
+    }
+
+    path.to_string_lossy().into_owned()
 }
 
 /// Serializes a tree node to JSON format.
 ///
-/// Produces a pretty-printed JSON string with the tree structure where
-/// directory and file names are used as object keys.
+/// Produces a pretty-printed JSON string with the tree structure using
+/// the treepp.pretty.v1 schema.
 ///
 /// # Arguments
 ///
@@ -283,17 +430,16 @@ fn json_to_toml(value: &Value) -> Result<toml::Value, OutputError> {
 /// );
 /// let config = Config::default();
 /// let json = serialize_json(&node, &config).unwrap();
-/// assert!(json.starts_with("{"));
+/// assert!(json.contains("treepp.pretty.v1"));
 /// ```
 pub fn serialize_json(node: &TreeNode, config: &Config) -> Result<String, OutputError> {
-    let value = to_json_value(node, config);
-    serde_json::to_string_pretty(&value).map_err(|e| OutputError::json_error(e.to_string()))
+    let output = create_structured_output(node, config);
+    serde_json::to_string_pretty(&output).map_err(|e| OutputError::json_error(e.to_string()))
 }
 
 /// Serializes a tree node to YAML format.
 ///
-/// Produces a YAML string with the tree structure where directory and
-/// file names are used as mapping keys.
+/// Produces a YAML string with the tree structure using the treepp.pretty.v1 schema.
 ///
 /// # Arguments
 ///
@@ -323,17 +469,16 @@ pub fn serialize_json(node: &TreeNode, config: &Config) -> Result<String, Output
 /// );
 /// let config = Config::default();
 /// let yaml = serialize_yaml(&node, &config).unwrap();
-/// assert!(!yaml.is_empty());
+/// assert!(yaml.contains("treepp.pretty.v1"));
 /// ```
 pub fn serialize_yaml(node: &TreeNode, config: &Config) -> Result<String, OutputError> {
-    let value = to_json_value(node, config);
-    serde_yaml::to_string(&value).map_err(|e| OutputError::yaml_error(e.to_string()))
+    let output = create_structured_output(node, config);
+    serde_yaml::to_string(&output).map_err(|e| OutputError::yaml_error(e.to_string()))
 }
 
 /// Serializes a tree node to TOML format.
 ///
-/// Produces a TOML string with the tree structure. Since TOML requires
-/// a top-level table, the root node's contents are serialized directly.
+/// Produces a TOML string with the tree structure. Uses the treepp.pretty.v1 schema.
 ///
 /// # Arguments
 ///
@@ -363,12 +508,101 @@ pub fn serialize_yaml(node: &TreeNode, config: &Config) -> Result<String, Output
 /// );
 /// let config = Config::default();
 /// let toml_str = serialize_toml(&node, &config).unwrap();
-/// assert!(!toml_str.is_empty());
+/// assert!(toml_str.contains("treepp.pretty.v1"));
 /// ```
 pub fn serialize_toml(node: &TreeNode, config: &Config) -> Result<String, OutputError> {
-    let value = to_json_value(node, config);
-    let toml_value = json_to_toml(&value)?;
-    toml::to_string_pretty(&toml_value).map_err(|e| OutputError::toml_error(e.to_string()))
+    let output = create_structured_output(node, config);
+
+    // Convert to TOML-compatible structure
+    let toml_output = TomlOutput::from_structured(&output);
+
+    toml::to_string_pretty(&toml_output).map_err(|e| OutputError::toml_error(e.to_string()))
+}
+
+/// TOML-specific output structure.
+///
+/// TOML has limitations with heterogeneous arrays, so we use a slightly
+/// different structure for TOML output.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct TomlOutput {
+    schema: String,
+    root: TomlRootNode,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct TomlRootNode {
+    path: String,
+    #[serde(rename = "type")]
+    node_type: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    files: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    disk_usage: Option<u64>,
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    dirs: std::collections::BTreeMap<String, TomlDirNode>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct TomlDirNode {
+    #[serde(rename = "type")]
+    node_type: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    files: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    disk_usage: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    modified: Option<String>,
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    dirs: std::collections::BTreeMap<String, TomlDirNode>,
+}
+
+impl TomlOutput {
+    fn from_structured(output: &StructuredOutput) -> Self {
+        let files: Vec<String> = output
+            .root
+            .files
+            .iter()
+            .filter_map(|v| match v {
+                Value::String(s) => Some(s.clone()),
+                Value::Object(obj) => obj.get("name").and_then(|n| n.as_str()).map(String::from),
+                _ => None,
+            })
+            .collect();
+
+        let dirs = output
+            .root
+            .dirs
+            .iter()
+            .map(|(k, v)| (k.clone(), TomlDirNode::from_dir_node(v)))
+            .collect();
+
+        Self {
+            schema: output.schema.clone(),
+            root: TomlRootNode {
+                path: output.root.path.clone(),
+                node_type: output.root.node_type.clone(),
+                files,
+                disk_usage: output.root.disk_usage,
+                dirs,
+            },
+        }
+    }
+}
+
+impl TomlDirNode {
+    fn from_dir_node(node: &DirNode) -> Self {
+        Self {
+            node_type: node.node_type.clone(),
+            files: node.files.clone(),
+            disk_usage: node.disk_usage,
+            modified: node.modified.clone(),
+            dirs: node
+                .dirs
+                .iter()
+                .map(|(k, v)| (k.clone(), Self::from_dir_node(v)))
+                .collect(),
+        }
+    }
 }
 
 // ============================================================================
@@ -723,6 +957,7 @@ mod tests {
     use super::*;
     use crate::scan::EntryMetadata;
     use std::path::PathBuf;
+    use std::time::SystemTime;
     use tempfile::tempdir;
 
     fn create_test_tree() -> TreeNode {
@@ -801,30 +1036,56 @@ mod tests {
         root
     }
 
+    // ========================================================================
+    // Schema Structure Tests
+    // ========================================================================
+
     #[test]
-    fn should_serialize_json_with_directory_structure() {
+    fn should_serialize_json_with_schema_version() {
         let tree = create_test_tree();
-        let config = Config::default();
+        let mut config = Config::default();
+        config.scan.show_files = true;
+
+        let json = serialize_json(&tree, &config).expect("JSON序列化应成功");
+
+        assert!(json.contains("\"schema\": \"treepp.pretty.v1\""));
+    }
+
+    #[test]
+    fn should_serialize_json_with_root_structure() {
+        let tree = create_test_tree();
+        let mut config = Config::default();
+        config.scan.show_files = true;
+
+        let json = serialize_json(&tree, &config).expect("JSON序列化应成功");
+
+        assert!(json.contains("\"root\""));
+        assert!(json.contains("\"type\": \"dir\""));
+        assert!(json.contains("\"files\""));
+        assert!(json.contains("\"dirs\""));
+    }
+
+    #[test]
+    fn should_serialize_json_with_files_array() {
+        let tree = create_test_tree();
+        let mut config = Config::default();
+        config.scan.show_files = true;
+
+        let json = serialize_json(&tree, &config).expect("JSON序列化应成功");
+
+        assert!(json.contains("\"file1.txt\""));
+        assert!(json.contains("\"file2.txt\""));
+    }
+
+    #[test]
+    fn should_serialize_json_with_nested_dirs() {
+        let tree = create_test_tree();
+        let mut config = Config::default();
+        config.scan.show_files = true;
 
         let json = serialize_json(&tree, &config).expect("JSON序列化应成功");
 
         assert!(json.contains("\"subdir\""));
-        assert!(json.contains("{"));
-    }
-
-    #[test]
-    fn should_serialize_json_with_file_metadata_when_enabled() {
-        let tree = create_test_tree();
-        let mut config = Config::default();
-        config.batch_mode = true;
-        config.scan.show_files = true;
-        config.render.show_size = true;
-
-        let json = serialize_json(&tree, &config).expect("JSON序列化应成功");
-
-        assert!(json.contains("file1.txt"));
-        assert!(json.contains("\"size\":"));
-        assert!(json.contains("1024"));
     }
 
     #[test]
@@ -834,8 +1095,8 @@ mod tests {
 
         let json = serialize_json(&tree, &config).expect("空树JSON序列化应成功");
 
-        assert!(json.contains("{"));
-        assert!(json.contains("}"));
+        assert!(json.contains("treepp.pretty.v1"));
+        assert!(json.contains("\"dirs\": {}"));
     }
 
     #[test]
@@ -852,13 +1113,99 @@ mod tests {
     }
 
     #[test]
-    fn should_serialize_yaml_with_directory_structure() {
+    fn should_serialize_json_with_file_size_when_enabled() {
         let tree = create_test_tree();
-        let config = Config::default();
+        let mut config = Config::default();
+        config.batch_mode = true;
+        config.scan.show_files = true;
+        config.render.show_size = true;
+
+        let json = serialize_json(&tree, &config).expect("JSON序列化应成功");
+
+        assert!(json.contains("\"size\""));
+        assert!(json.contains("1024"));
+    }
+
+    #[test]
+    fn should_serialize_json_with_disk_usage_when_enabled() {
+        let mut tree = create_test_tree();
+        tree.compute_disk_usage();
+
+        let mut config = Config::default();
+        config.batch_mode = true;
+        config.scan.show_files = true;
+        config.render.show_disk_usage = true;
+
+        let json = serialize_json(&tree, &config).expect("JSON序列化应成功");
+
+        assert!(json.contains("\"disk_usage\""));
+    }
+
+    #[test]
+    fn should_serialize_json_with_modified_date_when_enabled() {
+        let mut tree = TreeNode::new(
+            PathBuf::from("root"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        tree.children.push(TreeNode::new(
+            PathBuf::from("root/file.txt"),
+            EntryKind::File,
+            EntryMetadata {
+                size: 100,
+                modified: Some(SystemTime::now()),
+                ..Default::default()
+            },
+        ));
+
+        let mut config = Config::default();
+        config.scan.show_files = true;
+        config.render.show_date = true;
+
+        let json = serialize_json(&tree, &config).expect("JSON序列化应成功");
+
+        assert!(json.contains("\"modified\""));
+    }
+
+    // ========================================================================
+    // YAML Serialization Tests
+    // ========================================================================
+
+    #[test]
+    fn should_serialize_yaml_with_schema_version() {
+        let tree = create_test_tree();
+        let mut config = Config::default();
+        config.scan.show_files = true;
 
         let yaml = serialize_yaml(&tree, &config).expect("YAML序列化应成功");
 
-        assert!(yaml.contains("subdir:") || yaml.contains("file1.txt:"));
+        assert!(yaml.contains("schema: treepp.pretty.v1"));
+    }
+
+    #[test]
+    fn should_serialize_yaml_with_root_structure() {
+        let tree = create_test_tree();
+        let mut config = Config::default();
+        config.scan.show_files = true;
+
+        let yaml = serialize_yaml(&tree, &config).expect("YAML序列化应成功");
+
+        assert!(yaml.contains("root:"));
+        assert!(yaml.contains("type: dir"));
+        assert!(yaml.contains("files:"));
+        assert!(yaml.contains("dirs:"));
+    }
+
+    #[test]
+    fn should_serialize_yaml_with_files_list() {
+        let tree = create_test_tree();
+        let mut config = Config::default();
+        config.scan.show_files = true;
+
+        let yaml = serialize_yaml(&tree, &config).expect("YAML序列化应成功");
+
+        assert!(yaml.contains("file1.txt"));
+        assert!(yaml.contains("file2.txt"));
     }
 
     #[test]
@@ -868,17 +1215,58 @@ mod tests {
 
         let yaml = serialize_yaml(&tree, &config).expect("空树YAML序列化应成功");
 
-        assert!(!yaml.is_empty());
+        assert!(yaml.contains("treepp.pretty.v1"));
+        assert!(yaml.contains("dirs: {}"));
     }
 
+    // ========================================================================
+    // TOML Serialization Tests
+    // ========================================================================
+
     #[test]
-    fn should_serialize_toml_with_directory_structure() {
+    fn should_serialize_toml_with_schema_version() {
         let tree = create_test_tree();
-        let config = Config::default();
+        let mut config = Config::default();
+        config.scan.show_files = true;
 
         let toml = serialize_toml(&tree, &config).expect("TOML序列化应成功");
 
-        assert!(toml.contains("subdir") || toml.contains("file1"));
+        assert!(toml.contains("schema = \"treepp.pretty.v1\""));
+    }
+
+    #[test]
+    fn should_serialize_toml_with_root_section() {
+        let tree = create_test_tree();
+        let mut config = Config::default();
+        config.scan.show_files = true;
+
+        let toml = serialize_toml(&tree, &config).expect("TOML序列化应成功");
+
+        assert!(toml.contains("[root]"));
+        assert!(toml.contains("type = \"dir\""));
+    }
+
+    #[test]
+    fn should_serialize_toml_with_files_array() {
+        let tree = create_test_tree();
+        let mut config = Config::default();
+        config.scan.show_files = true;
+
+        let toml = serialize_toml(&tree, &config).expect("TOML序列化应成功");
+
+        assert!(toml.contains("files = ["));
+        assert!(toml.contains("\"file1.txt\""));
+    }
+
+    #[test]
+    fn should_serialize_toml_with_nested_dirs() {
+        let tree = create_test_tree();
+        let mut config = Config::default();
+        config.scan.show_files = true;
+
+        let toml = serialize_toml(&tree, &config).expect("TOML序列化应成功");
+
+        assert!(toml.contains("[root.dirs.subdir]"));
     }
 
     #[test]
@@ -889,7 +1277,13 @@ mod tests {
         let result = serialize_toml(&tree, &config);
 
         assert!(result.is_ok());
+        let toml = result.unwrap();
+        assert!(toml.contains("treepp.pretty.v1"));
     }
+
+    // ========================================================================
+    // Format Inference Tests
+    // ========================================================================
 
     #[test]
     fn should_infer_json_format_from_extension() {
@@ -955,6 +1349,10 @@ mod tests {
         assert_eq!(infer_format(Path::new("file.doc")), None);
     }
 
+    // ========================================================================
+    // File Writing Tests
+    // ========================================================================
+
     #[test]
     fn should_create_file_and_write_content() {
         let dir = tempdir().expect("创建临时目录失败");
@@ -1014,6 +1412,10 @@ mod tests {
         assert_eq!(content, "你好世界 🌍 émoji");
     }
 
+    // ========================================================================
+    // Path Validation Tests
+    // ========================================================================
+
     #[test]
     fn should_validate_normal_output_path() {
         assert!(validate_output_path(Path::new("output.txt")).is_ok());
@@ -1033,6 +1435,10 @@ mod tests {
         }
     }
 
+    // ========================================================================
+    // Silent Mode Tests
+    // ========================================================================
+
     #[test]
     fn should_skip_output_in_silent_mode() {
         let mut config = Config::default();
@@ -1051,50 +1457,406 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    // ========================================================================
+    // Root Path Formatting Tests
+    // ========================================================================
+
     #[test]
-    fn should_convert_json_null_to_toml() {
-        let result = json_to_toml(&Value::Null).expect("转换应成功");
-        assert_eq!(result, toml::Value::String("null".to_string()));
+    fn should_format_root_path_with_drive_letter() {
+        let path = PathBuf::from(r"C:\Users\Test");
+        let formatted = format_root_path(&path);
+        assert_eq!(formatted, "C:.");
     }
 
     #[test]
-    fn should_convert_json_bool_to_toml() {
-        let result = json_to_toml(&Value::Bool(true)).expect("转换应成功");
-        assert_eq!(result, toml::Value::Boolean(true));
+    fn should_format_root_path_lowercase_drive() {
+        let path = PathBuf::from(r"d:\data");
+        let formatted = format_root_path(&path);
+        assert_eq!(formatted, "D:.");
     }
 
     #[test]
-    fn should_convert_json_number_to_toml() {
-        let result = json_to_toml(&Value::Number(42.into())).expect("转换应成功");
-        assert_eq!(result, toml::Value::Integer(42));
+    fn should_format_relative_path() {
+        let path = PathBuf::from("relative/path");
+        let formatted = format_root_path(&path);
+        assert_eq!(formatted, "relative/path");
+    }
+
+    // ========================================================================
+    // DirNode Tests
+    // ========================================================================
+
+    #[test]
+    fn should_create_empty_dir_node() {
+        let node = DirNode::new();
+        assert_eq!(node.node_type, "dir");
+        assert!(node.files.is_empty());
+        assert!(node.dirs.is_empty());
+        assert!(node.size.is_none());
+        assert!(node.disk_usage.is_none());
+        assert!(node.modified.is_none());
     }
 
     #[test]
-    fn should_convert_json_string_to_toml() {
-        let result = json_to_toml(&Value::String("test".to_string())).expect("转换应成功");
-        assert_eq!(result, toml::Value::String("test".to_string()));
+    fn should_convert_tree_to_dir_node() {
+        let tree = create_test_tree();
+        let mut config = Config::default();
+        config.scan.show_files = true;
+
+        let dir_node = tree_to_dir_node(&tree, &config);
+
+        assert_eq!(dir_node.node_type, "dir");
+        assert!(dir_node.files.contains(&"file1.txt".to_string()));
+        assert!(dir_node.dirs.contains_key("subdir"));
     }
 
     #[test]
-    fn should_convert_json_array_to_toml() {
-        let arr = Value::Array(vec![Value::Number(1.into()), Value::Number(2.into())]);
-        let result = json_to_toml(&arr).expect("转换应成功");
-        if let toml::Value::Array(arr) = result {
-            assert_eq!(arr.len(), 2);
-        } else {
-            panic!("应该是数组");
+    fn should_convert_tree_to_dir_node_without_files() {
+        let tree = create_test_tree();
+        let config = Config::default();
+
+        let dir_node = tree_to_dir_node(&tree, &config);
+
+        assert!(dir_node.files.is_empty());
+        assert!(dir_node.dirs.contains_key("subdir"));
+    }
+
+    // ========================================================================
+    // StructuredOutput Tests
+    // ========================================================================
+
+    #[test]
+    fn should_create_structured_output() {
+        let tree = create_test_tree();
+        let mut config = Config::default();
+        config.scan.show_files = true;
+
+        let output = create_structured_output(&tree, &config);
+
+        assert_eq!(output.schema, SCHEMA_VERSION);
+        assert_eq!(output.root.node_type, "dir");
+    }
+
+    #[test]
+    fn should_include_disk_usage_in_structured_output() {
+        let mut tree = create_test_tree();
+        tree.compute_disk_usage();
+
+        let mut config = Config::default();
+        config.batch_mode = true;
+        config.render.show_disk_usage = true;
+
+        let output = create_structured_output(&tree, &config);
+
+        assert!(output.root.disk_usage.is_some());
+    }
+
+    // ========================================================================
+    // Round-Trip Tests
+    // ========================================================================
+
+    #[test]
+    fn should_deserialize_json_output() {
+        let tree = create_test_tree();
+        let mut config = Config::default();
+        config.scan.show_files = true;
+
+        let json = serialize_json(&tree, &config).expect("序列化应成功");
+        let parsed: StructuredOutput = serde_json::from_str(&json).expect("反序列化应成功");
+
+        assert_eq!(parsed.schema, SCHEMA_VERSION);
+        assert_eq!(parsed.root.node_type, "dir");
+    }
+
+    #[test]
+    fn should_deserialize_yaml_output() {
+        let tree = create_test_tree();
+        let mut config = Config::default();
+        config.scan.show_files = true;
+
+        let yaml = serialize_yaml(&tree, &config).expect("序列化应成功");
+        let parsed: StructuredOutput = serde_yaml::from_str(&yaml).expect("反序列化应成功");
+
+        assert_eq!(parsed.schema, SCHEMA_VERSION);
+        assert_eq!(parsed.root.node_type, "dir");
+    }
+
+    // ========================================================================
+    // Edge Cases Tests
+    // ========================================================================
+
+    #[test]
+    fn should_handle_special_characters_in_filenames() {
+        let mut root = TreeNode::new(
+            PathBuf::from("root"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        root.children.push(TreeNode::new(
+            PathBuf::from("root/file with spaces.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+        root.children.push(TreeNode::new(
+            PathBuf::from("root/文件名.txt"),
+            EntryKind::File,
+            EntryMetadata::default(),
+        ));
+
+        let mut config = Config::default();
+        config.scan.show_files = true;
+
+        let json = serialize_json(&root, &config).expect("序列化应成功");
+
+        assert!(json.contains("file with spaces.txt"));
+        assert!(json.contains("文件名.txt"));
+    }
+
+    #[test]
+    fn should_handle_deeply_nested_structure() {
+        let tree = create_deep_tree();
+        let mut config = Config::default();
+        config.scan.show_files = true;
+
+        let json = serialize_json(&tree, &config).expect("序列化应成功");
+        let yaml = serialize_yaml(&tree, &config).expect("序列化应成功");
+        let toml = serialize_toml(&tree, &config).expect("序列化应成功");
+
+        assert!(json.contains("level2"));
+        assert!(yaml.contains("level2"));
+        assert!(toml.contains("level2"));
+    }
+
+    #[test]
+    fn should_handle_many_files() {
+        let mut root = TreeNode::new(
+            PathBuf::from("root"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+
+        for i in 0..100 {
+            root.children.push(TreeNode::new(
+                PathBuf::from(format!("root/file{}.txt", i)),
+                EntryKind::File,
+                EntryMetadata::default(),
+            ));
         }
+
+        let mut config = Config::default();
+        config.scan.show_files = true;
+
+        let json = serialize_json(&root, &config).expect("序列化应成功");
+
+        assert!(json.contains("file0.txt"));
+        assert!(json.contains("file99.txt"));
     }
 
     #[test]
-    fn should_convert_json_object_to_toml() {
-        let mut obj = Map::new();
-        obj.insert("key".to_string(), Value::String("value".to_string()));
-        let result = json_to_toml(&Value::Object(obj)).expect("转换应成功");
-        if let toml::Value::Table(table) = result {
-            assert!(table.contains_key("key"));
-        } else {
-            panic!("应该是表格");
+    fn should_handle_many_directories() {
+        let mut root = TreeNode::new(
+            PathBuf::from("root"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+
+        for i in 0..50 {
+            root.children.push(TreeNode::new(
+                PathBuf::from(format!("root/dir{}", i)),
+                EntryKind::Directory,
+                EntryMetadata::default(),
+            ));
         }
+
+        let config = Config::default();
+
+        let json = serialize_json(&root, &config).expect("序列化应成功");
+
+        assert!(json.contains("dir0"));
+        assert!(json.contains("dir49"));
+    }
+
+    // ========================================================================
+    // Metadata Tests
+    // ========================================================================
+
+    #[test]
+    fn should_include_file_metadata_in_json_when_enabled() {
+        let mut root = TreeNode::new(
+            PathBuf::from("root"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        root.children.push(TreeNode::new(
+            PathBuf::from("root/file.txt"),
+            EntryKind::File,
+            EntryMetadata {
+                size: 12345,
+                modified: Some(SystemTime::now()),
+                ..Default::default()
+            },
+        ));
+
+        let mut config = Config::default();
+        config.scan.show_files = true;
+        config.render.show_size = true;
+        config.render.show_date = true;
+
+        let json = serialize_json(&root, &config).expect("序列化应成功");
+
+        assert!(json.contains("\"name\": \"file.txt\""));
+        assert!(json.contains("\"size\": 12345"));
+        assert!(json.contains("\"modified\""));
+    }
+
+    #[test]
+    fn should_not_include_file_metadata_when_disabled() {
+        let mut root = TreeNode::new(
+            PathBuf::from("root"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        root.children.push(TreeNode::new(
+            PathBuf::from("root/file.txt"),
+            EntryKind::File,
+            EntryMetadata {
+                size: 12345,
+                ..Default::default()
+            },
+        ));
+
+        let mut config = Config::default();
+        config.scan.show_files = true;
+        config.render.show_size = false;
+        config.render.show_date = false;
+
+        let json = serialize_json(&root, &config).expect("序列化应成功");
+
+        // Files should be simple strings when no metadata is requested
+        assert!(json.contains("\"file.txt\""));
+        // Should not contain size as a separate field
+        assert!(!json.contains("\"size\": 12345"));
+    }
+
+    // ========================================================================
+    // TomlOutput Tests
+    // ========================================================================
+
+    #[test]
+    fn should_convert_structured_to_toml_output() {
+        let tree = create_test_tree();
+        let mut config = Config::default();
+        config.scan.show_files = true;
+
+        let structured = create_structured_output(&tree, &config);
+        let toml_output = TomlOutput::from_structured(&structured);
+
+        assert_eq!(toml_output.schema, SCHEMA_VERSION);
+        assert_eq!(toml_output.root.node_type, "dir");
+        assert!(toml_output.root.files.contains(&"file1.txt".to_string()));
+    }
+
+    #[test]
+    fn should_extract_file_names_from_objects() {
+        let mut root = TreeNode::new(
+            PathBuf::from("root"),
+            EntryKind::Directory,
+            EntryMetadata::default(),
+        );
+        root.children.push(TreeNode::new(
+            PathBuf::from("root/file.txt"),
+            EntryKind::File,
+            EntryMetadata {
+                size: 100,
+                ..Default::default()
+            },
+        ));
+
+        let mut config = Config::default();
+        config.scan.show_files = true;
+        config.render.show_size = true;
+
+        let structured = create_structured_output(&root, &config);
+        let toml_output = TomlOutput::from_structured(&structured);
+
+        assert!(toml_output.root.files.contains(&"file.txt".to_string()));
+    }
+
+    // ========================================================================
+    // Integration Tests
+    // ========================================================================
+
+    #[test]
+    fn should_serialize_all_formats_consistently() {
+        let tree = create_test_tree();
+        let mut config = Config::default();
+        config.scan.show_files = true;
+
+        let json = serialize_json(&tree, &config).expect("JSON序列化应成功");
+        let yaml = serialize_yaml(&tree, &config).expect("YAML序列化应成功");
+        let toml = serialize_toml(&tree, &config).expect("TOML序列化应成功");
+
+        // All formats should contain the schema version
+        assert!(json.contains("treepp.pretty.v1"));
+        assert!(yaml.contains("treepp.pretty.v1"));
+        assert!(toml.contains("treepp.pretty.v1"));
+
+        // All formats should contain file names
+        assert!(json.contains("file1.txt"));
+        assert!(yaml.contains("file1.txt"));
+        assert!(toml.contains("file1.txt"));
+
+        // All formats should contain directory names
+        assert!(json.contains("subdir"));
+        assert!(yaml.contains("subdir"));
+        assert!(toml.contains("subdir"));
+    }
+
+    #[test]
+    fn should_write_json_to_file() {
+        let dir = tempdir().expect("创建临时目录失败");
+        let file_path = dir.path().join("output.json");
+
+        let tree = create_test_tree();
+        let mut config = Config::default();
+        config.scan.show_files = true;
+
+        let json = serialize_json(&tree, &config).expect("序列化应成功");
+        write_file(&json, &file_path).expect("写入应成功");
+
+        let content = fs::read_to_string(&file_path).expect("读取失败");
+        assert!(content.contains("treepp.pretty.v1"));
+    }
+
+    #[test]
+    fn should_write_yaml_to_file() {
+        let dir = tempdir().expect("创建临时目录失败");
+        let file_path = dir.path().join("output.yml");
+
+        let tree = create_test_tree();
+        let mut config = Config::default();
+        config.scan.show_files = true;
+
+        let yaml = serialize_yaml(&tree, &config).expect("序列化应成功");
+        write_file(&yaml, &file_path).expect("写入应成功");
+
+        let content = fs::read_to_string(&file_path).expect("读取失败");
+        assert!(content.contains("treepp.pretty.v1"));
+    }
+
+    #[test]
+    fn should_write_toml_to_file() {
+        let dir = tempdir().expect("创建临时目录失败");
+        let file_path = dir.path().join("output.toml");
+
+        let tree = create_test_tree();
+        let mut config = Config::default();
+        config.scan.show_files = true;
+
+        let toml = serialize_toml(&tree, &config).expect("序列化应成功");
+        write_file(&toml, &file_path).expect("写入应成功");
+
+        let content = fs::read_to_string(&file_path).expect("读取失败");
+        assert!(content.contains("treepp.pretty.v1"));
     }
 }
