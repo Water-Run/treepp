@@ -28,7 +28,6 @@ The `tree` command on Windows has seen virtually no changes since it was release
 
 ## Installation
 
-```markdown
 If you have [Scoop](https://scoop.sh/) installed, you can install it via:
 
 ```powershell
