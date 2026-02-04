@@ -12,7 +12,7 @@
 //!
 //! File: tests/functional_test.rs
 //! Author: WaterRun
-//! Date: 2026-01-26
+//! Date: 2026-02-04
 
 use std::fs::{self, File};
 use std::io::Write;
@@ -385,7 +385,7 @@ fn should_show_version_with_version_flag() {
     assert!(output.status.success());
     let stdout = stdout_str(&output);
     assert!(stdout.contains("tree++"));
-    assert!(stdout.contains("0.3.0"));
+    assert!(stdout.contains("0.3.1"));
     assert!(stdout.contains("WaterRun"));
 }
 
@@ -393,21 +393,21 @@ fn should_show_version_with_version_flag() {
 fn should_show_version_with_short_v_flag() {
     let output = run_treepp(&["-v"]);
     assert!(output.status.success());
-    assert!(stdout_str(&output).contains("0.3.0"));
+    assert!(stdout_str(&output).contains("0.3.1"));
 }
 
 #[test]
 fn should_show_version_with_cmd_style() {
     let output = run_treepp(&["/V"]);
     assert!(output.status.success());
-    assert!(stdout_str(&output).contains("0.3.0"));
+    assert!(stdout_str(&output).contains("0.3.1"));
 }
 
 #[test]
 fn should_show_version_case_insensitive_cmd_style() {
     let output = run_treepp(&["/v"]);
     assert!(output.status.success());
-    assert!(stdout_str(&output).contains("0.3.0"));
+    assert!(stdout_str(&output).contains("0.3.1"));
 }
 
 // ============================================================================
