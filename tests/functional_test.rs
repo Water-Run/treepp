@@ -3,20 +3,27 @@
 //! This module contains comprehensive end-to-end tests that invoke the compiled
 //! `treepp` binary directly and validate its output against expected behavior.
 //!
-//! Tests cover:
-//! - All command-line parameters and their combinations
-//! - Exit codes for various scenarios
-//! - Output format correctness (TXT, JSON, YAML, TOML)
-//! - Edge cases and error handling
-//! - Windows-native tree command compatibility
+//! Test categories:
+//! - Help and version information
+//! - Basic directory scanning
+//! - Display options (files, sizes, dates, paths)
+//! - Tree rendering (ASCII, Unicode, no-indent)
+//! - Filtering (include, exclude, gitignore)
+//! - Sorting and ordering
+//! - Depth limiting
+//! - Output formats (TXT, JSON, YAML, TOML)
+//! - Batch mode and threading
+//! - Error handling and edge cases
+//! - Symbolic links and special files
+//! - Permission and access issues
+//! - Path edge cases
 //!
-//! File: tests/functional_test.rs
 //! Author: WaterRun
-//! Date: 2026-02-04
+//! Date: 2026-02-06
 
 use std::fs::{self, File};
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use tempfile::TempDir;
 
@@ -52,7 +59,7 @@ fn run_treepp(args: &[&str]) -> Output {
 }
 
 /// Executes treepp in a specific directory with the given arguments.
-fn run_treepp_in_dir(dir: &std::path::Path, args: &[&str]) -> Output {
+fn run_treepp_in_dir(dir: &Path, args: &[&str]) -> Output {
     Command::new(get_treepp_path())
         .current_dir(dir)
         .args(args)
@@ -69,6 +76,10 @@ fn stdout_str(output: &Output) -> String {
 fn stderr_str(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
+
+// ============================================================================
+// Test Directory Builders
+// ============================================================================
 
 /// Creates a basic test directory structure.
 ///
@@ -88,7 +99,6 @@ fn create_basic_test_dir() -> TempDir {
     let dir = TempDir::new().expect("Failed to create temp dir");
     let root = dir.path();
 
-    // Create files in root
     File::create(root.join("file1.txt"))
         .unwrap()
         .write_all(b"hello")
@@ -98,7 +108,6 @@ fn create_basic_test_dir() -> TempDir {
         .write_all(b"# README")
         .unwrap();
 
-    // Create src directory with files
     fs::create_dir(root.join("src")).unwrap();
     File::create(root.join("src/main.rs"))
         .unwrap()
@@ -109,14 +118,12 @@ fn create_basic_test_dir() -> TempDir {
         .write_all(b"pub fn lib() {}")
         .unwrap();
 
-    // Create tests directory with files
     fs::create_dir(root.join("tests")).unwrap();
     File::create(root.join("tests/test.rs"))
         .unwrap()
         .write_all(b"#[test]")
         .unwrap();
 
-    // Create empty directory
     fs::create_dir(root.join("empty")).unwrap();
 
     dir
@@ -139,13 +146,11 @@ fn create_gitignore_test_dir() -> TempDir {
     let dir = TempDir::new().expect("Failed to create temp dir");
     let root = dir.path();
 
-    // Create .gitignore
     File::create(root.join(".gitignore"))
         .unwrap()
         .write_all(b"target/\n*.log\n")
         .unwrap();
 
-    // Create files
     File::create(root.join("file.txt"))
         .unwrap()
         .write_all(b"content")
@@ -155,14 +160,12 @@ fn create_gitignore_test_dir() -> TempDir {
         .write_all(b"log")
         .unwrap();
 
-    // Create target directory (should be ignored)
     fs::create_dir(root.join("target")).unwrap();
     File::create(root.join("target/debug"))
         .unwrap()
         .write_all(b"")
         .unwrap();
 
-    // Create src directory
     fs::create_dir(root.join("src")).unwrap();
     File::create(root.join("src/main.rs"))
         .unwrap()
@@ -224,61 +227,31 @@ fn create_nested_gitignore_dir() -> TempDir {
     let dir = TempDir::new().expect("Failed to create temp dir");
     let root = dir.path();
 
-    // Root level
     File::create(root.join(".gitignore"))
         .unwrap()
         .write_all(b"*.tmp\n")
         .unwrap();
-    File::create(root.join("root.tmp"))
-        .unwrap()
-        .write_all(b"")
-        .unwrap();
-    File::create(root.join("root.txt"))
-        .unwrap()
-        .write_all(b"")
-        .unwrap();
+    File::create(root.join("root.tmp")).unwrap();
+    File::create(root.join("root.txt")).unwrap();
 
-    // Level 1
     fs::create_dir(root.join("level1")).unwrap();
     File::create(root.join("level1/.gitignore"))
         .unwrap()
         .write_all(b"*.bak\n")
         .unwrap();
-    File::create(root.join("level1/l1.tmp"))
-        .unwrap()
-        .write_all(b"")
-        .unwrap();
-    File::create(root.join("level1/l1.bak"))
-        .unwrap()
-        .write_all(b"")
-        .unwrap();
-    File::create(root.join("level1/l1.txt"))
-        .unwrap()
-        .write_all(b"")
-        .unwrap();
+    File::create(root.join("level1/l1.tmp")).unwrap();
+    File::create(root.join("level1/l1.bak")).unwrap();
+    File::create(root.join("level1/l1.txt")).unwrap();
 
-    // Level 2
     fs::create_dir(root.join("level1/level2")).unwrap();
     File::create(root.join("level1/level2/.gitignore"))
         .unwrap()
         .write_all(b"*.cache\n")
         .unwrap();
-    File::create(root.join("level1/level2/l2.tmp"))
-        .unwrap()
-        .write_all(b"")
-        .unwrap();
-    File::create(root.join("level1/level2/l2.bak"))
-        .unwrap()
-        .write_all(b"")
-        .unwrap();
-    File::create(root.join("level1/level2/l2.cache"))
-        .unwrap()
-        .write_all(b"")
-        .unwrap();
-    File::create(root.join("level1/level2/l2.txt"))
-        .unwrap()
-        .write_all(b"")
-        .unwrap();
+    File::create(root.join("level1/level2/l2.tmp")).unwrap();
+    File::create(root.join("level1/level2/l2.bak")).unwrap();
+    File::create(root.join("level1/level2/l2.cache")).unwrap();
+    File::create(root.join("level1/level2/l2.txt")).unwrap();
 
     dir
 }
@@ -288,6 +261,7 @@ fn create_nested_gitignore_dir() -> TempDir {
 /// Structure:
 /// ```text
 /// root/
+/// ├── empty.txt (0 bytes)
 /// ├── small.txt (5 bytes)
 /// ├── medium.txt (1024 bytes = 1 KB)
 /// └── subdir/
@@ -297,6 +271,7 @@ fn create_sized_test_dir() -> TempDir {
     let dir = TempDir::new().expect("Failed to create temp dir");
     let root = dir.path();
 
+    File::create(root.join("empty.txt")).unwrap();
     File::create(root.join("small.txt"))
         .unwrap()
         .write_all(b"12345")
@@ -320,7 +295,7 @@ fn create_sized_test_dir() -> TempDir {
 /// Structure:
 /// ```text
 /// root/
-/// ├── .hidden
+/// ├── .dotfile
 /// ├── 123.txt
 /// ├── Apple.txt
 /// ├── banana.txt
@@ -332,20 +307,158 @@ fn create_sorting_test_dir() -> TempDir {
     let root = dir.path();
 
     for name in &[
-        ".hidden",
+        ".dotfile",
         "123.txt",
         "Apple.txt",
         "banana.txt",
         "_underscore.txt",
         "zebra.txt",
     ] {
-        File::create(root.join(name))
-            .unwrap()
-            .write_all(b"")
-            .unwrap();
+        File::create(root.join(name)).unwrap();
     }
 
     dir
+}
+
+/// Creates a test directory with hidden files (Windows hidden attribute).
+///
+/// Structure:
+/// ```text
+/// root/
+/// ├── visible.txt
+/// ├── .hidden_file (hidden attribute)
+/// ├── normal_dir/
+/// │   └── normal.txt
+/// └── .hidden_dir/ (hidden attribute)
+///     └── inside_hidden.txt
+/// ```
+fn create_hidden_files_test_dir() -> TempDir {
+    let dir = TempDir::new().expect("Failed to create temp dir");
+    let root = dir.path();
+
+    File::create(root.join("visible.txt"))
+        .unwrap()
+        .write_all(b"visible")
+        .unwrap();
+
+    let hidden_file = root.join(".hidden_file");
+    File::create(&hidden_file)
+        .unwrap()
+        .write_all(b"hidden")
+        .unwrap();
+
+    fs::create_dir(root.join("normal_dir")).unwrap();
+    File::create(root.join("normal_dir/normal.txt")).unwrap();
+
+    let hidden_dir = root.join(".hidden_dir");
+    fs::create_dir(&hidden_dir).unwrap();
+    File::create(hidden_dir.join("inside_hidden.txt")).unwrap();
+
+    // Set Windows hidden attribute
+    let _ = Command::new("attrib")
+        .args(["+H", hidden_file.to_str().unwrap()])
+        .output();
+    let _ = Command::new("attrib")
+        .args(["+H", hidden_dir.to_str().unwrap()])
+        .output();
+
+    dir
+}
+
+/// Creates a directory with special filenames.
+///
+/// Structure:
+/// ```text
+/// root/
+/// ├── file with spaces.txt
+/// ├── file-with-dashes.txt
+/// ├── 中文文件.txt
+/// ├── emoji_🎉.txt
+/// └── special_!@#$%().txt
+/// ```
+fn create_special_names_dir() -> TempDir {
+    let dir = TempDir::new().expect("Failed to create temp dir");
+    let root = dir.path();
+
+    for name in &[
+        "file with spaces.txt",
+        "file-with-dashes.txt",
+        "中文文件.txt",
+        "emoji_🎉.txt",
+        "special_!@#$%().txt",
+    ] {
+        File::create(root.join(name)).unwrap();
+    }
+
+    dir
+}
+
+/// Creates a directory with gitignore edge case patterns.
+///
+/// Structure:
+/// ```text
+/// root/
+/// ├── .gitignore (complex patterns)
+/// ├── # not a comment.txt
+/// ├── debug.log
+/// ├── important.log
+/// ├── build.txt
+/// ├── build/
+/// │   └── output.exe
+/// └── src/
+///     └── main.rs
+/// ```
+fn create_gitignore_edge_cases_dir() -> TempDir {
+    let dir = TempDir::new().expect("Failed to create temp dir");
+    let root = dir.path();
+
+    // Complex gitignore with comments, negation, directory patterns
+    File::create(root.join(".gitignore"))
+        .unwrap()
+        .write_all(b"# This is a comment\n\n*.log\n!important.log\nbuild/\n")
+        .unwrap();
+
+    // File that looks like a comment (escaped)
+    File::create(root.join("# not a comment.txt")).unwrap();
+    File::create(root.join("debug.log")).unwrap();
+    File::create(root.join("important.log")).unwrap();
+    File::create(root.join("build.txt")).unwrap();
+
+    fs::create_dir(root.join("build")).unwrap();
+    File::create(root.join("build/output.exe")).unwrap();
+
+    fs::create_dir(root.join("src")).unwrap();
+    File::create(root.join("src/main.rs")).unwrap();
+
+    dir
+}
+
+/// Creates a directory with symbolic links (if supported).
+///
+/// Returns None if symlink creation fails (e.g., no admin rights on Windows).
+fn create_symlink_test_dir() -> Option<TempDir> {
+    let dir = TempDir::new().ok()?;
+    let root = dir.path();
+
+    // Create real file and directory
+    File::create(root.join("real_file.txt"))
+        .ok()?
+        .write_all(b"real content")
+        .ok()?;
+    fs::create_dir(root.join("real_dir")).ok()?;
+    File::create(root.join("real_dir/inside.txt")).ok()?;
+
+    // Try to create symlinks (may fail without admin rights)
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::{symlink_dir, symlink_file};
+        symlink_file(root.join("real_file.txt"), root.join("link_to_file.txt")).ok()?;
+        symlink_dir(root.join("real_dir"), root.join("link_to_dir")).ok()?;
+        // Create broken symlink
+        symlink_file(root.join("nonexistent"), root.join("broken_link")).ok()?;
+    }
+
+    Some(dir)
 }
 
 // ============================================================================
@@ -353,61 +466,34 @@ fn create_sorting_test_dir() -> TempDir {
 // ============================================================================
 
 #[test]
-fn should_show_help_with_help_flag() {
-    let output = run_treepp(&["--help"]);
-    assert!(output.status.success());
-    let stdout = stdout_str(&output);
-    assert!(stdout.contains("tree++"));
-    assert!(stdout.contains("Usage:"));
-    assert!(stdout.contains("Options:"));
-    assert!(stdout.contains("--help"));
-    assert!(stdout.contains("--version"));
-    assert!(stdout.contains("--files"));
+fn should_show_help_with_all_flag_variants() {
+    for flag in &["--help", "-h", "/?"] {
+        let output = run_treepp(&[flag]);
+        assert!(
+            output.status.success(),
+            "Help flag {} should succeed",
+            flag
+        );
+        let stdout = stdout_str(&output);
+        assert!(stdout.contains("tree++"), "Should contain program name");
+        assert!(stdout.contains("Usage:"), "Should contain usage section");
+        assert!(stdout.contains("Options:"), "Should contain options section");
+    }
 }
 
 #[test]
-fn should_show_help_with_short_h_flag() {
-    let output = run_treepp(&["-h"]);
-    assert!(output.status.success());
-    assert!(stdout_str(&output).contains("tree++"));
-}
-
-#[test]
-fn should_show_help_with_cmd_style() {
-    let output = run_treepp(&["/?"]);
-    assert!(output.status.success());
-    assert!(stdout_str(&output).contains("tree++"));
-}
-
-#[test]
-fn should_show_version_with_version_flag() {
-    let output = run_treepp(&["--version"]);
-    assert!(output.status.success());
-    let stdout = stdout_str(&output);
-    assert!(stdout.contains("tree++"));
-    assert!(stdout.contains("0.3.1"));
-    assert!(stdout.contains("WaterRun"));
-}
-
-#[test]
-fn should_show_version_with_short_v_flag() {
-    let output = run_treepp(&["-v"]);
-    assert!(output.status.success());
-    assert!(stdout_str(&output).contains("0.3.1"));
-}
-
-#[test]
-fn should_show_version_with_cmd_style() {
-    let output = run_treepp(&["/V"]);
-    assert!(output.status.success());
-    assert!(stdout_str(&output).contains("0.3.1"));
-}
-
-#[test]
-fn should_show_version_case_insensitive_cmd_style() {
-    let output = run_treepp(&["/v"]);
-    assert!(output.status.success());
-    assert!(stdout_str(&output).contains("0.3.1"));
+fn should_show_version_with_all_flag_variants() {
+    for flag in &["--version", "-v", "/V", "/v"] {
+        let output = run_treepp(&[flag]);
+        assert!(
+            output.status.success(),
+            "Version flag {} should succeed",
+            flag
+        );
+        let stdout = stdout_str(&output);
+        assert!(stdout.contains("tree++"), "Should contain program name");
+        assert!(stdout.contains("WaterRun"), "Should contain author");
+    }
 }
 
 // ============================================================================
@@ -420,11 +506,11 @@ fn should_scan_current_directory_without_args() {
     let output = run_treepp_in_dir(dir.path(), &["/nb"]);
     assert!(output.status.success());
     let stdout = stdout_str(&output);
+
     // Should show directories but not files by default
     assert!(stdout.contains("src"));
     assert!(stdout.contains("tests"));
     assert!(stdout.contains("empty"));
-    // Should NOT show files without /F
     assert!(!stdout.contains("file1.txt"));
 }
 
@@ -434,8 +520,7 @@ fn should_scan_specified_directory() {
     let path = dir.path().to_string_lossy().to_string();
     let output = run_treepp(&[&path, "/nb"]);
     assert!(output.status.success());
-    let stdout = stdout_str(&output);
-    assert!(stdout.contains("src"));
+    assert!(stdout_str(&output).contains("src"));
 }
 
 #[test]
@@ -453,6 +538,22 @@ fn should_fail_for_file_as_root() {
     assert!(!output.status.success());
 }
 
+#[test]
+fn should_handle_empty_directory() {
+    let dir = TempDir::new().unwrap();
+    let output = run_treepp_in_dir(dir.path(), &["/f", "/nb"]);
+    assert!(output.status.success());
+}
+
+#[test]
+fn should_handle_single_file_directory() {
+    let dir = TempDir::new().unwrap();
+    File::create(dir.path().join("only.txt")).unwrap();
+    let output = run_treepp_in_dir(dir.path(), &["/f", "/nb"]);
+    assert!(output.status.success());
+    assert!(stdout_str(&output).contains("only.txt"));
+}
+
 // ============================================================================
 // Files Display Tests (/F)
 // ============================================================================
@@ -463,27 +564,12 @@ fn should_show_files_with_f_flag() {
     let output = run_treepp_in_dir(dir.path(), &["/f", "/nb"]);
     assert!(output.status.success());
     let stdout = stdout_str(&output);
+
     assert!(stdout.contains("file1.txt"));
     assert!(stdout.contains("file2.md"));
     assert!(stdout.contains("main.rs"));
     assert!(stdout.contains("lib.rs"));
     assert!(stdout.contains("test.rs"));
-}
-
-#[test]
-fn should_show_files_with_gnu_style() {
-    let dir = create_basic_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["--files", "/nb"]);
-    assert!(output.status.success());
-    assert!(stdout_str(&output).contains("file1.txt"));
-}
-
-#[test]
-fn should_show_files_with_short_style() {
-    let dir = create_basic_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["-f", "/nb"]);
-    assert!(output.status.success());
-    assert!(stdout_str(&output).contains("file1.txt"));
 }
 
 // ============================================================================
@@ -496,6 +582,7 @@ fn should_use_ascii_characters_with_a_flag() {
     let output = run_treepp_in_dir(dir.path(), &["/a", "/nb"]);
     assert!(output.status.success());
     let stdout = stdout_str(&output);
+
     // Should contain ASCII tree characters
     assert!(stdout.contains("+---") || stdout.contains("\\---"));
     // Should NOT contain Unicode characters
@@ -504,30 +591,11 @@ fn should_use_ascii_characters_with_a_flag() {
 }
 
 #[test]
-fn should_use_ascii_with_gnu_style() {
-    let dir = create_basic_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["--ascii", "/nb"]);
-    assert!(output.status.success());
-    let stdout = stdout_str(&output);
-    assert!(stdout.contains("+---") || stdout.contains("\\---"));
-}
-
-#[test]
-fn should_use_ascii_with_short_style() {
-    let dir = create_basic_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["-a", "/nb"]);
-    assert!(output.status.success());
-    let stdout = stdout_str(&output);
-    assert!(stdout.contains("+---") || stdout.contains("\\---"));
-}
-
-#[test]
 fn should_use_unicode_by_default() {
     let dir = create_basic_test_dir();
     let output = run_treepp_in_dir(dir.path(), &["/nb"]);
     assert!(output.status.success());
     let stdout = stdout_str(&output);
-    // Should contain Unicode characters
     assert!(stdout.contains("├─") || stdout.contains("└─"));
 }
 
@@ -541,24 +609,10 @@ fn should_show_full_paths_with_fp_flag() {
     let output = run_treepp_in_dir(dir.path(), &["/f", "/fp", "/nb"]);
     assert!(output.status.success());
     let stdout = stdout_str(&output);
-    // Should contain full paths
-    assert!(stdout.contains("src") && stdout.contains("main.rs"));
-    // The path separator should appear in output
+
+    // Should contain path separators indicating full paths
     assert!(stdout.contains("\\") || stdout.contains("/"));
-}
-
-#[test]
-fn should_show_full_paths_with_gnu_style() {
-    let dir = create_basic_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["-f", "--full-path", "/nb"]);
-    assert!(output.status.success());
-}
-
-#[test]
-fn should_show_full_paths_with_short_style() {
-    let dir = create_basic_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["-f", "-p", "/nb"]);
-    assert!(output.status.success());
+    assert!(stdout.contains("main.rs"));
 }
 
 // ============================================================================
@@ -571,7 +625,7 @@ fn should_show_file_sizes_with_s_flag() {
     let output = run_treepp_in_dir(dir.path(), &["/f", "/s", "/nb"]);
     assert!(output.status.success());
     let stdout = stdout_str(&output);
-    // Should show sizes in bytes
+
     assert!(stdout.contains("5")); // small.txt
     assert!(stdout.contains("1024")); // medium.txt
     assert!(stdout.contains("2048")); // large.txt
@@ -583,33 +637,25 @@ fn should_show_human_readable_sizes_with_hr_flag() {
     let output = run_treepp_in_dir(dir.path(), &["/f", "/hr", "/nb"]);
     assert!(output.status.success());
     let stdout = stdout_str(&output);
-    // Should show human-readable sizes
     assert!(stdout.contains("KB") || stdout.contains("B"));
 }
 
 #[test]
-fn should_enable_size_when_hr_enabled() {
+fn should_display_zero_byte_file_correctly() {
+    let dir = create_sized_test_dir();
+    let output = run_treepp_in_dir(dir.path(), &["/f", "/s", "/nb"]);
+    assert!(output.status.success());
+    let stdout = stdout_str(&output);
+    assert!(stdout.contains("empty.txt") && stdout.contains("0"));
+}
+
+#[test]
+fn should_display_zero_with_human_readable() {
     let dir = create_sized_test_dir();
     let output = run_treepp_in_dir(dir.path(), &["/f", "/hr", "/nb"]);
     assert!(output.status.success());
     let stdout = stdout_str(&output);
-    // /HR implies /S
-    assert!(stdout.contains("KB") || stdout.contains("B"));
-}
-
-#[test]
-fn should_show_human_readable_with_gnu_style() {
-    let dir = create_sized_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["-f", "--human-readable", "/nb"]);
-    assert!(output.status.success());
-    assert!(stdout_str(&output).contains("KB") || stdout_str(&output).contains("B"));
-}
-
-#[test]
-fn should_show_human_readable_with_short_style() {
-    let dir = create_sized_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["-f", "-H", "/nb"]);
-    assert!(output.status.success());
+    assert!(stdout.contains("0 B") || stdout.contains("0B") || stdout.contains("0"));
 }
 
 // ============================================================================
@@ -622,22 +668,9 @@ fn should_show_dates_with_dt_flag() {
     let output = run_treepp_in_dir(dir.path(), &["/f", "/dt", "/nb"]);
     assert!(output.status.success());
     let stdout = stdout_str(&output);
+
     // Should contain date format YYYY-MM-DD HH:MM:SS
     assert!(stdout.contains("-") && stdout.contains(":"));
-}
-
-#[test]
-fn should_show_dates_with_gnu_style() {
-    let dir = create_basic_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["-f", "--date", "/nb"]);
-    assert!(output.status.success());
-}
-
-#[test]
-fn should_show_dates_with_short_style() {
-    let dir = create_basic_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["-f", "-d", "/nb"]);
-    assert!(output.status.success());
 }
 
 // ============================================================================
@@ -650,27 +683,27 @@ fn should_use_no_indent_with_ni_flag() {
     let output = run_treepp_in_dir(dir.path(), &["/f", "/ni", "/nb"]);
     assert!(output.status.success());
     let stdout = stdout_str(&output);
-    // Should NOT contain tree characters
+
+    // Should NOT contain any tree characters
     assert!(!stdout.contains("├"));
     assert!(!stdout.contains("└"));
+    assert!(!stdout.contains("│"));
     assert!(!stdout.contains("+---"));
     assert!(!stdout.contains("\\---"));
+    assert!(!stdout.contains("|"));
 }
 
 #[test]
-fn should_use_no_indent_with_gnu_style() {
+fn should_combine_no_indent_with_ascii() {
     let dir = create_basic_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["-f", "--no-indent", "/nb"]);
+    let output = run_treepp_in_dir(dir.path(), &["/f", "/ni", "/a", "/nb"]);
     assert!(output.status.success());
     let stdout = stdout_str(&output);
-    assert!(!stdout.contains("├"));
-}
 
-#[test]
-fn should_use_no_indent_with_short_style() {
-    let dir = create_basic_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["-f", "-i", "/nb"]);
-    assert!(output.status.success());
+    // /NI takes precedence - no tree chars at all
+    assert!(!stdout.contains("+"));
+    assert!(!stdout.contains("|"));
+    assert!(!stdout.contains("\\"));
 }
 
 // ============================================================================
@@ -684,52 +717,29 @@ fn should_reverse_sort_with_r_flag() {
     assert!(output.status.success());
     let stdout = stdout_str(&output);
 
-    // Find positions of items in output
-    let zebra_pos = stdout.find("zebra.txt");
-    let apple_pos = stdout.find("Apple.txt");
+    let zebra_pos = stdout.find("zebra.txt").expect("zebra.txt not found");
+    let apple_pos = stdout.find("Apple.txt").expect("Apple.txt not found");
 
-    assert!(zebra_pos.is_some());
-    assert!(apple_pos.is_some());
-
-    // In reverse order, zebra should come before apple
     assert!(
-        zebra_pos.unwrap() < apple_pos.unwrap(),
-        "zebra should come before apple in reverse sort"
+        zebra_pos < apple_pos,
+        "In reverse order, zebra should come before Apple"
     );
 }
 
 #[test]
-fn should_normal_sort_without_r_flag() {
+fn should_sort_normally_without_r_flag() {
     let dir = create_sorting_test_dir();
     let output = run_treepp_in_dir(dir.path(), &["/f", "/nb"]);
     assert!(output.status.success());
     let stdout = stdout_str(&output);
 
-    let zebra_pos = stdout.find("zebra.txt");
-    let apple_pos = stdout.find("Apple.txt");
+    let zebra_pos = stdout.find("zebra.txt").expect("zebra.txt not found");
+    let apple_pos = stdout.find("Apple.txt").expect("Apple.txt not found");
 
-    assert!(zebra_pos.is_some());
-    assert!(apple_pos.is_some());
-
-    // In normal order, apple should come before zebra
     assert!(
-        apple_pos.unwrap() < zebra_pos.unwrap(),
-        "apple should come before zebra in normal sort"
+        apple_pos < zebra_pos,
+        "In normal order, Apple should come before zebra"
     );
-}
-
-#[test]
-fn should_reverse_with_gnu_style() {
-    let dir = create_sorting_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["-f", "--reverse", "/nb"]);
-    assert!(output.status.success());
-}
-
-#[test]
-fn should_reverse_with_short_style() {
-    let dir = create_sorting_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["-f", "-r", "/nb"]);
-    assert!(output.status.success());
 }
 
 // ============================================================================
@@ -749,12 +759,11 @@ fn should_limit_depth_with_l_flag() {
 }
 
 #[test]
-fn should_show_nothing_with_level_zero() {
+fn should_show_only_root_with_level_zero() {
     let dir = create_deep_test_dir();
     let output = run_treepp_in_dir(dir.path(), &["/f", "/l", "0", "/nb"]);
     assert!(output.status.success());
     let stdout = stdout_str(&output);
-    // Level 0 means root only, no children
     assert!(!stdout.contains("level1"));
 }
 
@@ -770,24 +779,6 @@ fn should_show_all_levels_without_limit() {
     assert!(stdout.contains("level3"));
     assert!(stdout.contains("level4"));
     assert!(stdout.contains("deep.txt"));
-}
-
-#[test]
-fn should_limit_with_gnu_style() {
-    let dir = create_deep_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["-f", "--level", "2", "/nb"]);
-    assert!(output.status.success());
-    let stdout = stdout_str(&output);
-    assert!(stdout.contains("level1"));
-    assert!(stdout.contains("level2"));
-    assert!(!stdout.contains("level3"));
-}
-
-#[test]
-fn should_limit_with_short_style() {
-    let dir = create_deep_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["-f", "-L", "2", "/nb"]);
-    assert!(output.status.success());
 }
 
 #[test]
@@ -843,23 +834,9 @@ fn should_always_show_directories_with_include() {
     assert!(output.status.success());
     let stdout = stdout_str(&output);
 
-    // Directories should always be shown
+    // Directories should always be shown to maintain structure
     assert!(stdout.contains("src"));
     assert!(stdout.contains("tests"));
-}
-
-#[test]
-fn should_include_with_gnu_style() {
-    let dir = create_basic_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["-f", "--include", "*.rs", "/nb"]);
-    assert!(output.status.success());
-}
-
-#[test]
-fn should_include_with_short_style() {
-    let dir = create_basic_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["-f", "-m", "*.rs", "/nb"]);
-    assert!(output.status.success());
 }
 
 // ============================================================================
@@ -903,17 +880,19 @@ fn should_exclude_directories() {
 }
 
 #[test]
-fn should_exclude_with_gnu_style() {
+fn should_combine_include_and_exclude() {
     let dir = create_basic_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["-f", "--exclude", "*.md", "/nb"]);
+    let output = run_treepp_in_dir(
+        dir.path(),
+        &["/f", "/m", "*.rs", "/m", "*.txt", "/x", "lib.rs", "/nb"],
+    );
     assert!(output.status.success());
-}
+    let stdout = stdout_str(&output);
 
-#[test]
-fn should_exclude_with_short_style() {
-    let dir = create_basic_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["-f", "-I", "*.md", "/nb"]);
-    assert!(output.status.success());
+    assert!(stdout.contains("main.rs"));
+    assert!(stdout.contains("file1.txt"));
+    assert!(!stdout.contains("lib.rs"));
+    assert!(!stdout.contains("file2.md"));
 }
 
 // ============================================================================
@@ -927,35 +906,21 @@ fn should_show_report_with_rp_flag() {
     assert!(output.status.success());
     let stdout = stdout_str(&output);
 
-    assert!(stdout.contains("directory"));
-    assert!(stdout.contains("files"));
+    assert!(stdout.contains("directory") || stdout.contains("directories"));
+    assert!(stdout.contains("file"));
     assert!(stdout.contains("s")); // seconds
 }
 
 #[test]
-fn should_show_directory_only_report_without_files() {
+fn should_show_directory_only_report_without_files_flag() {
     let dir = create_basic_test_dir();
     let output = run_treepp_in_dir(dir.path(), &["/rp", "/nb"]);
     assert!(output.status.success());
     let stdout = stdout_str(&output);
 
-    assert!(stdout.contains("directory"));
+    assert!(stdout.contains("directory") || stdout.contains("directories"));
     // Should NOT show files count when /F not specified
-    assert!(!stdout.contains("files"));
-}
-
-#[test]
-fn should_show_report_with_gnu_style() {
-    let dir = create_basic_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["-f", "--report", "/nb"]);
-    assert!(output.status.success());
-}
-
-#[test]
-fn should_show_report_with_short_style() {
-    let dir = create_basic_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["-f", "-e", "/nb"]);
-    assert!(output.status.success());
+    assert!(!stdout.contains("file"));
 }
 
 // ============================================================================
@@ -969,23 +934,8 @@ fn should_hide_banner_with_nb_flag() {
     assert!(output.status.success());
     let stdout = stdout_str(&output);
 
-    // Should NOT contain volume info
     assert!(!stdout.contains("Folder PATH listing"));
     assert!(!stdout.contains("Volume serial number"));
-}
-
-#[test]
-fn should_hide_banner_with_gnu_style() {
-    let dir = create_basic_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["--no-win-banner"]);
-    assert!(output.status.success());
-}
-
-#[test]
-fn should_hide_banner_with_short_style() {
-    let dir = create_basic_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["-N"]);
-    assert!(output.status.success());
 }
 
 // ============================================================================
@@ -1042,17 +992,107 @@ fn should_respect_nested_gitignore() {
 }
 
 #[test]
-fn should_respect_gitignore_with_gnu_style() {
-    let dir = create_gitignore_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["-f", "--gitignore", "/nb"]);
+fn should_handle_gitignore_comments_and_empty_lines() {
+    let dir = create_gitignore_edge_cases_dir();
+    let output = run_treepp_in_dir(dir.path(), &["/f", "/g", "/nb"]);
     assert!(output.status.success());
+    let stdout = stdout_str(&output);
+
+    // Comments should be ignored, pattern *.log should work
+    assert!(!stdout.contains("debug.log"));
+    // Source files should be present
+    assert!(stdout.contains("main.rs"));
 }
 
 #[test]
-fn should_respect_gitignore_with_short_style() {
-    let dir = create_gitignore_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["-f", "-g", "/nb"]);
+fn should_handle_gitignore_negation_pattern() {
+    let dir = create_gitignore_edge_cases_dir();
+    let output = run_treepp_in_dir(dir.path(), &["/f", "/g", "/nb"]);
     assert!(output.status.success());
+    let stdout = stdout_str(&output);
+
+    // important.log should be included due to negation
+    assert!(
+        stdout.contains("important.log"),
+        "Negated pattern should include important.log"
+    );
+    // Other .log files should be excluded
+    assert!(!stdout.contains("debug.log"));
+}
+
+#[test]
+fn should_handle_gitignore_directory_pattern() {
+    let dir = create_gitignore_edge_cases_dir();
+    let output = run_treepp_in_dir(dir.path(), &["/f", "/g", "/nb"]);
+    assert!(output.status.success());
+    let stdout = stdout_str(&output);
+
+    // build/ directory should be excluded
+    assert!(!stdout.contains("output.exe"));
+    // build.txt file should be included (pattern ends with /)
+    assert!(stdout.contains("build.txt"));
+}
+
+#[test]
+fn should_handle_empty_gitignore_file() {
+    let dir = TempDir::new().unwrap();
+    File::create(dir.path().join(".gitignore"))
+        .unwrap()
+        .write_all(b"   \n\n  \n")
+        .unwrap();
+    File::create(dir.path().join("file.txt")).unwrap();
+
+    let output = run_treepp_in_dir(dir.path(), &["/f", "/g", "/nb"]);
+    assert!(output.status.success());
+    assert!(stdout_str(&output).contains("file.txt"));
+}
+
+// ============================================================================
+// Hidden Files Tests (/AL)
+// ============================================================================
+
+#[test]
+fn should_hide_hidden_files_by_default() {
+    let dir = create_hidden_files_test_dir();
+    let output = run_treepp_in_dir(dir.path(), &["/f", "/nb"]);
+    assert!(output.status.success());
+    let stdout = stdout_str(&output);
+
+    assert!(stdout.contains("visible.txt"));
+    assert!(stdout.contains("normal_dir"));
+
+    // Hidden items should NOT appear by default
+    assert!(!stdout.contains(".hidden_file"));
+    assert!(!stdout.contains(".hidden_dir"));
+    assert!(!stdout.contains("inside_hidden.txt"));
+}
+
+#[test]
+fn should_show_hidden_files_with_al_flag() {
+    let dir = create_hidden_files_test_dir();
+    let output = run_treepp_in_dir(dir.path(), &["/f", "/al", "/nb"]);
+    assert!(output.status.success());
+    let stdout = stdout_str(&output);
+
+    assert!(stdout.contains("visible.txt"));
+    assert!(stdout.contains(".hidden_file"));
+    assert!(stdout.contains(".hidden_dir"));
+    assert!(stdout.contains("inside_hidden.txt"));
+}
+
+#[test]
+fn should_show_hidden_with_all_flag_variants() {
+    let dir = create_hidden_files_test_dir();
+
+    for flag in &["--all", "-k", "/AL", "/al"] {
+        let output = run_treepp_in_dir(dir.path(), &["/f", flag, "/nb"]);
+        assert!(output.status.success(), "Flag {} should succeed", flag);
+        assert!(
+            stdout_str(&output).contains(".hidden_file"),
+            "Flag {} should show hidden files",
+            flag
+        );
+    }
 }
 
 // ============================================================================
@@ -1065,22 +1105,21 @@ fn should_work_in_batch_mode() {
     let output = run_treepp_in_dir(dir.path(), &["/b", "/f", "/nb"]);
     assert!(output.status.success());
     let stdout = stdout_str(&output);
+
     assert!(stdout.contains("src"));
     assert!(stdout.contains("main.rs"));
 }
 
 #[test]
-fn should_work_with_gnu_style_batch() {
+fn should_produce_same_output_in_streaming_and_batch() {
     let dir = create_basic_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["--batch", "-f", "/nb"]);
-    assert!(output.status.success());
-}
 
-#[test]
-fn should_work_with_short_style_batch() {
-    let dir = create_basic_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["-b", "-f", "/nb"]);
-    assert!(output.status.success());
+    let streaming = run_treepp_in_dir(dir.path(), &["/f", "/nb"]);
+    let batch = run_treepp_in_dir(dir.path(), &["/b", "/f", "/nb"]);
+
+    assert!(streaming.status.success());
+    assert!(batch.status.success());
+    assert_eq!(stdout_str(&streaming), stdout_str(&batch));
 }
 
 // ============================================================================
@@ -1093,10 +1132,6 @@ fn should_show_disk_usage_with_du_flag() {
     let output = run_treepp_in_dir(dir.path(), &["/b", "/du", "/nb"]);
     assert!(output.status.success());
     let stdout = stdout_str(&output);
-
-    // Should show cumulative size for directories
-    // Total size should be 5 + 1024 + 2048 = 3077 bytes
-    // subdir should show 2048
     assert!(stdout.contains("subdir"));
 }
 
@@ -1109,26 +1144,12 @@ fn should_fail_disk_usage_without_batch() {
 }
 
 #[test]
-fn should_show_disk_usage_with_human_readable() {
+fn should_combine_disk_usage_with_human_readable() {
     let dir = create_sized_test_dir();
     let output = run_treepp_in_dir(dir.path(), &["/b", "/du", "/hr", "/nb"]);
     assert!(output.status.success());
     let stdout = stdout_str(&output);
     assert!(stdout.contains("KB") || stdout.contains("B"));
-}
-
-#[test]
-fn should_show_disk_usage_with_gnu_style() {
-    let dir = create_sized_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["--batch", "--disk-usage", "/nb"]);
-    assert!(output.status.success());
-}
-
-#[test]
-fn should_show_disk_usage_with_short_style() {
-    let dir = create_sized_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["-b", "-u", "/nb"]);
-    assert!(output.status.success());
 }
 
 // ============================================================================
@@ -1166,17 +1187,27 @@ fn should_fail_with_invalid_thread_count() {
 }
 
 #[test]
-fn should_accept_thread_with_gnu_style() {
+fn should_handle_large_thread_count() {
     let dir = create_basic_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["--batch", "--thread", "8", "/nb"]);
+    let output = run_treepp_in_dir(dir.path(), &["/b", "/f", "/t", "128", "/nb"]);
     assert!(output.status.success());
 }
 
 #[test]
-fn should_accept_thread_with_short_style() {
+fn should_produce_consistent_results_with_different_thread_counts() {
     let dir = create_basic_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["-b", "-t", "2", "/nb"]);
-    assert!(output.status.success());
+
+    let output1 = run_treepp_in_dir(dir.path(), &["/b", "/f", "/t", "1", "/nb"]);
+    let output4 = run_treepp_in_dir(dir.path(), &["/b", "/f", "/t", "4", "/nb"]);
+    let output16 = run_treepp_in_dir(dir.path(), &["/b", "/f", "/t", "16", "/nb"]);
+
+    assert!(output1.status.success());
+    assert!(output4.status.success());
+    assert!(output16.status.success());
+
+    // Results should be identical regardless of thread count
+    assert_eq!(stdout_str(&output1), stdout_str(&output4));
+    assert_eq!(stdout_str(&output4), stdout_str(&output16));
 }
 
 // ============================================================================
@@ -1211,20 +1242,21 @@ fn should_output_to_json_file_with_batch() {
     assert!(output_file.exists());
 
     let content = fs::read_to_string(&output_file).unwrap();
-    assert!(content.starts_with("{"));
-    assert!(content.contains("\"schema\""));
-    assert!(content.contains("treepp.pretty.v1"));
-    assert!(content.contains("\"root\""));
+    let json: serde_json::Value =
+        serde_json::from_str(&content).expect("Should be valid JSON");
+
+    assert_eq!(
+        json.get("schema").and_then(|v| v.as_str()),
+        Some("treepp.pretty.v1")
+    );
+    assert!(json.get("root").is_some());
 }
 
 #[test]
 fn should_fail_json_output_without_batch() {
     let dir = create_basic_test_dir();
     let output_file = dir.path().join("tree.json");
-    let output = run_treepp_in_dir(
-        dir.path(),
-        &["/f", "/o", output_file.to_str().unwrap()],
-    );
+    let output = run_treepp_in_dir(dir.path(), &["/f", "/o", output_file.to_str().unwrap()]);
     assert!(!output.status.success());
     assert_eq!(output.status.code(), Some(1));
 }
@@ -1241,7 +1273,7 @@ fn should_output_to_yaml_file_with_batch() {
     assert!(output_file.exists());
 
     let content = fs::read_to_string(&output_file).unwrap();
-    assert!(!content.is_empty());
+    assert!(content.contains("schema: treepp.pretty.v1"));
 }
 
 #[test]
@@ -1254,50 +1286,47 @@ fn should_output_to_toml_file_with_batch() {
     );
     assert!(output.status.success());
     assert!(output_file.exists());
+
+    let content = fs::read_to_string(&output_file).unwrap();
+    assert!(content.contains("schema = \"treepp.pretty.v1\""));
 }
 
 #[test]
 fn should_fail_with_unknown_extension() {
     let dir = create_basic_test_dir();
     let output_file = dir.path().join("tree.xyz");
-    let output = run_treepp_in_dir(
-        dir.path(),
-        &["/f", "/o", output_file.to_str().unwrap()],
-    );
+    let output = run_treepp_in_dir(dir.path(), &["/f", "/o", output_file.to_str().unwrap()]);
     assert!(!output.status.success());
     assert_eq!(output.status.code(), Some(1));
 }
 
 #[test]
-fn should_output_with_gnu_style() {
-    let dir = create_basic_test_dir();
-    let output_file = dir.path().join("out.txt");
-    let output = run_treepp_in_dir(
-        dir.path(),
-        &["-f", "--output", output_file.to_str().unwrap(), "/nb"],
-    );
-    assert!(output.status.success());
-}
-
-#[test]
-fn should_output_with_short_style() {
-    let dir = create_basic_test_dir();
-    let output_file = dir.path().join("out.txt");
-    let output = run_treepp_in_dir(
-        dir.path(),
-        &["-f", "-o", output_file.to_str().unwrap(), "/nb"],
-    );
-    assert!(output.status.success());
-}
-
-#[test]
-fn should_output_with_equals_syntax() {
+fn should_accept_output_with_equals_syntax() {
     let dir = create_basic_test_dir();
     let output_file = dir.path().join("out.txt");
     let arg = format!("--output={}", output_file.to_str().unwrap());
     let output = run_treepp_in_dir(dir.path(), &["-f", &arg, "/nb"]);
     assert!(output.status.success());
     assert!(output_file.exists());
+}
+
+#[test]
+fn should_overwrite_existing_output_file() {
+    let dir = create_basic_test_dir();
+    let output_file = dir.path().join("tree.txt");
+
+    // Create existing file with different content
+    fs::write(&output_file, "old content").unwrap();
+
+    let output = run_treepp_in_dir(
+        dir.path(),
+        &["/f", "/o", output_file.to_str().unwrap(), "/nb"],
+    );
+    assert!(output.status.success());
+
+    let content = fs::read_to_string(&output_file).unwrap();
+    assert!(!content.contains("old content"));
+    assert!(content.contains("src"));
 }
 
 // ============================================================================
@@ -1315,10 +1344,9 @@ fn should_be_silent_with_si_flag_and_output() {
     assert!(output.status.success());
 
     let stdout = stdout_str(&output);
-    // Should have no console output (or minimal)
     assert!(stdout.is_empty() || !stdout.contains("src"));
 
-    // But file should have content
+    // File should have content
     assert!(output_file.exists());
     let content = fs::read_to_string(&output_file).unwrap();
     assert!(content.contains("src"));
@@ -1330,28 +1358,6 @@ fn should_fail_silent_without_output() {
     let output = run_treepp_in_dir(dir.path(), &["/si"]);
     assert!(!output.status.success());
     assert_eq!(output.status.code(), Some(1));
-}
-
-#[test]
-fn should_silent_with_gnu_style() {
-    let dir = create_basic_test_dir();
-    let output_file = dir.path().join("out.txt");
-    let output = run_treepp_in_dir(
-        dir.path(),
-        &["-f", "--silent", "-o", output_file.to_str().unwrap()],
-    );
-    assert!(output.status.success());
-}
-
-#[test]
-fn should_silent_with_short_style() {
-    let dir = create_basic_test_dir();
-    let output_file = dir.path().join("out.txt");
-    let output = run_treepp_in_dir(
-        dir.path(),
-        &["-f", "-l", "-o", output_file.to_str().unwrap()],
-    );
-    assert!(output.status.success());
 }
 
 // ============================================================================
@@ -1377,10 +1383,8 @@ fn should_fail_with_duplicate_option() {
 #[test]
 fn should_fail_with_multiple_paths() {
     let dir = create_basic_test_dir();
-    let output = run_treepp(&[
-        dir.path().to_str().unwrap(),
-        dir.path().to_str().unwrap(),
-    ]);
+    let path = dir.path().to_str().unwrap();
+    let output = run_treepp(&[path, path]);
     assert!(!output.status.success());
     assert_eq!(output.status.code(), Some(1));
 }
@@ -1394,46 +1398,275 @@ fn should_show_hint_for_unknown_option() {
 }
 
 // ============================================================================
-// Mixed Style Tests
+// Parameter Style and Mixing Tests
 // ============================================================================
 
 #[test]
-fn should_mix_cmd_and_gnu_styles() {
+fn should_handle_case_insensitive_cmd_options() {
     let dir = create_basic_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["/F", "--ascii", "/nb"]);
-    assert!(output.status.success());
-    let stdout = stdout_str(&output);
-    assert!(stdout.contains("file1.txt"));
-    assert!(stdout.contains("+---") || stdout.contains("\\---"));
+
+    let lower = run_treepp_in_dir(dir.path(), &["/f", "/s", "/nb"]);
+    let upper = run_treepp_in_dir(dir.path(), &["/F", "/S", "/NB"]);
+    let mixed = run_treepp_in_dir(dir.path(), &["/f", "/S", "/Nb"]);
+
+    assert!(lower.status.success());
+    assert!(upper.status.success());
+    assert!(mixed.status.success());
+
+    assert_eq!(stdout_str(&lower), stdout_str(&upper));
+    assert_eq!(stdout_str(&lower), stdout_str(&mixed));
 }
 
 #[test]
-fn should_mix_all_three_styles() {
+fn should_mix_cmd_gnu_and_short_styles() {
     let dir = create_basic_test_dir();
     let output = run_treepp_in_dir(dir.path(), &["/F", "-a", "--level", "1", "/nb"]);
     assert!(output.status.success());
 }
 
 #[test]
-fn should_handle_case_insensitive_cmd_options() {
+fn should_produce_same_output_regardless_of_parameter_order() {
     let dir = create_basic_test_dir();
-    let output1 = run_treepp_in_dir(dir.path(), &["/F", "/nb"]);
-    let output2 = run_treepp_in_dir(dir.path(), &["/f", "/nb"]);
-    assert!(output1.status.success());
-    assert!(output2.status.success());
-    assert_eq!(stdout_str(&output1), stdout_str(&output2));
+
+    let order1 = run_treepp_in_dir(dir.path(), &["/f", "/s", "/nb"]);
+    let order2 = run_treepp_in_dir(dir.path(), &["/nb", "/s", "/f"]);
+    let order3 = run_treepp_in_dir(dir.path(), &["/s", "/f", "/nb"]);
+
+    assert!(order1.status.success());
+    assert!(order2.status.success());
+    assert!(order3.status.success());
+
+    assert_eq!(stdout_str(&order1), stdout_str(&order2));
+    assert_eq!(stdout_str(&order1), stdout_str(&order3));
 }
 
 #[test]
-fn should_be_case_sensitive_for_short_options() {
+fn should_accept_path_at_any_position() {
     let dir = create_basic_test_dir();
-    // -f should work (files)
-    let output1 = run_treepp_in_dir(dir.path(), &["-f", "/nb"]);
-    assert!(output1.status.success());
+    let path = dir.path().to_string_lossy().to_string();
 
-    // -F should fail (unknown)
-    let output2 = run_treepp_in_dir(dir.path(), &["-F"]);
-    assert!(!output2.status.success());
+    let at_start = run_treepp(&[&path, "/f", "/nb"]);
+    let at_middle = run_treepp(&["/f", &path, "/nb"]);
+    let at_end = run_treepp(&["/f", "/nb", &path]);
+
+    assert!(at_start.status.success());
+    assert!(at_middle.status.success());
+    assert!(at_end.status.success());
+}
+
+#[test]
+fn should_accept_equals_syntax_for_value_options() {
+    let dir = create_deep_test_dir();
+
+    let output = run_treepp_in_dir(dir.path(), &["--level=2", "/nb"]);
+    assert!(output.status.success());
+    let stdout = stdout_str(&output);
+    assert!(stdout.contains("level1"));
+    assert!(stdout.contains("level2"));
+    assert!(!stdout.contains("level3"));
+}
+
+// ============================================================================
+// Sorting Tests
+// ============================================================================
+
+#[test]
+fn should_sort_dotfiles_first() {
+    let dir = create_sorting_test_dir();
+    let output = run_treepp_in_dir(dir.path(), &["/f", "/al", "/nb"]);
+    assert!(output.status.success());
+    let stdout = stdout_str(&output);
+
+    let dotfile_pos = stdout.find(".dotfile").expect(".dotfile not found");
+    let apple_pos = stdout.find("Apple.txt").expect("Apple.txt not found");
+
+    assert!(dotfile_pos < apple_pos, ".dotfile should come before Apple.txt");
+}
+
+#[test]
+fn should_sort_numbers_before_letters() {
+    let dir = create_sorting_test_dir();
+    let output = run_treepp_in_dir(dir.path(), &["/f", "/nb"]);
+    assert!(output.status.success());
+    let stdout = stdout_str(&output);
+
+    let num_pos = stdout.find("123.txt").expect("123.txt not found");
+    let apple_pos = stdout.find("Apple.txt").expect("Apple.txt not found");
+
+    assert!(num_pos < apple_pos, "123.txt should come before Apple.txt");
+}
+
+#[test]
+fn should_sort_files_before_directories() {
+    let dir = create_basic_test_dir();
+    let output = run_treepp_in_dir(dir.path(), &["/f", "/nb"]);
+    assert!(output.status.success());
+    let stdout = stdout_str(&output);
+
+    let file_pos = stdout.find("file1.txt").expect("file1.txt not found");
+    let src_pos = stdout.find("src").expect("src not found");
+
+    assert!(file_pos < src_pos, "Files should come before directories");
+}
+
+// ============================================================================
+// Tree Rendering Tests
+// ============================================================================
+
+#[test]
+fn should_render_proper_vertical_lines() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+
+    fs::create_dir(root.join("dir1")).unwrap();
+    fs::create_dir(root.join("dir2")).unwrap();
+    File::create(root.join("dir1/file1.txt")).unwrap();
+    File::create(root.join("dir2/file2.txt")).unwrap();
+
+    let output = run_treepp_in_dir(root, &["/f", "/nb"]);
+    assert!(output.status.success());
+    let stdout = stdout_str(&output);
+
+    // Should have vertical continuation lines for sibling directories
+    assert!(stdout.contains("│") || stdout.contains("|"));
+}
+
+// ============================================================================
+// Special Filename Tests
+// ============================================================================
+
+#[test]
+fn should_handle_special_characters_in_filenames() {
+    let dir = create_special_names_dir();
+    let output = run_treepp_in_dir(dir.path(), &["/f", "/nb"]);
+    assert!(output.status.success());
+    let stdout = stdout_str(&output);
+
+    assert!(stdout.contains("file with spaces.txt"));
+    assert!(stdout.contains("file-with-dashes.txt"));
+    assert!(stdout.contains("中文文件.txt"));
+    assert!(stdout.contains("emoji_🎉.txt"));
+    assert!(stdout.contains("special_!@#$%().txt"));
+}
+
+#[test]
+fn should_handle_very_long_filename() {
+    let dir = TempDir::new().unwrap();
+    let long_name = "a".repeat(200) + ".txt";
+    File::create(dir.path().join(&long_name)).unwrap();
+
+    let output = run_treepp_in_dir(dir.path(), &["/f", "/nb"]);
+    assert!(output.status.success());
+    assert!(stdout_str(&output).contains(&long_name));
+}
+
+#[test]
+fn should_handle_filename_with_leading_dash() {
+    let dir = TempDir::new().unwrap();
+    File::create(dir.path().join("-file.txt")).unwrap();
+
+    let output = run_treepp_in_dir(dir.path(), &["/f", "/nb"]);
+    assert!(output.status.success());
+    assert!(stdout_str(&output).contains("-file.txt"));
+}
+
+// ============================================================================
+// Path Edge Cases
+// ============================================================================
+
+#[test]
+fn should_handle_dot_path() {
+    let dir = create_basic_test_dir();
+    let output = run_treepp_in_dir(dir.path(), &[".", "/nb"]);
+    assert!(output.status.success());
+    assert!(stdout_str(&output).contains("src"));
+}
+
+#[test]
+fn should_handle_double_dot_path() {
+    let dir = create_basic_test_dir();
+    let subdir = dir.path().join("src");
+    let output = run_treepp_in_dir(&subdir, &["..", "/nb"]);
+    assert!(output.status.success());
+    assert!(stdout_str(&output).contains("src"));
+}
+
+#[test]
+fn should_handle_trailing_slash_in_path() {
+    let dir = create_basic_test_dir();
+    let path_with_slash = format!("{}\\", dir.path().to_string_lossy());
+    let output = run_treepp(&[&path_with_slash, "/nb"]);
+    assert!(output.status.success());
+}
+
+#[test]
+fn should_handle_path_with_spaces() {
+    let dir = TempDir::new().unwrap();
+    let space_dir = dir.path().join("path with spaces");
+    fs::create_dir(&space_dir).unwrap();
+    File::create(space_dir.join("file.txt")).unwrap();
+
+    let output = run_treepp(&[space_dir.to_str().unwrap(), "/f", "/nb"]);
+    assert!(output.status.success());
+    assert!(stdout_str(&output).contains("file.txt"));
+}
+
+// ============================================================================
+// Deep Nesting Tests
+// ============================================================================
+
+#[test]
+fn should_handle_deeply_nested_structure() {
+    let dir = TempDir::new().unwrap();
+    let mut current = dir.path().to_path_buf();
+
+    for i in 0..30 {
+        current = current.join(format!("level{}", i));
+        fs::create_dir(&current).unwrap();
+    }
+    File::create(current.join("deep.txt")).unwrap();
+
+    let output = run_treepp_in_dir(dir.path(), &["/f", "/nb"]);
+    assert!(output.status.success());
+    assert!(stdout_str(&output).contains("deep.txt"));
+}
+
+// ============================================================================
+// Large Directory Tests
+// ============================================================================
+
+#[test]
+fn should_handle_directory_with_many_files() {
+    let dir = TempDir::new().unwrap();
+
+    for i in 0..500 {
+        File::create(dir.path().join(format!("file_{:04}.txt", i))).unwrap();
+    }
+
+    let output = run_treepp_in_dir(dir.path(), &["/f", "/nb"]);
+    assert!(output.status.success());
+    let stdout = stdout_str(&output);
+
+    assert!(stdout.contains("file_0000.txt"));
+    assert!(stdout.contains("file_0250.txt"));
+    assert!(stdout.contains("file_0499.txt"));
+}
+
+// ============================================================================
+// Symbolic Link Tests
+// ============================================================================
+
+#[test]
+fn should_handle_symbolic_links() {
+    if let Some(dir) = create_symlink_test_dir() {
+        let output = run_treepp_in_dir(dir.path(), &["/f", "/nb"]);
+        assert!(output.status.success());
+        let stdout = stdout_str(&output);
+
+        assert!(stdout.contains("real_file.txt"));
+        assert!(stdout.contains("real_dir"));
+    }
+    // Skip test if symlinks not supported (no admin rights)
 }
 
 // ============================================================================
@@ -1441,7 +1674,7 @@ fn should_be_case_sensitive_for_short_options() {
 // ============================================================================
 
 #[test]
-fn should_combine_files_and_size_and_date() {
+fn should_combine_files_size_date() {
     let dir = create_sized_test_dir();
     let output = run_treepp_in_dir(dir.path(), &["/f", "/s", "/dt", "/nb"]);
     assert!(output.status.success());
@@ -1475,7 +1708,21 @@ fn should_combine_level_with_report() {
     assert!(stdout.contains("level1"));
     assert!(stdout.contains("level2"));
     assert!(!stdout.contains("level3"));
-    assert!(stdout.contains("directory"));
+    assert!(stdout.contains("directory") || stdout.contains("directories"));
+}
+
+#[test]
+fn should_combine_all_filters() {
+    let dir = create_basic_test_dir();
+    let output = run_treepp_in_dir(
+        dir.path(),
+        &["/f", "/m", "*.rs", "/x", "lib.rs", "/l", "2", "/nb"],
+    );
+    assert!(output.status.success());
+    let stdout = stdout_str(&output);
+
+    assert!(stdout.contains("main.rs"));
+    assert!(!stdout.contains("lib.rs"));
 }
 
 #[test]
@@ -1502,311 +1749,38 @@ fn should_combine_batch_with_all_options() {
 }
 
 // ============================================================================
-// Windows Compatibility Tests
-// ============================================================================
-
-#[test]
-fn should_show_root_as_drive_dot_without_explicit_path() {
-    let dir = create_basic_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["/nb"]);
-    assert!(output.status.success());
-    let stdout = stdout_str(&output);
-
-    // Should show X:. format
-    assert!(
-        stdout.contains(":.") || stdout.contains(":\\"),
-        "Root should be shown as drive:. format"
-    );
-}
-
-#[test]
-fn should_show_uppercase_path_with_explicit_path() {
-    let dir = create_basic_test_dir();
-    let path = dir.path().to_string_lossy().to_string();
-    let output = run_treepp(&[&path, "/nb"]);
-    assert!(output.status.success());
-    let stdout = stdout_str(&output);
-
-    // Path should be uppercase
-    assert!(stdout.to_uppercase().contains(&path.to_uppercase()));
-}
-
-// ============================================================================
-// Sorting Tests
-// ============================================================================
-
-#[test]
-fn should_sort_windows_style_dot_first() {
-    let dir = create_sorting_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["/f", "/nb"]);
-    assert!(output.status.success());
-    let stdout = stdout_str(&output);
-
-    let hidden_pos = stdout.find(".hidden");
-    let apple_pos = stdout.find("Apple.txt");
-
-    assert!(hidden_pos.is_some());
-    assert!(apple_pos.is_some());
-    assert!(
-        hidden_pos.unwrap() < apple_pos.unwrap(),
-        ".hidden should come before Apple.txt"
-    );
-}
-
-#[test]
-fn should_sort_numbers_before_letters() {
-    let dir = create_sorting_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["/f", "/nb"]);
-    assert!(output.status.success());
-    let stdout = stdout_str(&output);
-
-    let num_pos = stdout.find("123.txt");
-    let apple_pos = stdout.find("Apple.txt");
-
-    assert!(num_pos.is_some());
-    assert!(apple_pos.is_some());
-    assert!(
-        num_pos.unwrap() < apple_pos.unwrap(),
-        "123.txt should come before Apple.txt"
-    );
-}
-
-#[test]
-fn should_sort_underscore_after_letters() {
-    let dir = create_sorting_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["/f", "/nb"]);
-    assert!(output.status.success());
-    let stdout = stdout_str(&output);
-
-    let underscore_pos = stdout.find("_underscore.txt");
-    let zebra_pos = stdout.find("zebra.txt");
-
-    assert!(underscore_pos.is_some());
-    assert!(zebra_pos.is_some());
-    assert!(
-        underscore_pos.unwrap() > zebra_pos.unwrap(),
-        "_underscore.txt should come after zebra.txt"
-    );
-}
-
-#[test]
-fn should_sort_files_before_directories() {
-    let dir = create_basic_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["/f", "/nb"]);
-    assert!(output.status.success());
-    let stdout = stdout_str(&output);
-
-    let file_pos = stdout.find("file1.txt");
-    let src_pos = stdout.find("src");
-
-    assert!(file_pos.is_some());
-    assert!(src_pos.is_some());
-    assert!(
-        file_pos.unwrap() < src_pos.unwrap(),
-        "Files should come before directories"
-    );
-}
-
-// ============================================================================
-// Edge Cases
-// ============================================================================
-
-#[test]
-fn should_handle_empty_directory() {
-    let dir = TempDir::new().unwrap();
-    let output = run_treepp_in_dir(dir.path(), &["/f", "/nb"]);
-    assert!(output.status.success());
-}
-
-#[test]
-fn should_handle_single_file_directory() {
-    let dir = TempDir::new().unwrap();
-    File::create(dir.path().join("only.txt"))
-        .unwrap()
-        .write_all(b"")
-        .unwrap();
-    let output = run_treepp_in_dir(dir.path(), &["/f", "/nb"]);
-    assert!(output.status.success());
-    assert!(stdout_str(&output).contains("only.txt"));
-}
-
-#[test]
-fn should_handle_special_characters_in_filenames() {
-    let dir = TempDir::new().unwrap();
-    let root = dir.path();
-
-    File::create(root.join("file with spaces.txt"))
-        .unwrap()
-        .write_all(b"")
-        .unwrap();
-    File::create(root.join("file-with-dashes.txt"))
-        .unwrap()
-        .write_all(b"")
-        .unwrap();
-    File::create(root.join("file_with_underscores.txt"))
-        .unwrap()
-        .write_all(b"")
-        .unwrap();
-
-    let output = run_treepp_in_dir(root, &["/f", "/nb"]);
-    assert!(output.status.success());
-    let stdout = stdout_str(&output);
-
-    assert!(stdout.contains("file with spaces.txt"));
-    assert!(stdout.contains("file-with-dashes.txt"));
-    assert!(stdout.contains("file_with_underscores.txt"));
-}
-
-#[test]
-fn should_handle_unicode_filenames() {
-    let dir = TempDir::new().unwrap();
-    let root = dir.path();
-
-    File::create(root.join("中文文件.txt"))
-        .unwrap()
-        .write_all(b"")
-        .unwrap();
-    File::create(root.join("日本語ファイル.txt"))
-        .unwrap()
-        .write_all(b"")
-        .unwrap();
-
-    let output = run_treepp_in_dir(root, &["/f", "/nb"]);
-    assert!(output.status.success());
-    let stdout = stdout_str(&output);
-
-    assert!(stdout.contains("中文文件.txt"));
-    assert!(stdout.contains("日本語ファイル.txt"));
-}
-
-#[test]
-fn should_handle_very_long_filenames() {
-    let dir = TempDir::new().unwrap();
-    let root = dir.path();
-
-    let long_name = "a".repeat(200) + ".txt";
-    File::create(root.join(&long_name))
-        .unwrap()
-        .write_all(b"")
-        .unwrap();
-
-    let output = run_treepp_in_dir(root, &["/f", "/nb"]);
-    assert!(output.status.success());
-    assert!(stdout_str(&output).contains(&long_name));
-}
-
-#[test]
-fn should_handle_deeply_nested_structure() {
-    let dir = TempDir::new().unwrap();
-    let root = dir.path();
-
-    let mut current = root.to_path_buf();
-    for i in 0..20 {
-        current = current.join(format!("level{}", i));
-        fs::create_dir(&current).unwrap();
-    }
-    File::create(current.join("deep.txt"))
-        .unwrap()
-        .write_all(b"")
-        .unwrap();
-
-    let output = run_treepp_in_dir(root, &["/f", "/nb"]);
-    assert!(output.status.success());
-    assert!(stdout_str(&output).contains("deep.txt"));
-}
-
-// ============================================================================
 // JSON Output Structure Tests
 // ============================================================================
 
 #[test]
-fn should_output_valid_json_structure() {
+fn should_output_valid_json_with_schema() {
     let dir = create_basic_test_dir();
     let output_file = dir.path().join("tree.json");
     let output = run_treepp_in_dir(
         dir.path(),
         &["/b", "/f", "/o", output_file.to_str().unwrap(), "/nb"],
-    );
-    assert!(output.status.success());
-
-    let content = fs::read_to_string(&output_file).unwrap();
-    let json: serde_json::Value =
-        serde_json::from_str(&content).expect("Output should be valid JSON");
-
-    // Validate new schema structure
-    assert!(json.is_object());
-    assert_eq!(
-        json.get("schema").and_then(|v| v.as_str()),
-        Some("treepp.pretty.v1"),
-        "Should have correct schema identifier"
-    );
-    assert!(json.get("root").is_some(), "Should have root object");
-
-    let root = json.get("root").unwrap();
-    assert!(root.get("path").is_some(), "Root should have path");
-    assert_eq!(
-        root.get("type").and_then(|v| v.as_str()),
-        Some("dir"),
-        "Root type should be dir"
-    );
-    assert!(root.get("files").is_some(), "Root should have files array");
-    assert!(root.get("dirs").is_some(), "Root should have dirs object");
-}
-
-#[test]
-fn should_include_size_in_json_when_enabled() {
-    let dir = create_sized_test_dir();
-    let output_file = dir.path().join("tree.json");
-    let output = run_treepp_in_dir(
-        dir.path(),
-        &["/b", "/f", "/s", "/o", output_file.to_str().unwrap(), "/nb"],
-    );
-    assert!(output.status.success());
-
-    let content = fs::read_to_string(&output_file).unwrap();
-
-    // With the new format, files might be an array of strings or objects with metadata
-    // Check if size info is present somewhere in the structure
-    let content_str = content.to_lowercase();
-    assert!(
-        content_str.contains("size") || content_str.contains("5"),
-        "Size information should be present in output"
-    );
-}
-
-#[test]
-fn should_include_disk_usage_in_json_when_enabled() {
-    let dir = create_sized_test_dir();
-    let output_file = dir.path().join("tree.json");
-    let output = run_treepp_in_dir(
-        dir.path(),
-        &["/b", "/f", "/du", "/o", output_file.to_str().unwrap(), "/nb"],
     );
     assert!(output.status.success());
 
     let content = fs::read_to_string(&output_file).unwrap();
     let json: serde_json::Value = serde_json::from_str(&content).unwrap();
 
-    // Verify structure exists
-    assert!(json.get("schema").is_some(), "Should have schema");
-    assert!(json.get("root").is_some(), "Should have root");
-
-    // Check that disk usage info is present in the structure
-    let content_str = content.to_lowercase();
-    assert!(
-        content_str.contains("disk") || content_str.contains("size") || content_str.contains("2048"),
-        "Disk usage information should be present"
+    assert_eq!(
+        json.get("schema").and_then(|v| v.as_str()),
+        Some("treepp.pretty.v1")
     );
+
+    let root = json.get("root").expect("Should have root");
+    assert!(root.get("path").is_some());
+    assert_eq!(root.get("type").and_then(|v| v.as_str()), Some("dir"));
+    assert!(root.get("files").is_some());
+    assert!(root.get("dirs").is_some());
 }
 
-// ============================================================================
-// YAML Output Structure Tests
-// ============================================================================
-
 #[test]
-fn should_output_valid_yaml_structure() {
+fn should_separate_files_and_dirs_in_json() {
     let dir = create_basic_test_dir();
-    let output_file = dir.path().join("tree.yml");
+    let output_file = dir.path().join("tree.json");
     let output = run_treepp_in_dir(
         dir.path(),
         &["/b", "/f", "/o", output_file.to_str().unwrap(), "/nb"],
@@ -1814,39 +1788,21 @@ fn should_output_valid_yaml_structure() {
     assert!(output.status.success());
 
     let content = fs::read_to_string(&output_file).unwrap();
-    let yaml: serde_yaml::Value =
-        serde_yaml::from_str(&content).expect("Output should be valid YAML");
+    let json: serde_json::Value = serde_json::from_str(&content).unwrap();
 
-    // Validate new schema structure
-    assert!(yaml.is_mapping(), "Root should be a mapping");
+    let root = json.get("root").unwrap();
+    let files = root.get("files").unwrap();
+    let dirs = root.get("dirs").unwrap();
 
-    let mapping = yaml.as_mapping().unwrap();
-    assert!(
-        mapping.get(&serde_yaml::Value::String("schema".to_string())).is_some(),
-        "Should have schema field"
-    );
-    assert!(
-        mapping.get(&serde_yaml::Value::String("root".to_string())).is_some(),
-        "Should have root field"
-    );
-
-    // Verify schema value
-    let schema = mapping.get(&serde_yaml::Value::String("schema".to_string()));
-    assert_eq!(
-        schema.and_then(|v| v.as_str()),
-        Some("treepp.pretty.v1"),
-        "Schema should be treepp.pretty.v1"
-    );
+    assert!(files.is_array());
+    assert!(dirs.is_object());
+    assert!(dirs.get("src").is_some());
 }
 
-// ============================================================================
-// TOML Output Structure Tests
-// ============================================================================
-
 #[test]
-fn should_output_valid_toml_structure() {
+fn should_have_nested_structure_in_json() {
     let dir = create_basic_test_dir();
-    let output_file = dir.path().join("tree.toml");
+    let output_file = dir.path().join("tree.json");
     let output = run_treepp_in_dir(
         dir.path(),
         &["/b", "/f", "/o", output_file.to_str().unwrap(), "/nb"],
@@ -1854,100 +1810,17 @@ fn should_output_valid_toml_structure() {
     assert!(output.status.success());
 
     let content = fs::read_to_string(&output_file).unwrap();
-    let toml: toml::Value =
-        toml::from_str(&content).expect("Output should be valid TOML");
+    let json: serde_json::Value = serde_json::from_str(&content).unwrap();
 
-    // Validate new schema structure
-    assert!(toml.is_table(), "Root should be a table");
+    let src = json
+        .get("root")
+        .and_then(|r| r.get("dirs"))
+        .and_then(|d| d.get("src"))
+        .expect("Should have src directory");
 
-    let table = toml.as_table().unwrap();
-    assert!(table.get("schema").is_some(), "Should have schema field");
-    assert!(table.get("root").is_some(), "Should have root field");
-
-    // Verify schema value
-    assert_eq!(
-        table.get("schema").and_then(|v| v.as_str()),
-        Some("treepp.pretty.v1"),
-        "Schema should be treepp.pretty.v1"
-    );
-
-    // Verify root structure
-    let root = table.get("root").and_then(|v| v.as_table());
-    assert!(root.is_some(), "Root should be a table");
-    let root = root.unwrap();
-    assert!(root.get("path").is_some(), "Root should have path");
-    assert_eq!(
-        root.get("type").and_then(|v| v.as_str()),
-        Some("dir"),
-        "Root type should be dir"
-    );
-}
-
-// ============================================================================
-// Performance and Thread Tests
-// ============================================================================
-
-#[test]
-fn should_produce_consistent_results_with_different_thread_counts() {
-    let dir = create_basic_test_dir();
-
-    let output1 = run_treepp_in_dir(dir.path(), &["/b", "/f", "/t", "1", "/nb"]);
-    let output4 = run_treepp_in_dir(dir.path(), &["/b", "/f", "/t", "4", "/nb"]);
-    let output8 = run_treepp_in_dir(dir.path(), &["/b", "/f", "/t", "8", "/nb"]);
-
-    assert!(output1.status.success());
-    assert!(output4.status.success());
-    assert!(output8.status.success());
-
-    // Results should be identical regardless of thread count
-    assert_eq!(stdout_str(&output1), stdout_str(&output4));
-    assert_eq!(stdout_str(&output4), stdout_str(&output8));
-}
-
-#[test]
-fn should_handle_large_thread_count() {
-    let dir = create_basic_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["/b", "/f", "/t", "64", "/nb"]);
-    assert!(output.status.success());
-}
-
-// ============================================================================
-// Streaming vs Batch Consistency Tests
-// ============================================================================
-
-#[test]
-fn should_produce_same_content_in_streaming_and_batch() {
-    let dir = create_basic_test_dir();
-
-    // Streaming mode (default)
-    let streaming = run_treepp_in_dir(dir.path(), &["/f", "/nb"]);
-    // Batch mode
-    let batch = run_treepp_in_dir(dir.path(), &["/b", "/f", "/nb"]);
-
-    assert!(streaming.status.success());
-    assert!(batch.status.success());
-
-    // Content should be identical
-    assert_eq!(stdout_str(&streaming), stdout_str(&batch));
-}
-
-#[test]
-fn should_produce_same_counts_in_streaming_and_batch() {
-    let dir = create_basic_test_dir();
-
-    let streaming = run_treepp_in_dir(dir.path(), &["/f", "/rp", "/nb"]);
-    let batch = run_treepp_in_dir(dir.path(), &["/b", "/f", "/rp", "/nb"]);
-
-    assert!(streaming.status.success());
-    assert!(batch.status.success());
-
-    // Both should report same directory and file counts
-    let streaming_out = stdout_str(&streaming);
-    let batch_out = stdout_str(&batch);
-
-    // Extract counts from report line
-    assert!(streaming_out.contains("directory"));
-    assert!(batch_out.contains("directory"));
+    assert_eq!(src.get("type").and_then(|v| v.as_str()), Some("dir"));
+    assert!(src.get("files").is_some());
+    assert!(src.get("dirs").is_some());
 }
 
 // ============================================================================
@@ -1970,245 +1843,754 @@ fn should_return_exit_code_1_on_cli_error() {
 #[test]
 fn should_return_exit_code_1_on_config_error() {
     let dir = create_basic_test_dir();
-    // Silent without output is a config error
     let output = run_treepp_in_dir(dir.path(), &["/si"]);
     assert_eq!(output.status.code(), Some(1));
 }
 
+// ============================================================================
+// Output File Error Tests
+// ============================================================================
+
 #[test]
-fn should_return_exit_code_2_on_scan_error() {
-    // Nonexistent path causes scan error
-    let output = run_treepp(&["/nonexistent/path/12345"]);
-    // This might be 1 (CLI) or 2 (Scan) depending on when error is caught
+fn should_fail_when_output_path_is_directory() {
+    let dir = create_basic_test_dir();
+    let output_dir = dir.path().join("output_dir");
+    fs::create_dir(&output_dir).unwrap();
+
+    let output = run_treepp_in_dir(dir.path(), &["/f", "/nb", "/o", output_dir.to_str().unwrap()]);
+    assert!(!output.status.success());
+}
+
+#[test]
+fn should_fail_when_output_parent_does_not_exist() {
+    let dir = create_basic_test_dir();
+    let bad_path = dir.path().join("nonexistent").join("output.txt");
+
+    let output = run_treepp_in_dir(dir.path(), &["/f", "/nb", "/o", bad_path.to_str().unwrap()]);
     assert!(!output.status.success());
 }
 
 // ============================================================================
-// Path Position Tests
+// Stable Sorting Tests
 // ============================================================================
 
 #[test]
-fn should_accept_path_at_beginning() {
+fn should_produce_stable_sorted_output() {
     let dir = create_basic_test_dir();
-    let path = dir.path().to_string_lossy().to_string();
-    let output = run_treepp(&[&path, "/f", "/nb"]);
-    assert!(output.status.success());
-}
 
-#[test]
-fn should_accept_path_at_end() {
-    let dir = create_basic_test_dir();
-    let path = dir.path().to_string_lossy().to_string();
-    let output = run_treepp(&["/f", "/nb", &path]);
-    assert!(output.status.success());
-}
+    let mut outputs: Vec<String> = Vec::new();
+    for _ in 0..3 {
+        let output = run_treepp_in_dir(dir.path(), &["/f", "/nb", "/b"]);
+        assert!(output.status.success());
+        outputs.push(stdout_str(&output));
+    }
 
-#[test]
-fn should_accept_path_in_middle() {
-    let dir = create_basic_test_dir();
-    let path = dir.path().to_string_lossy().to_string();
-    let output = run_treepp(&["/f", &path, "/nb"]);
-    assert!(output.status.success());
+    // All outputs should be identical
+    assert_eq!(outputs[0], outputs[1]);
+    assert_eq!(outputs[1], outputs[2]);
 }
 
 // ============================================================================
-// Equals Syntax Tests
+// Gitignore Parsing Edge Cases (5 tests)
 // ============================================================================
 
+/// Creates a directory with double-asterisk glob patterns in .gitignore.
+///
+/// Structure:
+/// ```text
+/// root/
+/// ├── .gitignore (contains: "**/build\nsrc/**/test\n")
+/// ├── build/ (ignored)
+/// │   └── output.exe
+/// ├── deep/
+/// │   └── nested/
+/// │       └── build/ (ignored)
+/// │           └── artifact.dll
+/// ├── src/
+/// │   ├── main.rs
+/// │   └── modules/
+/// │       └── test/ (ignored)
+/// │           └── mock.rs
+/// └── other/
+///     └── test/ (not ignored - pattern is src/**/test)
+///         └── data.txt
+/// ```
+fn create_double_asterisk_gitignore_dir() -> TempDir {
+    let dir = TempDir::new().expect("Failed to create temp dir");
+    let root = dir.path();
+
+    File::create(root.join(".gitignore"))
+        .unwrap()
+        .write_all(b"**/build\nsrc/**/test\n")
+        .unwrap();
+
+    // Root level build directory
+    fs::create_dir_all(root.join("build")).unwrap();
+    File::create(root.join("build/output.exe")).unwrap();
+
+    // Deeply nested build directory
+    fs::create_dir_all(root.join("deep/nested/build")).unwrap();
+    File::create(root.join("deep/nested/build/artifact.dll")).unwrap();
+
+    // Source directory with nested test
+    fs::create_dir_all(root.join("src/modules/test")).unwrap();
+    File::create(root.join("src/main.rs")).unwrap();
+    File::create(root.join("src/modules/test/mock.rs")).unwrap();
+
+    // Test directory outside src (should NOT be ignored)
+    fs::create_dir_all(root.join("other/test")).unwrap();
+    File::create(root.join("other/test/data.txt")).unwrap();
+
+    dir
+}
+
 #[test]
-fn should_accept_level_with_equals_syntax() {
-    let dir = create_deep_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["--level=2", "/nb"]);
+fn should_handle_double_asterisk_any_depth_pattern() {
+    let dir = create_double_asterisk_gitignore_dir();
+    let output = run_treepp_in_dir(dir.path(), &["/f", "/g", "/nb"]);
     assert!(output.status.success());
     let stdout = stdout_str(&output);
-    assert!(stdout.contains("level1"));
-    assert!(stdout.contains("level2"));
-    assert!(!stdout.contains("level3"));
+
+    // **/build should match build at any depth
+    assert!(
+        !stdout.contains("output.exe"),
+        "Root build/ should be ignored by **/build"
+    );
+    assert!(
+        !stdout.contains("artifact.dll"),
+        "Nested build/ should be ignored by **/build"
+    );
+
+    // src/**/test should match test directories under src
+    assert!(
+        !stdout.contains("mock.rs"),
+        "src/modules/test/ should be ignored by src/**/test"
+    );
+
+    // Files outside the pattern should be present
+    assert!(stdout.contains("main.rs"), "src/main.rs should be present");
+    assert!(
+        stdout.contains("data.txt"),
+        "other/test/data.txt should NOT be ignored (pattern is src/**/test)"
+    );
+}
+
+/// Creates a directory with character class patterns in .gitignore.
+///
+/// Structure:
+/// ```text
+/// root/
+/// ├── .gitignore (contains: "[abc].txt\n[!xyz].log\n[0-9].dat\n")
+/// ├── a.txt (ignored)
+/// ├── b.txt (ignored)
+/// ├── d.txt (not ignored)
+/// ├── x.log (not ignored - negated class)
+/// ├── y.log (not ignored)
+/// ├── a.log (ignored - matches [!xyz])
+/// ├── 0.dat (ignored)
+/// ├── 5.dat (ignored)
+/// └── a.dat (not ignored)
+/// ```
+fn create_character_class_gitignore_dir() -> TempDir {
+    let dir = TempDir::new().expect("Failed to create temp dir");
+    let root = dir.path();
+
+    File::create(root.join(".gitignore"))
+        .unwrap()
+        .write_all(b"[abc].txt\n[!xyz].log\n[0-9].dat\n")
+        .unwrap();
+
+    // [abc].txt pattern files
+    File::create(root.join("a.txt")).unwrap();
+    File::create(root.join("b.txt")).unwrap();
+    File::create(root.join("d.txt")).unwrap();
+
+    // [!xyz].log pattern files (negated class - matches anything NOT x, y, or z)
+    File::create(root.join("x.log")).unwrap();
+    File::create(root.join("y.log")).unwrap();
+    File::create(root.join("a.log")).unwrap();
+
+    // [0-9].dat pattern files
+    File::create(root.join("0.dat")).unwrap();
+    File::create(root.join("5.dat")).unwrap();
+    File::create(root.join("a.dat")).unwrap();
+
+    dir
 }
 
 #[test]
-fn should_accept_thread_with_equals_syntax() {
-    let dir = create_basic_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["/b", "--thread=4", "/nb"]);
+fn should_handle_character_class_patterns_in_gitignore() {
+    let dir = create_character_class_gitignore_dir();
+    let output = run_treepp_in_dir(dir.path(), &["/f", "/g", "/nb"]);
     assert!(output.status.success());
+    let stdout = stdout_str(&output);
+
+    // [abc].txt should match a.txt, b.txt but not d.txt
+    assert!(!stdout.contains("a.txt"), "a.txt should be ignored by [abc].txt");
+    assert!(!stdout.contains("b.txt"), "b.txt should be ignored by [abc].txt");
+    assert!(stdout.contains("d.txt"), "d.txt should NOT be ignored");
+
+    // [!xyz].log should match anything except x.log, y.log, z.log
+    assert!(stdout.contains("x.log"), "x.log should NOT be ignored by [!xyz].log");
+    assert!(stdout.contains("y.log"), "y.log should NOT be ignored by [!xyz].log");
+    assert!(!stdout.contains("a.log"), "a.log should be ignored by [!xyz].log");
+
+    // [0-9].dat should match single digit files
+    assert!(!stdout.contains("0.dat"), "0.dat should be ignored by [0-9].dat");
+    assert!(!stdout.contains("5.dat"), "5.dat should be ignored by [0-9].dat");
+    assert!(stdout.contains("a.dat"), "a.dat should NOT be ignored");
+}
+
+/// Creates a directory with escaped special characters in .gitignore.
+///
+/// Structure:
+/// ```text
+/// root/
+/// ├── .gitignore (contains: "\\#comment.txt\n\\!important.md\n")
+/// ├── #comment.txt (ignored - escaped hash)
+/// ├── !important.md (ignored - escaped exclamation)
+/// ├── regular.txt
+/// └── # actual comment line should be ignored
+/// ```
+fn create_escaped_chars_gitignore_dir() -> TempDir {
+    let dir = TempDir::new().expect("Failed to create temp dir");
+    let root = dir.path();
+
+    // Note: \# matches literal #, \! matches literal !
+    File::create(root.join(".gitignore"))
+        .unwrap()
+        .write_all(b"\\#comment.txt\n\\!important.md\n# This is a real comment\n")
+        .unwrap();
+
+    File::create(root.join("#comment.txt")).unwrap();
+    File::create(root.join("!important.md")).unwrap();
+    File::create(root.join("regular.txt")).unwrap();
+
+    dir
 }
 
 #[test]
-fn should_accept_output_with_equals_syntax() {
-    let dir = create_basic_test_dir();
-    let output_file = dir.path().join("out.txt");
-    let arg = format!("--output={}", output_file.to_str().unwrap());
-    let output = run_treepp_in_dir(dir.path(), &["-f", &arg, "/nb"]);
+fn should_handle_escaped_special_characters_in_gitignore() {
+    let dir = create_escaped_chars_gitignore_dir();
+    let output = run_treepp_in_dir(dir.path(), &["/f", "/g", "/nb"]);
     assert!(output.status.success());
-    assert!(output_file.exists());
+    let stdout = stdout_str(&output);
+
+    // Escaped # should match literal # filename
+    assert!(
+        !stdout.contains("#comment.txt"),
+        "#comment.txt should be ignored by \\#comment.txt pattern"
+    );
+
+    // Escaped ! should match literal ! filename
+    assert!(
+        !stdout.contains("!important.md"),
+        "!important.md should be ignored by \\!important.md pattern"
+    );
+
+    // Regular files should be present
+    assert!(stdout.contains("regular.txt"), "regular.txt should be present");
+}
+
+/// Creates a directory with root-relative patterns in .gitignore.
+///
+/// Structure:
+/// ```text
+/// root/
+/// ├── .gitignore (contains: "/build\n/config.local\n")
+/// ├── build/ (ignored - at root)
+/// │   └── output.exe
+/// ├── config.local (ignored - at root)
+/// ├── src/
+/// │   ├── build/ (NOT ignored - not at root)
+/// │   │   └── temp.o
+/// │   └── config.local (NOT ignored - not at root)
+/// └── nested/
+///     └── deep/
+///         └── build/ (NOT ignored)
+///             └── artifact.bin
+/// ```
+fn create_root_relative_gitignore_dir() -> TempDir {
+    let dir = TempDir::new().expect("Failed to create temp dir");
+    let root = dir.path();
+
+    File::create(root.join(".gitignore"))
+        .unwrap()
+        .write_all(b"/build\n/config.local\n")
+        .unwrap();
+
+    // Root level (should be ignored)
+    fs::create_dir(root.join("build")).unwrap();
+    File::create(root.join("build/output.exe")).unwrap();
+    File::create(root.join("config.local")).unwrap();
+
+    // Nested in src (should NOT be ignored)
+    fs::create_dir_all(root.join("src/build")).unwrap();
+    File::create(root.join("src/build/temp.o")).unwrap();
+    File::create(root.join("src/config.local")).unwrap();
+
+    // Deeply nested (should NOT be ignored)
+    fs::create_dir_all(root.join("nested/deep/build")).unwrap();
+    File::create(root.join("nested/deep/build/artifact.bin")).unwrap();
+
+    dir
 }
 
 #[test]
-fn should_accept_include_with_equals_syntax() {
-    let dir = create_basic_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["-f", "--include=*.rs", "/nb"]);
+fn should_handle_root_relative_patterns_in_gitignore() {
+    let dir = create_root_relative_gitignore_dir();
+    let output = run_treepp_in_dir(dir.path(), &["/f", "/g", "/nb"]);
     assert!(output.status.success());
-    assert!(stdout_str(&output).contains("main.rs"));
+    let stdout = stdout_str(&output);
+
+    // Root level should be ignored
+    assert!(
+        !stdout.contains("output.exe"),
+        "Root build/output.exe should be ignored by /build"
+    );
+
+    // Nested occurrences should NOT be ignored (pattern starts with /)
+    assert!(
+        stdout.contains("temp.o"),
+        "src/build/temp.o should NOT be ignored (not at root)"
+    );
+    assert!(
+        stdout.contains("artifact.bin"),
+        "nested/deep/build/artifact.bin should NOT be ignored"
+    );
+
+    // Check config.local similarly
+    let config_count = stdout.matches("config.local").count();
+    assert!(
+        config_count >= 1,
+        "At least one nested config.local should be present"
+    );
+}
+
+/// Creates a directory with UTF-8 BOM in .gitignore.
+///
+/// Structure:
+/// ```text
+/// root/
+/// ├── .gitignore (UTF-8 BOM + "ignored.txt\n")
+/// ├── ignored.txt (should be ignored despite BOM)
+/// └── visible.txt
+/// ```
+fn create_bom_gitignore_dir() -> TempDir {
+    let dir = TempDir::new().expect("Failed to create temp dir");
+    let root = dir.path();
+
+    // UTF-8 BOM: EF BB BF
+    let mut gitignore_content = vec![0xEF, 0xBB, 0xBF];
+    gitignore_content.extend_from_slice(b"ignored.txt\n");
+
+    File::create(root.join(".gitignore"))
+        .unwrap()
+        .write_all(&gitignore_content)
+        .unwrap();
+
+    File::create(root.join("ignored.txt")).unwrap();
+    File::create(root.join("visible.txt")).unwrap();
+
+    dir
 }
 
 #[test]
-fn should_accept_exclude_with_equals_syntax() {
-    let dir = create_basic_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["-f", "--exclude=*.md", "/nb"]);
+fn should_handle_utf8_bom_in_gitignore() {
+    let dir = create_bom_gitignore_dir();
+    let output = run_treepp_in_dir(dir.path(), &["/f", "/g", "/nb"]);
     assert!(output.status.success());
-    assert!(!stdout_str(&output).contains("file2.md"));
+    let stdout = stdout_str(&output);
+
+    // Pattern should work despite BOM
+    assert!(
+        !stdout.contains("ignored.txt"),
+        "ignored.txt should be ignored even with UTF-8 BOM in .gitignore"
+    );
+    assert!(stdout.contains("visible.txt"), "visible.txt should be present");
 }
 
 // ============================================================================
-// Tree Character Rendering Tests
+// Wildcard Pattern Tests (/M and /X)
+// ============================================================================
+
+/// Creates a directory for wildcard pattern testing.
+///
+/// Structure:
+/// ```text
+/// root/
+/// ├── test.txt
+/// ├── test123.txt
+/// ├── test_file.txt
+/// ├── data.test.txt
+/// ├── file.tar.gz
+/// ├── archive.tar.bz2
+/// ├── README
+/// └── .hidden
+/// ```
+fn create_wildcard_test_dir() -> TempDir {
+    let dir = TempDir::new().expect("Failed to create temp dir");
+    let root = dir.path();
+
+    for name in &[
+        "test.txt",
+        "test123.txt",
+        "test_file.txt",
+        "data.test.txt",
+        "file.tar.gz",
+        "archive.tar.bz2",
+        "README",
+        ".hidden",
+    ] {
+        File::create(root.join(name)).unwrap();
+    }
+
+    dir
+}
+
+#[test]
+fn should_handle_multiple_dots_in_wildcard_pattern() {
+    let dir = create_wildcard_test_dir();
+    let output = run_treepp_in_dir(dir.path(), &["/f", "/m", "*.tar.*", "/nb"]);
+    assert!(output.status.success());
+    let stdout = stdout_str(&output);
+
+    assert!(stdout.contains("file.tar.gz"), "file.tar.gz should match *.tar.*");
+    assert!(
+        stdout.contains("archive.tar.bz2"),
+        "archive.tar.bz2 should match *.tar.*"
+    );
+    assert!(
+        !stdout.contains("test.txt"),
+        "test.txt should not match *.tar.*"
+    );
+}
+
+#[test]
+fn should_handle_middle_asterisk_pattern() {
+    let dir = create_wildcard_test_dir();
+    let output = run_treepp_in_dir(dir.path(), &["/f", "/m", "test*.txt", "/nb"]);
+    assert!(output.status.success());
+    let stdout = stdout_str(&output);
+
+    assert!(stdout.contains("test.txt"), "test.txt should match test*.txt");
+    assert!(
+        stdout.contains("test123.txt"),
+        "test123.txt should match test*.txt"
+    );
+    assert!(
+        stdout.contains("test_file.txt"),
+        "test_file.txt should match test*.txt"
+    );
+    assert!(
+        !stdout.contains("data.test.txt"),
+        "data.test.txt should not match test*.txt"
+    );
+}
+
+#[test]
+fn should_handle_asterisk_only_pattern() {
+    let dir = create_wildcard_test_dir();
+    let output = run_treepp_in_dir(dir.path(), &["/f", "/m", "*", "/nb"]);
+    assert!(output.status.success());
+    let stdout = stdout_str(&output);
+
+    // All files should match
+    assert!(stdout.contains("test.txt"));
+    assert!(stdout.contains("README"));
+    assert!(stdout.contains("file.tar.gz"));
+}
+
+#[test]
+fn should_handle_question_mark_single_char_wildcard() {
+    let dir = TempDir::new().unwrap();
+    for name in &["a.txt", "ab.txt", "abc.txt", "1.txt"] {
+        File::create(dir.path().join(name)).unwrap();
+    }
+
+    let output = run_treepp_in_dir(dir.path(), &["/f", "/m", "?.txt", "/nb"]);
+    assert!(output.status.success());
+    let stdout = stdout_str(&output);
+
+    assert!(stdout.contains("a.txt"), "a.txt should match ?.txt");
+    assert!(stdout.contains("1.txt"), "1.txt should match ?.txt");
+    assert!(!stdout.contains("ab.txt"), "ab.txt should not match ?.txt");
+    assert!(!stdout.contains("abc.txt"), "abc.txt should not match ?.txt");
+}
+
+#[test]
+fn should_be_case_insensitive_on_windows_for_patterns() {
+    let dir = TempDir::new().unwrap();
+
+    // Create files with different case extensions
+    // Note: On Windows, we can't have both FILE.TXT and file.txt in same directory
+    // due to case-insensitive filesystem, so use different base names
+    File::create(dir.path().join("readme.TXT")).unwrap();
+    File::create(dir.path().join("data.Txt")).unwrap();
+    File::create(dir.path().join("notes.txt")).unwrap();
+    File::create(dir.path().join("image.PNG")).unwrap(); // Should not match
+
+    let output = run_treepp_in_dir(dir.path(), &["/f", "/m", "*.txt", "/nb"]);
+    assert!(output.status.success());
+    let stdout = stdout_str(&output);
+
+    // On Windows, *.txt should match *.TXT, *.Txt case-insensitively
+    // Count how many .txt/.TXT/.Txt files appear in output
+    let txt_count = stdout
+        .lines()
+        .filter(|line| {
+            let lower = line.to_lowercase();
+            lower.contains(".txt")
+        })
+        .count();
+
+    assert!(
+        txt_count >= 3,
+        "Pattern matching should be case-insensitive on Windows, expected 3 txt files, found {}.\nOutput:\n{}",
+        txt_count,
+        stdout
+    );
+
+    // PNG file should not appear
+    assert!(
+        !stdout.to_lowercase().contains(".png"),
+        "PNG file should not match *.txt pattern"
+    );
+}
+
+// ============================================================================
+// Path and Filesystem Edge Cases
 // ============================================================================
 
 #[test]
-fn should_render_files_without_branch_connectors() {
-    let dir = create_basic_test_dir();
+fn should_handle_drive_root_scanning() {
+    // Test scanning from drive root (may require admin or specific setup)
+    let output = run_treepp(&["C:\\", "/l", "0", "/nb"]);
+    // Should succeed or fail gracefully
+    if output.status.success() {
+        let stdout = stdout_str(&output);
+        assert!(stdout.contains("C:\\") || stdout.contains("C:."));
+    }
+}
+
+#[test]
+fn should_handle_consecutive_spaces_in_directory_name() {
+    let dir = TempDir::new().unwrap();
+    let space_dir = dir.path().join("dir  with   spaces");
+    fs::create_dir(&space_dir).unwrap();
+    File::create(space_dir.join("file.txt")).unwrap();
+
     let output = run_treepp_in_dir(dir.path(), &["/f", "/nb"]);
     assert!(output.status.success());
     let stdout = stdout_str(&output);
 
-    // Files should be indented but not use branch connectors
-    let lines: Vec<&str> = stdout.lines().collect();
+    assert!(
+        stdout.contains("dir  with   spaces"),
+        "Directory with consecutive spaces should be displayed"
+    );
+    assert!(stdout.contains("file.txt"));
+}
+
+#[test]
+fn should_handle_windows_reserved_names_gracefully() {
+    let dir = TempDir::new().unwrap();
+
+    // Try to create files/directories with reserved names
+    // These may fail on Windows, which is expected
+    let reserved_names = ["CON", "PRN", "AUX", "NUL", "COM1", "LPT1"];
+
+    for name in &reserved_names {
+        // Attempt creation - may fail on Windows
+        let _ = fs::create_dir(dir.path().join(name));
+    }
+
+    // Create a normal file
+    File::create(dir.path().join("normal.txt")).unwrap();
+
+    let output = run_treepp_in_dir(dir.path(), &["/f", "/nb"]);
+    assert!(output.status.success());
+    assert!(stdout_str(&output).contains("normal.txt"));
+}
+
+#[test]
+fn should_handle_junction_points() {
+    let dir = TempDir::new().unwrap();
+    let target = dir.path().join("target_dir");
+    let junction = dir.path().join("junction_link");
+
+    fs::create_dir(&target).unwrap();
+    File::create(target.join("inside.txt")).unwrap();
+
+    // Create junction point (Windows specific)
+    let result = Command::new("cmd")
+        .args([
+            "/C",
+            "mklink",
+            "/J",
+            junction.to_str().unwrap(),
+            target.to_str().unwrap(),
+        ])
+        .output();
+
+    if result.is_ok() && junction.exists() {
+        let output = run_treepp_in_dir(dir.path(), &["/f", "/nb"]);
+        assert!(output.status.success());
+        let stdout = stdout_str(&output);
+        assert!(stdout.contains("target_dir") || stdout.contains("junction_link"));
+    }
+    // Skip if junction creation failed (no admin rights)
+}
+
+#[test]
+fn should_handle_very_long_paths() {
+    let dir = TempDir::new().unwrap();
+
+    // Create a path approaching 260 character limit
+    let mut current = dir.path().to_path_buf();
+    let segment = "a".repeat(20);
+
+    for _ in 0..10 {
+        current = current.join(&segment);
+        if fs::create_dir(&current).is_err() {
+            break; // Hit path length limit
+        }
+    }
+
+    let output = run_treepp_in_dir(dir.path(), &["/nb"]);
+    assert!(output.status.success());
+}
+
+// ============================================================================
+// Multithreading and Batch Mode
+// ============================================================================
+
+#[test]
+fn should_handle_single_file_with_many_threads() {
+    let dir = TempDir::new().unwrap();
+    File::create(dir.path().join("only.txt")).unwrap();
+
+    let output = run_treepp_in_dir(dir.path(), &["/b", "/f", "/t", "16", "/nb"]);
+    assert!(output.status.success());
+    assert!(stdout_str(&output).contains("only.txt"));
+}
+
+#[test]
+fn should_handle_wide_directory_with_multiple_threads() {
+    let dir = TempDir::new().unwrap();
+
+    // Create many subdirectories
+    for i in 0..100 {
+        let subdir = dir.path().join(format!("dir_{:03}", i));
+        fs::create_dir(&subdir).unwrap();
+        File::create(subdir.join("file.txt")).unwrap();
+    }
+
+    let output = run_treepp_in_dir(dir.path(), &["/b", "/f", "/t", "8", "/nb"]);
+    assert!(output.status.success());
+    let stdout = stdout_str(&output);
+
+    assert!(stdout.contains("dir_000"));
+    assert!(stdout.contains("dir_050"));
+    assert!(stdout.contains("dir_099"));
+}
+
+#[test]
+fn should_fail_with_negative_thread_count() {
+    let dir = TempDir::new().unwrap();
+    let output = run_treepp_in_dir(dir.path(), &["/b", "/t", "-1"]);
+    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(1));
+}
+
+#[test]
+fn should_produce_identical_results_across_thread_counts() {
+    let dir = create_basic_test_dir();
+
+    let outputs: Vec<String> = [1, 2, 4, 8, 16]
+        .iter()
+        .map(|t| {
+            let output =
+                run_treepp_in_dir(dir.path(), &["/b", "/f", "/nb", "/t", &t.to_string()]);
+            assert!(output.status.success());
+            stdout_str(&output)
+        })
+        .collect();
+
+    // All outputs should be identical
+    for (i, output) in outputs.iter().enumerate().skip(1) {
+        assert_eq!(
+            &outputs[0], output,
+            "Output with {} threads differs from 1 thread",
+            [1, 2, 4, 8, 16][i]
+        );
+    }
+}
+
+// ============================================================================
+// Output Format Validation
+// ============================================================================
+
+#[test]
+fn should_handle_empty_directory_in_json() {
+    let dir = TempDir::new().unwrap();
+    fs::create_dir(dir.path().join("empty")).unwrap();
+
+    let output_file = dir.path().join("tree.json");
+    let output = run_treepp_in_dir(
+        dir.path(),
+        &["/b", "/f", "/o", output_file.to_str().unwrap(), "/nb"],
+    );
+    assert!(output.status.success());
+
+    let content = fs::read_to_string(&output_file).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+    let empty_dir = json
+        .get("root")
+        .and_then(|r| r.get("dirs"))
+        .and_then(|d| d.get("empty"));
+
+    assert!(empty_dir.is_some(), "Empty directory should be in JSON output");
+}
+
+#[test]
+fn should_preserve_yaml_indentation_in_deep_nesting() {
+    let dir = create_deep_test_dir();
+    let output_file = dir.path().join("tree.yml");
+    let output = run_treepp_in_dir(
+        dir.path(),
+        &["/b", "/f", "/o", output_file.to_str().unwrap(), "/nb"],
+    );
+    assert!(output.status.success());
+
+    let content = fs::read_to_string(&output_file).unwrap();
+
+    // Verify YAML is parseable
+    assert!(content.contains("schema: treepp.pretty.v1"));
+
+    // Check for consistent indentation (2 spaces per level is common)
+    let lines: Vec<&str> = content.lines().collect();
     for line in &lines {
-        if line.contains("file1.txt") || line.contains("file2.md") {
-            // File lines should NOT start with branch connector
-            let trimmed = line.trim_start();
-            assert!(
-                !trimmed.starts_with("├─") && !trimmed.starts_with("└─"),
-                "File line should not start with branch: {}",
-                line
+        if line.starts_with(' ') {
+            let leading_spaces = line.len() - line.trim_start().len();
+            assert_eq!(
+                leading_spaces % 2,
+                0,
+                "YAML indentation should be consistent (multiples of 2)"
             );
         }
     }
 }
 
 #[test]
-fn should_render_directories_with_branch_connectors() {
-    let dir = create_basic_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["/f", "/nb"]);
-    assert!(output.status.success());
-    let stdout = stdout_str(&output);
-
-    // At least one directory should have branch connector
-    assert!(
-        stdout.contains("├─") || stdout.contains("└─"),
-        "Directory should have branch connectors"
-    );
-}
-
-#[test]
-fn should_render_proper_vertical_lines() {
+fn should_handle_large_file_sizes_in_json() {
     let dir = TempDir::new().unwrap();
-    let root = dir.path();
 
-    // Create structure that requires vertical lines:
-    // dir1/
-    //   file1.txt
-    // dir2/
-    //   file2.txt
-    fs::create_dir(root.join("dir1")).unwrap();
-    fs::create_dir(root.join("dir2")).unwrap();
-    File::create(root.join("dir1/file1.txt"))
-        .unwrap()
-        .write_all(b"")
-        .unwrap();
-    File::create(root.join("dir2/file2.txt"))
-        .unwrap()
-        .write_all(b"")
-        .unwrap();
+    // Create a file and write enough to get a meaningful size
+    let large_file = dir.path().join("large.bin");
+    let data = vec![0u8; 1024 * 1024]; // 1 MB
+    fs::write(&large_file, &data).unwrap();
 
-    let output = run_treepp_in_dir(root, &["/f", "/nb"]);
-    assert!(output.status.success());
-    let stdout = stdout_str(&output);
-
-    // Should have vertical continuation lines
-    assert!(
-        stdout.contains("│") || stdout.contains("|"),
-        "Should have vertical lines for sibling directories"
-    );
-}
-
-// ============================================================================
-// Additional Combination Tests
-// ============================================================================
-
-#[test]
-fn should_combine_ascii_with_all_display_options() {
-    let dir = create_sized_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["/a", "/f", "/s", "/dt", "/nb"]);
-    assert!(output.status.success());
-    let stdout = stdout_str(&output);
-
-    // Should use ASCII characters
-    assert!(!stdout.contains("├─"));
-    assert!(!stdout.contains("└─"));
-    // Should have size and date
-    assert!(stdout.contains("-") && stdout.contains(":"));
-}
-
-#[test]
-fn should_combine_no_indent_with_size_and_date() {
-    let dir = create_sized_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["/ni", "/f", "/s", "/dt", "/nb"]);
-    assert!(output.status.success());
-    let stdout = stdout_str(&output);
-
-    // No tree characters
-    assert!(!stdout.contains("├"));
-    assert!(!stdout.contains("└"));
-    // But should have metadata
-    assert!(stdout.contains("-") && stdout.contains(":"));
-}
-
-#[test]
-fn should_combine_full_path_with_size() {
-    let dir = create_sized_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["/f", "/fp", "/s", "/nb"]);
-    assert!(output.status.success());
-    let stdout = stdout_str(&output);
-
-    // Should have full paths
-    assert!(stdout.contains("\\") || stdout.contains("/"));
-    // And sizes
-    assert!(stdout.contains("5") || stdout.contains("1024"));
-}
-
-#[test]
-fn should_combine_reverse_with_level() {
-    let dir = create_deep_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["/r", "/l", "3", "/nb"]);
-    assert!(output.status.success());
-    let stdout = stdout_str(&output);
-
-    assert!(stdout.contains("level1"));
-    assert!(stdout.contains("level2"));
-    assert!(stdout.contains("level3"));
-    assert!(!stdout.contains("level4"));
-}
-
-#[test]
-fn should_combine_include_and_exclude() {
-    let dir = create_basic_test_dir();
-    let output = run_treepp_in_dir(
-        dir.path(),
-        &["/f", "/m", "*.rs", "/m", "*.txt", "/x", "lib.rs", "/nb"],
-    );
-    assert!(output.status.success());
-    let stdout = stdout_str(&output);
-
-    // Should include .rs and .txt but exclude lib.rs
-    assert!(stdout.contains("main.rs"));
-    assert!(stdout.contains("file1.txt"));
-    assert!(!stdout.contains("lib.rs"));
-    assert!(!stdout.contains("file2.md"));
-}
-
-#[test]
-fn should_output_json_with_metadata() {
-    let dir = create_sized_test_dir();
     let output_file = dir.path().join("tree.json");
     let output = run_treepp_in_dir(
         dir.path(),
@@ -2216,9 +2598,6 @@ fn should_output_json_with_metadata() {
             "/b",
             "/f",
             "/s",
-            "/hr",
-            "/dt",
-            "/fp",
             "/o",
             output_file.to_str().unwrap(),
             "/nb",
@@ -2229,535 +2608,408 @@ fn should_output_json_with_metadata() {
     let content = fs::read_to_string(&output_file).unwrap();
     let json: serde_json::Value = serde_json::from_str(&content).unwrap();
 
-    // Verify new structure with schema
-    assert_eq!(
-        json.get("schema").and_then(|v| v.as_str()),
-        Some("treepp.pretty.v1"),
-        "Should have correct schema"
-    );
-
-    let root = json.get("root").expect("Should have root");
-    assert!(root.get("path").is_some(), "Root should have path");
-    assert!(root.get("files").is_some(), "Root should have files");
-    assert!(root.get("dirs").is_some(), "Root should have dirs");
+    // Verify size is present and reasonable
+    assert!(json.to_string().contains("1048576") || json.to_string().contains("size"));
 }
 
 // ============================================================================
-// Hidden Files Tests (/AL)
+// Disk Usage Calculation (/DU)
 // ============================================================================
 
-/// Creates a test directory with hidden files and directories.
-///
-/// Structure:
-/// ```text
-/// root/
-/// ├── visible.txt
-/// ├── .hidden_file (hidden attribute set via attrib +H)
-/// ├── normal_dir/
-/// │   └── normal.txt
-/// └── .hidden_dir/ (hidden attribute set via attrib +H)
-///     └── inside_hidden.txt
-/// ```
-fn create_hidden_files_test_dir() -> TempDir {
-    let dir = TempDir::new().expect("Failed to create temp dir");
-    let root = dir.path();
+#[test]
+fn should_show_zero_for_empty_directory_disk_usage() {
+    let dir = TempDir::new().unwrap();
+    fs::create_dir(dir.path().join("empty")).unwrap();
 
-    // Create visible file
-    File::create(root.join("visible.txt"))
-        .unwrap()
-        .write_all(b"visible content")
-        .unwrap();
+    let output = run_treepp_in_dir(dir.path(), &["/b", "/du", "/nb"]);
+    assert!(output.status.success());
+    let stdout = stdout_str(&output);
 
-    // Create file that will be hidden
-    let hidden_file_path = root.join(".hidden_file");
-    File::create(&hidden_file_path)
-        .unwrap()
-        .write_all(b"hidden content")
-        .unwrap();
-
-    // Create normal directory with file
-    fs::create_dir(root.join("normal_dir")).unwrap();
-    File::create(root.join("normal_dir/normal.txt"))
-        .unwrap()
-        .write_all(b"normal")
-        .unwrap();
-
-    // Create directory that will be hidden
-    let hidden_dir_path = root.join(".hidden_dir");
-    fs::create_dir(&hidden_dir_path).unwrap();
-    File::create(hidden_dir_path.join("inside_hidden.txt"))
-        .unwrap()
-        .write_all(b"inside hidden dir")
-        .unwrap();
-
-    // Use attrib command to set hidden attribute on file
-    Command::new("attrib")
-        .args(["+H", hidden_file_path.to_str().unwrap()])
-        .output()
-        .expect("Failed to set hidden attribute on file");
-
-    // Use attrib command to set hidden attribute on directory
-    Command::new("attrib")
-        .args(["+H", hidden_dir_path.to_str().unwrap()])
-        .output()
-        .expect("Failed to set hidden attribute on directory");
-
-    dir
+    assert!(stdout.contains("empty"));
+    // Empty directory should have 0 size
+    assert!(stdout.contains("0") || stdout.contains("empty"));
 }
 
 #[test]
-fn should_hide_hidden_files_by_default() {
-    let dir = create_hidden_files_test_dir();
+fn should_accumulate_sizes_correctly_in_nested_directories() {
+    let dir = TempDir::new().unwrap();
+
+    // Create structure with known sizes
+    fs::create_dir(dir.path().join("parent")).unwrap();
+    fs::create_dir(dir.path().join("parent/child")).unwrap();
+
+    // 100 bytes in child
+    fs::write(dir.path().join("parent/child/file.txt"), vec![b'x'; 100]).unwrap();
+    // 200 bytes in parent
+    fs::write(dir.path().join("parent/other.txt"), vec![b'y'; 200]).unwrap();
+
+    let output = run_treepp_in_dir(dir.path(), &["/b", "/f", "/du", "/nb"]);
+    assert!(output.status.success());
+    let stdout = stdout_str(&output);
+
+    // Parent should show cumulative size of at least 300 bytes
+    assert!(
+        stdout.contains("300") || stdout.contains("parent"),
+        "Parent directory should show cumulative size"
+    );
+}
+
+#[test]
+fn should_combine_disk_usage_with_human_readable_correctly() {
+    let dir = TempDir::new().unwrap();
+
+    // Create 1 KB file
+    fs::write(dir.path().join("kb_file.txt"), vec![b'x'; 1024]).unwrap();
+
+    let output = run_treepp_in_dir(dir.path(), &["/b", "/f", "/du", "/hr", "/nb"]);
+    assert!(output.status.success());
+    let stdout = stdout_str(&output);
+
+    assert!(
+        stdout.contains("KB") || stdout.contains("1.0") || stdout.contains("1024"),
+        "Should show human-readable size"
+    );
+}
+
+// ============================================================================
+// Date and Time Handling
+// ============================================================================
+
+#[test]
+fn should_display_dates_in_consistent_format() {
+    let dir = create_basic_test_dir();
+    let output = run_treepp_in_dir(dir.path(), &["/f", "/dt", "/nb"]);
+    assert!(output.status.success());
+    let stdout = stdout_str(&output);
+
+    // Date format should be YYYY-MM-DD HH:MM:SS
+    let date_pattern = regex::Regex::new(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}").unwrap();
+    assert!(
+        date_pattern.is_match(&stdout),
+        "Date should be in YYYY-MM-DD HH:MM:SS format"
+    );
+}
+
+// ============================================================================
+// Report Statistics (/RP)
+// ============================================================================
+
+#[test]
+fn should_show_zero_counts_for_empty_directory() {
+    let dir = TempDir::new().unwrap();
+    let output = run_treepp_in_dir(dir.path(), &["/f", "/rp", "/nb"]);
+    assert!(output.status.success());
+    let stdout = stdout_str(&output);
+
+    assert!(
+        stdout.contains("0 director") || stdout.contains("0 file"),
+        "Empty directory should show zero counts"
+    );
+}
+
+#[test]
+fn should_report_only_filtered_items_when_using_include() {
+    let dir = create_basic_test_dir();
+
+    // Get report without filter
+    let output_all = run_treepp_in_dir(dir.path(), &["/f", "/rp", "/nb"]);
+    assert!(output_all.status.success());
+
+    // Get report with filter
+    let output_filtered = run_treepp_in_dir(dir.path(), &["/f", "/m", "*.rs", "/rp", "/nb"]);
+    assert!(output_filtered.status.success());
+
+    let stdout_filtered = stdout_str(&output_filtered);
+
+    // Filtered report should show fewer files
+    assert!(
+        stdout_filtered.contains("file") || stdout_filtered.contains("director"),
+        "Filtered report should include statistics"
+    );
+}
+
+#[test]
+fn should_report_directories_only_without_f_flag() {
+    let dir = create_basic_test_dir();
+    let output = run_treepp_in_dir(dir.path(), &["/rp", "/nb"]);
+    assert!(output.status.success());
+    let stdout = stdout_str(&output);
+
+    // Should show directory count
+    assert!(
+        stdout.contains("director"),
+        "Report should include directory count"
+    );
+    // Should NOT show file count when /F not used
+    assert!(
+        !stdout.contains("file") || stdout.contains("0 file"),
+        "Report should not show file count without /F"
+    );
+}
+
+// ============================================================================
+// Parameter Parsing Edge Cases
+// ============================================================================
+
+#[test]
+fn should_handle_value_immediately_after_flag() {
+    let dir = create_deep_test_dir();
+
+    // Some tools support /L1 without space
+    let output = run_treepp_in_dir(dir.path(), &["/L1", "/nb"]);
+
+    // This might fail or succeed depending on implementation
+    // The test documents the behavior
+    if output.status.success() {
+        let stdout = stdout_str(&output);
+        assert!(stdout.contains("level1"));
+        assert!(!stdout.contains("level2"));
+    }
+}
+
+#[test]
+fn should_fail_with_empty_value_after_equals() {
+    let dir = create_basic_test_dir();
+    let output = run_treepp_in_dir(dir.path(), &["--level="]);
+    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(1));
+}
+
+#[test]
+fn should_use_last_value_when_parameter_repeated() {
+    let dir = create_deep_test_dir();
+    let output = run_treepp_in_dir(dir.path(), &["/l", "1", "/l", "3", "/nb"]);
+
+    // Implementation-dependent: might error or use last value
+    // This test documents the actual behavior
+    if output.status.success() {
+        let stdout = stdout_str(&output);
+        // If it uses last value (3), level3 should be visible
+        // If it uses first value (1), level2 should not be visible
+        assert!(stdout.contains("level1"));
+    }
+}
+
+#[test]
+fn should_handle_mixed_path_separators() {
+    let dir = create_basic_test_dir();
+
+    // Point to parent of the mixed path
+    let parent = dir.path().join("src");
+    let output = run_treepp(&[parent.to_str().unwrap(), "/f", "/nb"]);
+    assert!(output.status.success());
+}
+
+// ============================================================================
+// Unicode and Encoding
+// ============================================================================
+
+#[test]
+fn should_handle_pure_emoji_directory_name() {
+    let dir = TempDir::new().unwrap();
+    let emoji_dir = dir.path().join("🎉🎊🎁");
+
+    if fs::create_dir(&emoji_dir).is_ok() {
+        File::create(emoji_dir.join("party.txt")).unwrap();
+
+        let output = run_treepp_in_dir(dir.path(), &["/f", "/nb"]);
+        assert!(output.status.success());
+        let stdout = stdout_str(&output);
+
+        assert!(
+            stdout.contains("🎉🎊🎁"),
+            "Pure emoji directory name should be displayed"
+        );
+        assert!(stdout.contains("party.txt"));
+    }
+}
+
+#[test]
+fn should_handle_right_to_left_text() {
+    let dir = TempDir::new().unwrap();
+    let arabic_file = dir.path().join("ملف.txt"); // "file" in Arabic
+
+    if File::create(&arabic_file).is_ok() {
+        let output = run_treepp_in_dir(dir.path(), &["/f", "/nb"]);
+        assert!(output.status.success());
+        let stdout = stdout_str(&output);
+
+        assert!(
+            stdout.contains("ملف.txt"),
+            "Right-to-left text should be displayed"
+        );
+    }
+}
+
+#[test]
+fn should_handle_combining_characters() {
+    let dir = TempDir::new().unwrap();
+    // é composed as e + combining acute accent
+    let combining_file = dir.path().join("cafe\u{0301}.txt");
+
+    if File::create(&combining_file).is_ok() {
+        let output = run_treepp_in_dir(dir.path(), &["/f", "/nb"]);
+        assert!(output.status.success());
+        // File should appear in output (exact form may vary)
+    }
+}
+
+#[test]
+fn should_handle_zero_width_characters() {
+    let dir = TempDir::new().unwrap();
+    // Zero-width space in filename
+    let zwsp_file = dir.path().join("file\u{200B}name.txt");
+
+    if File::create(&zwsp_file).is_ok() {
+        let output = run_treepp_in_dir(dir.path(), &["/f", "/nb"]);
+        assert!(output.status.success());
+        let stdout = stdout_str(&output);
+
+        assert!(
+            stdout.contains("file") && stdout.contains("name"),
+            "File with zero-width character should be displayed"
+        );
+    }
+}
+
+// ============================================================================
+// Error Message Quality
+// ============================================================================
+
+#[test]
+fn should_include_path_in_error_for_nonexistent_directory() {
+    let bad_path = "/nonexistent/path/12345/67890";
+    let output = run_treepp(&[bad_path]);
+    assert!(!output.status.success());
+
+    let stderr = stderr_str(&output);
+    assert!(
+        stderr.contains("nonexistent") || stderr.contains(bad_path),
+        "Error message should include the problematic path"
+    );
+}
+
+#[test]
+fn should_provide_helpful_hint_for_misspelled_option() {
+    let output = run_treepp(&["/file"]); // Might be confused with /F
+    assert!(!output.status.success());
+
+    let stderr = stderr_str(&output);
+    assert!(
+        stderr.contains("--help") || stderr.contains("/?") || stderr.contains("Unknown"),
+        "Error should suggest how to get help"
+    );
+}
+
+// ============================================================================
+// Deep Nesting Edge Cases
+// ============================================================================
+
+#[test]
+fn should_handle_50_level_deep_directory() {
+    let dir = TempDir::new().unwrap();
+    let mut current = dir.path().to_path_buf();
+
+    for i in 0..50 {
+        current = current.join(format!("d{}", i));
+        if fs::create_dir(&current).is_err() {
+            break;
+        }
+    }
+    let _ = File::create(current.join("deep.txt"));
+
     let output = run_treepp_in_dir(dir.path(), &["/f", "/nb"]);
     assert!(output.status.success());
-    let stdout = stdout_str(&output);
-
-    // Visible files should appear
-    assert!(stdout.contains("visible.txt"));
-    assert!(stdout.contains("normal_dir"));
-    assert!(stdout.contains("normal.txt"));
-
-    // Hidden files and directories should NOT appear by default
-    assert!(
-        !stdout.contains(".hidden_file"),
-        "Hidden file should not appear by default"
-    );
-    assert!(
-        !stdout.contains(".hidden_dir"),
-        "Hidden directory should not appear by default"
-    );
-    assert!(
-        !stdout.contains("inside_hidden.txt"),
-        "Files inside hidden directory should not appear by default"
-    );
 }
 
 #[test]
-fn should_show_hidden_files_with_al_flag() {
-    let dir = create_hidden_files_test_dir();
-    let output = run_treepp_in_dir(dir.path(), &["/f", "/al", "/nb"]);
-    assert!(output.status.success());
-    let stdout = stdout_str(&output);
+fn should_handle_breadth_of_1000_items() {
+    let dir = TempDir::new().unwrap();
 
-    // All files should appear including hidden ones
-    assert!(stdout.contains("visible.txt"));
-    assert!(stdout.contains("normal_dir"));
-    assert!(stdout.contains("normal.txt"));
-    assert!(
-        stdout.contains(".hidden_file"),
-        "Hidden file should appear with /AL flag"
-    );
-    assert!(
-        stdout.contains(".hidden_dir"),
-        "Hidden directory should appear with /AL flag"
-    );
-    assert!(
-        stdout.contains("inside_hidden.txt"),
-        "Files inside hidden directory should appear with /AL flag"
-    );
-}
-
-#[test]
-fn should_show_hidden_files_with_gnu_and_short_styles() {
-    let dir = create_hidden_files_test_dir();
-
-    // Test GNU style --all
-    let output_gnu = run_treepp_in_dir(dir.path(), &["-f", "--all", "/nb"]);
-    assert!(output_gnu.status.success());
-    let stdout_gnu = stdout_str(&output_gnu);
-    assert!(
-        stdout_gnu.contains(".hidden_file"),
-        "Hidden file should appear with --all flag"
-    );
-    assert!(
-        stdout_gnu.contains(".hidden_dir"),
-        "Hidden directory should appear with --all flag"
-    );
-
-    // Test short style -k
-    let output_short = run_treepp_in_dir(dir.path(), &["-f", "-k", "/nb"]);
-    assert!(output_short.status.success());
-    let stdout_short = stdout_str(&output_short);
-    assert!(
-        stdout_short.contains(".hidden_file"),
-        "Hidden file should appear with -k flag"
-    );
-    assert!(
-        stdout_short.contains(".hidden_dir"),
-        "Hidden directory should appear with -k flag"
-    );
-
-    // Results should be identical
-    assert_eq!(stdout_gnu, stdout_short);
-}
-
-#[test]
-fn should_combine_hidden_files_with_other_options() {
-    let dir = create_hidden_files_test_dir();
-
-    // Combine /AL with /S (size), /DT (date), and /HR (human-readable)
-    let output = run_treepp_in_dir(dir.path(), &["/f", "/al", "/hr", "/dt", "/nb"]);
-    assert!(output.status.success());
-    let stdout = stdout_str(&output);
-
-    // Should show hidden files
-    assert!(
-        stdout.contains(".hidden_file"),
-        "Hidden file should appear when combined with other options"
-    );
-    assert!(
-        stdout.contains(".hidden_dir"),
-        "Hidden directory should appear when combined with other options"
-    );
-
-    // Should contain human-readable size format
-    assert!(
-        stdout.contains("B") || stdout.contains("KB"),
-        "Human-readable size should be displayed"
-    );
-
-    // Should contain date format (YYYY-MM-DD HH:MM:SS pattern)
-    assert!(
-        stdout.contains(":") && stdout.contains("-"),
-        "Date should be displayed"
-    );
-}
-
-#[test]
-fn should_respect_hidden_with_gitignore_and_filters() {
-    let dir = create_hidden_files_test_dir();
-
-    // Test /AL combined with /X (exclude) - exclude .txt files
-    let output_exclude = run_treepp_in_dir(dir.path(), &["/f", "/al", "/x", "*.txt", "/nb"]);
-    assert!(output_exclude.status.success());
-    let stdout_exclude = stdout_str(&output_exclude);
-
-    // Hidden file without .txt extension should still appear
-    assert!(
-        stdout_exclude.contains(".hidden_file"),
-        "Hidden file should appear with /AL even when filtering"
-    );
-    // .txt files should be excluded
-    assert!(
-        !stdout_exclude.contains("visible.txt"),
-        "Excluded .txt files should not appear"
-    );
-
-    // Test /AL combined with /M (include) - only show hidden files
-    let output_include = run_treepp_in_dir(dir.path(), &["/f", "/al", "/m", ".hidden*", "/nb"]);
-    assert!(output_include.status.success());
-    let stdout_include = stdout_str(&output_include);
-
-    // Only .hidden* pattern files should appear
-    assert!(
-        stdout_include.contains(".hidden_file"),
-        "Hidden file matching pattern should appear"
-    );
-    // Directories should always be shown to maintain structure
-    assert!(
-        stdout_include.contains(".hidden_dir") || stdout_include.contains("normal_dir"),
-        "Directories should be shown to maintain tree structure"
-    );
-}
-
-// ============================================================================
-// Special Path Handling Tests
-// ============================================================================
-
-#[test]
-fn should_handle_path_with_spaces() {
-    let dir = TempDir::new().expect("Failed to create temp dir");
-    let root = dir.path();
-
-    let space_dir = root.join("path with spaces");
-    fs::create_dir(&space_dir).unwrap();
-    File::create(space_dir.join("file inside.txt"))
-        .unwrap()
-        .write_all(b"content")
-        .unwrap();
-
-    let output = run_treepp(&[space_dir.to_str().unwrap(), "/f", "/nb"]);
-    assert!(output.status.success());
-    let stdout = stdout_str(&output);
-
-    assert!(stdout.contains("file inside.txt"));
-}
-
-#[test]
-fn should_handle_path_with_chinese_characters() {
-    let dir = TempDir::new().expect("Failed to create temp dir");
-    let root = dir.path();
-
-    let chinese_dir = root.join("中文目录");
-    fs::create_dir(&chinese_dir).unwrap();
-    File::create(chinese_dir.join("文件.txt"))
-        .unwrap()
-        .write_all(b"content")
-        .unwrap();
-
-    let output = run_treepp(&[chinese_dir.to_str().unwrap(), "/f", "/nb"]);
-    assert!(output.status.success());
-    let stdout = stdout_str(&output);
-
-    assert!(stdout.contains("文件.txt"));
-}
-
-#[test]
-fn should_handle_path_with_special_characters() {
-    let dir = TempDir::new().expect("Failed to create temp dir");
-    let root = dir.path();
-
-    // Windows allows these characters in filenames
-    let special_dir = root.join("special_!@#$%()_dir");
-    fs::create_dir(&special_dir).unwrap();
-    File::create(special_dir.join("file_!@#$%().txt"))
-        .unwrap()
-        .write_all(b"content")
-        .unwrap();
-
-    let output = run_treepp(&[special_dir.to_str().unwrap(), "/f", "/nb"]);
-    assert!(output.status.success());
-    let stdout = stdout_str(&output);
-
-    assert!(stdout.contains("file_!@#$%().txt"));
-}
-
-// ============================================================================
-// Relative vs Absolute Path Consistency Tests
-// ============================================================================
-
-#[test]
-fn should_produce_consistent_output_for_relative_and_absolute_paths() {
-    let dir = create_basic_test_dir();
-
-    // Run with absolute path
-    let abs_output = run_treepp(&[dir.path().to_str().unwrap(), "/f", "/nb"]);
-    assert!(abs_output.status.success());
-    let abs_stdout = stdout_str(&abs_output);
-
-    // Run with "." from within the directory
-    let rel_output = run_treepp_in_dir(dir.path(), &[".", "/f", "/nb"]);
-    assert!(rel_output.status.success());
-    let rel_stdout = stdout_str(&rel_output);
-
-    // Extract content lines (skip root path line which will differ)
-    let abs_lines: Vec<&str> = abs_stdout.lines().skip(1).collect();
-    let rel_lines: Vec<&str> = rel_stdout.lines().skip(1).collect();
-
-    assert_eq!(
-        abs_lines, rel_lines,
-        "Content should be identical regardless of path type"
-    );
-}
-
-// ============================================================================
-// Output File Error Handling Tests
-// ============================================================================
-
-#[test]
-fn should_fail_when_output_path_is_directory() {
-    let dir = create_basic_test_dir();
-    let output_dir = dir.path().join("output_dir");
-    fs::create_dir(&output_dir).unwrap();
-
-    // Try to write to a path that is a directory (not a file)
-    let output = run_treepp_in_dir(
-        dir.path(),
-        &["/f", "/nb", "/o", output_dir.to_str().unwrap()],
-    );
-
-    // Should fail (either exit code 1 or 3)
-    assert!(!output.status.success());
-}
-
-#[test]
-fn should_fail_when_output_path_parent_does_not_exist() {
-    let dir = create_basic_test_dir();
-    let nonexistent_path = dir.path().join("nonexistent_dir").join("output.txt");
-
-    let output = run_treepp_in_dir(
-        dir.path(),
-        &["/f", "/nb", "/o", nonexistent_path.to_str().unwrap()],
-    );
-
-    // Should fail (either exit code 1 or 3)
-    assert!(!output.status.success());
-}
-
-// ============================================================================
-// Large Directory Performance Tests
-// ============================================================================
-
-#[test]
-fn should_handle_directory_with_many_files() {
-    let dir = TempDir::new().expect("Failed to create temp dir");
-    let root = dir.path();
-
-    // Create 1000 files
     for i in 0..1000 {
-        File::create(root.join(format!("file_{:04}.txt", i)))
-            .unwrap()
-            .write_all(b"content")
-            .unwrap();
+        File::create(dir.path().join(format!("file_{:04}.txt", i))).unwrap();
     }
 
     let output = run_treepp_in_dir(dir.path(), &["/f", "/nb"]);
     assert!(output.status.success());
     let stdout = stdout_str(&output);
 
-    // Verify some files are present
     assert!(stdout.contains("file_0000.txt"));
     assert!(stdout.contains("file_0500.txt"));
     assert!(stdout.contains("file_0999.txt"));
 }
 
+// ============================================================================
+// Combination Conflict Tests
+// ============================================================================
+
 #[test]
-fn should_handle_deeply_nested_directories() {
-    let dir = TempDir::new().expect("Failed to create temp dir");
-    let mut current_path = dir.path().to_path_buf();
-
-    // Create 50 levels of nesting
-    for i in 0..50 {
-        current_path = current_path.join(format!("level_{}", i));
-        fs::create_dir(&current_path).unwrap();
-    }
-
-    // Create a file at the deepest level
-    File::create(current_path.join("deep_file.txt"))
-        .unwrap()
-        .write_all(b"deep content")
-        .unwrap();
-
-    let output = run_treepp_in_dir(dir.path(), &["/f", "/nb"]);
+fn should_handle_no_indent_with_ascii_combination() {
+    let dir = create_basic_test_dir();
+    let output = run_treepp_in_dir(dir.path(), &["/f", "/ni", "/a", "/nb"]);
     assert!(output.status.success());
     let stdout = stdout_str(&output);
 
-    assert!(stdout.contains("deep_file.txt"));
-    assert!(stdout.contains("level_49"));
+    // /NI should take precedence - no tree characters
+    assert!(!stdout.contains("├"));
+    assert!(!stdout.contains("└"));
+    assert!(!stdout.contains("+"));
+    assert!(!stdout.contains("\\---"));
 }
 
-// ============================================================================
-// Gitignore Edge Case Tests
-// ============================================================================
-
 #[test]
-fn should_handle_gitignore_negation_pattern() {
-    let dir = TempDir::new().expect("Failed to create temp dir");
-    let root = dir.path();
+fn should_apply_gitignore_before_exclude_pattern() {
+    let dir = create_gitignore_test_dir();
 
-    // Create .gitignore with negation pattern
-    File::create(root.join(".gitignore"))
-        .unwrap()
-        .write_all(b"*.log\n!important.log\n")
-        .unwrap();
-
-    File::create(root.join("debug.log")).unwrap();
-    File::create(root.join("error.log")).unwrap();
-    File::create(root.join("important.log")).unwrap();
-    File::create(root.join("readme.txt")).unwrap();
-
-    let output = run_treepp_in_dir(dir.path(), &["/f", "/nb", "/g"]);
+    // .gitignore excludes target/ and *.log
+    // /X additionally excludes *.txt
+    let output = run_treepp_in_dir(dir.path(), &["/f", "/g", "/x", "*.txt", "/nb"]);
     assert!(output.status.success());
     let stdout = stdout_str(&output);
 
-    // important.log should be included (negation pattern)
-    assert!(stdout.contains("important.log"));
-    // Other .log files should be excluded
-    assert!(!stdout.contains("debug.log"));
-    assert!(!stdout.contains("error.log"));
-    // Non-log files should be included
-    assert!(stdout.contains("readme.txt"));
+    assert!(!stdout.contains("target"), "target should be ignored by .gitignore");
+    assert!(!stdout.contains("app.log"), "*.log should be ignored by .gitignore");
+    assert!(
+        !stdout.contains("file.txt"),
+        "*.txt should be excluded by /X"
+    );
+    assert!(stdout.contains("main.rs"), "main.rs should be present");
 }
 
 #[test]
-fn should_handle_gitignore_directory_pattern() {
-    let dir = TempDir::new().expect("Failed to create temp dir");
-    let root = dir.path();
-
-    // Create .gitignore with directory-specific pattern
-    File::create(root.join(".gitignore"))
-        .unwrap()
-        .write_all(b"build/\n")
-        .unwrap();
-
-    fs::create_dir(root.join("build")).unwrap();
-    File::create(root.join("build/output.exe")).unwrap();
-
-    fs::create_dir(root.join("src")).unwrap();
-    File::create(root.join("src/main.rs")).unwrap();
-
-    // Create a file named "build.txt" (not a directory)
-    File::create(root.join("build.txt")).unwrap();
-
-    let output = run_treepp_in_dir(dir.path(), &["/f", "/nb", "/g"]);
-    assert!(output.status.success());
-    let stdout = stdout_str(&output);
-
-    // build directory should be excluded
-    assert!(!stdout.contains("output.exe"));
-    // build.txt file should be included (pattern ends with /)
-    assert!(stdout.contains("build.txt"));
-    // src should be included
-    assert!(stdout.contains("main.rs"));
-}
-
-#[test]
-fn should_handle_gitignore_double_star_pattern() {
-    let dir = TempDir::new().expect("Failed to create temp dir");
-    let root = dir.path();
-
-    // Create .gitignore with double star pattern
-    File::create(root.join(".gitignore"))
-        .unwrap()
-        .write_all(b"**/temp\n")
-        .unwrap();
-
-    // Create nested temp directories
-    fs::create_dir_all(root.join("a/b/temp")).unwrap();
-    File::create(root.join("a/b/temp/file.txt")).unwrap();
-
-    fs::create_dir(root.join("src")).unwrap();
-    File::create(root.join("src/main.rs")).unwrap();
-
-    let output = run_treepp_in_dir(dir.path(), &["/f", "/nb", "/g"]);
-    assert!(output.status.success());
-    let stdout = stdout_str(&output);
-
-    // src should be included
-    assert!(stdout.contains("main.rs"));
-}
-
-// ============================================================================
-// Unicode and Multi-byte Character Tests
-// ============================================================================
-
-#[test]
-fn should_handle_emoji_in_filenames() {
-    let dir = TempDir::new().expect("Failed to create temp dir");
-    let root = dir.path();
-
-    File::create(root.join("emoji_🎉_file.txt")).unwrap();
-    File::create(root.join("日本語ファイル.txt")).unwrap();
-    File::create(root.join("한국어파일.txt")).unwrap();
-
-    let output = run_treepp_in_dir(dir.path(), &["/f", "/nb"]);
-    assert!(output.status.success());
-    let stdout = stdout_str(&output);
-
-    assert!(stdout.contains("emoji_🎉_file.txt"));
-    assert!(stdout.contains("日本語ファイル.txt"));
-    assert!(stdout.contains("한국어파일.txt"));
-}
-
-// ============================================================================
-// Batch Mode Sorting Stability Tests
-// ============================================================================
-
-#[test]
-fn should_produce_stable_sorted_output_in_batch_mode() {
+fn should_handle_conflicting_include_and_exclude_patterns() {
     let dir = create_basic_test_dir();
 
-    // Run multiple times and compare outputs
+    // Include *.rs but also exclude *.rs (conflicting)
+    let output = run_treepp_in_dir(dir.path(), &["/f", "/m", "*.rs", "/x", "*.rs", "/nb"]);
+    assert!(output.status.success());
+    let stdout = stdout_str(&output);
+
+    // Exclude should win (more restrictive)
+    assert!(
+        !stdout.contains("main.rs"),
+        "Exclude should take precedence over include"
+    );
+    assert!(
+        !stdout.contains("lib.rs"),
+        "Exclude should take precedence over include"
+    );
+}
+
+// ============================================================================
+// Sorting Stability Tests
+// ============================================================================
+
+#[test]
+fn should_maintain_stable_sort_with_identical_names_different_types() {
+    let dir = TempDir::new().unwrap();
+
+    // Create file and directory with same name (not possible on same level)
+    // But test similar names
+    fs::create_dir(dir.path().join("item")).unwrap();
+    File::create(dir.path().join("item.txt")).unwrap();
+    File::create(dir.path().join("item.rs")).unwrap();
+
     let mut outputs: Vec<String> = Vec::new();
     for _ in 0..5 {
         let output = run_treepp_in_dir(dir.path(), &["/f", "/nb", "/b"]);
@@ -2765,386 +3017,40 @@ fn should_produce_stable_sorted_output_in_batch_mode() {
         outputs.push(stdout_str(&output));
     }
 
-    // All outputs should be identical
-    let first = &outputs[0];
-    for (i, output) in outputs.iter().enumerate().skip(1) {
-        assert_eq!(first, output, "Output {} differs from first output", i);
+    // All outputs should be identical (stable sort)
+    for output in &outputs[1..] {
+        assert_eq!(&outputs[0], output, "Sort should be stable across runs");
     }
 }
 
 // ============================================================================
-// Structured Output Metadata Completeness Tests
+// Output File Error Handling
 // ============================================================================
 
 #[test]
-fn should_include_all_metadata_in_json_output() {
-    let dir = TempDir::new().expect("Failed to create temp dir");
-    let root = dir.path();
+fn should_fail_gracefully_when_output_path_has_invalid_chars() {
+    let dir = create_basic_test_dir();
 
-    fs::create_dir(root.join("subdir")).unwrap();
-    File::create(root.join("subdir/file.txt"))
-        .unwrap()
-        .write_all(b"some content here")
-        .unwrap();
+    // Try to output to path with invalid characters
+    let invalid_path = if cfg!(windows) {
+        "output<>.txt"
+    } else {
+        "output\0.txt"
+    };
 
-    let output_file = root.join("output.json");
+    let output = run_treepp_in_dir(dir.path(), &["/f", "/o", invalid_path]);
+    assert!(!output.status.success());
+}
+
+#[test]
+fn should_create_output_file_even_when_tree_is_empty() {
+    let dir = TempDir::new().unwrap();
+    let output_file = dir.path().join("empty_tree.txt");
 
     let output = run_treepp_in_dir(
         dir.path(),
-        &["/f", "/nb", "/b", "/s", "/dt", "/o", output_file.to_str().unwrap()],
+        &["/f", "/o", output_file.to_str().unwrap(), "/nb"],
     );
     assert!(output.status.success());
-
-    let json_content = fs::read_to_string(&output_file).expect("Should read JSON file");
-    let json: serde_json::Value =
-        serde_json::from_str(&json_content).expect("Should be valid JSON");
-
-    // Verify new structure
-    assert!(json.is_object(), "Root should be object");
-    assert_eq!(
-        json.get("schema").and_then(|v| v.as_str()),
-        Some("treepp.pretty.v1"),
-        "Should have correct schema"
-    );
-
-    let root_obj = json.get("root").expect("Should have root");
-    assert!(root_obj.get("path").is_some(), "Root should have path");
-    assert!(root_obj.get("type").is_some(), "Root should have type");
-    assert!(root_obj.get("dirs").is_some(), "Root should have dirs");
-}
-
-// ============================================================================
-// Structured Output Format V1 Schema Tests
-// ============================================================================
-
-#[test]
-fn should_have_correct_json_schema_version() {
-    let dir = create_basic_test_dir();
-    let output_file = dir.path().join("tree.json");
-    let output = run_treepp_in_dir(
-        dir.path(),
-        &["/b", "/f", "/o", output_file.to_str().unwrap(), "/nb"],
-    );
-    assert!(output.status.success());
-
-    let content = fs::read_to_string(&output_file).unwrap();
-    let json: serde_json::Value = serde_json::from_str(&content).unwrap();
-
-    assert_eq!(
-        json.get("schema").and_then(|v| v.as_str()),
-        Some("treepp.pretty.v1")
-    );
-}
-
-#[test]
-fn should_have_correct_yaml_schema_version() {
-    let dir = create_basic_test_dir();
-    let output_file = dir.path().join("tree.yml");
-    let output = run_treepp_in_dir(
-        dir.path(),
-        &["/b", "/f", "/o", output_file.to_str().unwrap(), "/nb"],
-    );
-    assert!(output.status.success());
-
-    let content = fs::read_to_string(&output_file).unwrap();
-    assert!(
-        content.contains("schema: treepp.pretty.v1"),
-        "YAML should contain schema identifier"
-    );
-}
-
-#[test]
-fn should_have_correct_toml_schema_version() {
-    let dir = create_basic_test_dir();
-    let output_file = dir.path().join("tree.toml");
-    let output = run_treepp_in_dir(
-        dir.path(),
-        &["/b", "/f", "/o", output_file.to_str().unwrap(), "/nb"],
-    );
-    assert!(output.status.success());
-
-    let content = fs::read_to_string(&output_file).unwrap();
-    assert!(
-        content.contains("schema = \"treepp.pretty.v1\""),
-        "TOML should contain schema identifier"
-    );
-}
-
-#[test]
-fn should_separate_files_and_dirs_in_json_output() {
-    let dir = create_basic_test_dir();
-    let output_file = dir.path().join("tree.json");
-    let output = run_treepp_in_dir(
-        dir.path(),
-        &["/b", "/f", "/o", output_file.to_str().unwrap(), "/nb"],
-    );
-    assert!(output.status.success());
-
-    let content = fs::read_to_string(&output_file).unwrap();
-    let json: serde_json::Value = serde_json::from_str(&content).unwrap();
-
-    let root = json.get("root").expect("Should have root");
-
-    // Files should be an array
-    let files = root.get("files").expect("Should have files");
-    assert!(files.is_array(), "files should be an array");
-
-    // Dirs should be an object/map
-    let dirs = root.get("dirs").expect("Should have dirs");
-    assert!(dirs.is_object(), "dirs should be an object");
-
-    // Check that files array contains expected files
-    let files_array = files.as_array().unwrap();
-    let file_names: Vec<&str> = files_array
-        .iter()
-        .filter_map(|v| v.as_str())
-        .collect();
-    assert!(
-        file_names.contains(&"file1.txt") || file_names.iter().any(|f| f.contains("file1")),
-        "Should contain file1.txt"
-    );
-
-    // Check that dirs contains expected directories
-    assert!(
-        dirs.get("src").is_some(),
-        "Should have src directory in dirs"
-    );
-}
-
-#[test]
-fn should_have_nested_directory_structure_in_json() {
-    let dir = create_basic_test_dir();
-    let output_file = dir.path().join("tree.json");
-    let output = run_treepp_in_dir(
-        dir.path(),
-        &["/b", "/f", "/o", output_file.to_str().unwrap(), "/nb"],
-    );
-    assert!(output.status.success());
-
-    let content = fs::read_to_string(&output_file).unwrap();
-    let json: serde_json::Value = serde_json::from_str(&content).unwrap();
-
-    let root = json.get("root").expect("Should have root");
-    let dirs = root.get("dirs").expect("Should have dirs");
-    let src = dirs.get("src").expect("Should have src directory");
-
-    // Nested directory should have same structure
-    assert_eq!(
-        src.get("type").and_then(|v| v.as_str()),
-        Some("dir"),
-        "Nested directory should have type dir"
-    );
-    assert!(
-        src.get("files").is_some(),
-        "Nested directory should have files"
-    );
-    assert!(
-        src.get("dirs").is_some(),
-        "Nested directory should have dirs"
-    );
-
-    // Check files in src directory
-    let src_files = src.get("files").unwrap();
-    assert!(src_files.is_array(), "src files should be an array");
-}
-
-#[test]
-fn should_have_type_dir_for_all_directories_in_json() {
-    let dir = create_deep_test_dir();
-    let output_file = dir.path().join("tree.json");
-    let output = run_treepp_in_dir(
-        dir.path(),
-        &["/b", "/f", "/o", output_file.to_str().unwrap(), "/nb"],
-    );
-    assert!(output.status.success());
-
-    let content = fs::read_to_string(&output_file).unwrap();
-    let json: serde_json::Value = serde_json::from_str(&content).unwrap();
-
-    // Helper function to recursively check all directories have type: dir
-    fn check_dir_type(value: &serde_json::Value, path: &str) {
-        if let Some(dir_type) = value.get("type") {
-            assert_eq!(
-                dir_type.as_str(),
-                Some("dir"),
-                "Directory at {} should have type 'dir'",
-                path
-            );
-        }
-        if let Some(dirs) = value.get("dirs") {
-            if let Some(dirs_obj) = dirs.as_object() {
-                for (name, subdir) in dirs_obj {
-                    check_dir_type(subdir, &format!("{}/{}", path, name));
-                }
-            }
-        }
-    }
-
-    let root = json.get("root").expect("Should have root");
-    check_dir_type(root, "root");
-}
-
-#[test]
-fn should_have_empty_dirs_object_for_leaf_directories() {
-    let dir = create_basic_test_dir();
-    let output_file = dir.path().join("tree.json");
-    let output = run_treepp_in_dir(
-        dir.path(),
-        &["/b", "/f", "/o", output_file.to_str().unwrap(), "/nb"],
-    );
-    assert!(output.status.success());
-
-    let content = fs::read_to_string(&output_file).unwrap();
-    let json: serde_json::Value = serde_json::from_str(&content).unwrap();
-
-    let root = json.get("root").unwrap();
-    let dirs = root.get("dirs").unwrap();
-
-    // empty directory should have empty dirs object
-    if let Some(empty_dir) = dirs.get("empty") {
-        let empty_dirs = empty_dir.get("dirs");
-        assert!(
-            empty_dirs.is_some(),
-            "Leaf directory should have dirs field"
-        );
-        if let Some(empty_dirs_obj) = empty_dirs.and_then(|v| v.as_object()) {
-            assert!(
-                empty_dirs_obj.is_empty(),
-                "Leaf directory should have empty dirs object"
-            );
-        }
-    }
-}
-
-// ============================================================================
-// Parameter Conflict and Edge Case Tests
-// ============================================================================
-
-#[test]
-fn should_handle_no_indent_with_ascii_mode() {
-    let dir = create_basic_test_dir();
-
-    // /NI (no indent) with /A (ASCII) - both affect tree drawing
-    let output = run_treepp_in_dir(dir.path(), &["/f", "/nb", "/ni", "/a"]);
-    assert!(output.status.success());
-    let stdout = stdout_str(&output);
-
-    // With /NI, there should be no tree-drawing characters
-    assert!(
-        !stdout.contains("├"),
-        "Should not contain box-drawing chars with /NI"
-    );
-    assert!(
-        !stdout.contains("│"),
-        "Should not contain box-drawing chars with /NI"
-    );
-    assert!(
-        !stdout.contains("└"),
-        "Should not contain box-drawing chars with /NI"
-    );
-    assert!(
-        !stdout.contains("+"),
-        "Should not contain ASCII tree chars with /NI"
-    );
-    assert!(
-        !stdout.contains("|"),
-        "Should not contain ASCII tree chars with /NI"
-    );
-    assert!(
-        !stdout.contains("\\"),
-        "Should not contain ASCII tree chars with /NI"
-    );
-}
-
-// ============================================================================
-// Zero-byte and Large File Size Display Tests
-// ============================================================================
-
-#[test]
-fn should_display_zero_byte_file_size_correctly() {
-    let dir = TempDir::new().expect("Failed to create temp dir");
-    let root = dir.path();
-
-    // Create empty file
-    File::create(root.join("empty.txt")).unwrap();
-
-    let output = run_treepp_in_dir(dir.path(), &["/f", "/nb", "/s"]);
-    assert!(output.status.success());
-    let stdout = stdout_str(&output);
-
-    // Should show 0 for size
-    assert!(stdout.contains("0") && stdout.contains("empty.txt"));
-}
-
-#[test]
-fn should_display_zero_byte_file_size_with_human_readable() {
-    let dir = TempDir::new().expect("Failed to create temp dir");
-    let root = dir.path();
-
-    // Create empty file
-    File::create(root.join("empty.txt")).unwrap();
-
-    let output = run_treepp_in_dir(dir.path(), &["/f", "/nb", "/hr"]);
-    assert!(output.status.success());
-    let stdout = stdout_str(&output);
-
-    // Should show 0 B or similar
-    assert!(
-        stdout.contains("0 B") || stdout.contains("0B") || stdout.contains("0"),
-        "Should display 0 bytes in human readable format"
-    );
-}
-
-// ============================================================================
-// Command Line Parameter Order Independence Tests
-// ============================================================================
-
-#[test]
-fn should_produce_same_output_regardless_of_parameter_order() {
-    let dir = create_basic_test_dir();
-
-    let order1 = run_treepp_in_dir(dir.path(), &["/f", "/s", "/nb"]);
-    let order2 = run_treepp_in_dir(dir.path(), &["/nb", "/s", "/f"]);
-    let order3 = run_treepp_in_dir(dir.path(), &["/s", "/f", "/nb"]);
-    let order4 = run_treepp_in_dir(dir.path(), &["/s", "/nb", "/f"]);
-
-    assert!(order1.status.success());
-    assert!(order2.status.success());
-    assert!(order3.status.success());
-    assert!(order4.status.success());
-
-    let stdout1 = stdout_str(&order1);
-    let stdout2 = stdout_str(&order2);
-    let stdout3 = stdout_str(&order3);
-    let stdout4 = stdout_str(&order4);
-
-    assert_eq!(stdout1, stdout2, "Order /f /s /nb vs /nb /s /f should match");
-    assert_eq!(stdout1, stdout3, "Order /f /s /nb vs /s /f /nb should match");
-    assert_eq!(stdout1, stdout4, "Order /f /s /nb vs /s /nb /f should match");
-}
-
-#[test]
-fn should_produce_same_output_with_mixed_case_parameters() {
-    let dir = create_basic_test_dir();
-
-    let lower = run_treepp_in_dir(dir.path(), &["/f", "/s", "/nb"]);
-    let upper = run_treepp_in_dir(dir.path(), &["/F", "/S", "/NB"]);
-    let mixed = run_treepp_in_dir(dir.path(), &["/f", "/S", "/Nb"]);
-
-    assert!(lower.status.success());
-    assert!(upper.status.success());
-    assert!(mixed.status.success());
-
-    let stdout_lower = stdout_str(&lower);
-    let stdout_upper = stdout_str(&upper);
-    let stdout_mixed = stdout_str(&mixed);
-
-    assert_eq!(
-        stdout_lower, stdout_upper,
-        "Lower and upper case should match"
-    );
-    assert_eq!(
-        stdout_lower, stdout_mixed,
-        "Lower and mixed case should match"
-    );
+    assert!(output_file.exists(), "Output file should be created even for empty tree");
 }

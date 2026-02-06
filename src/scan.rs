@@ -12,7 +12,7 @@
 //!
 //! File: src/scan.rs
 //! Author: WaterRun
-//! Date: 2026-01-22
+//! Date: 2026-02-06
 
 #![forbid(unsafe_code)]
 
@@ -23,7 +23,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 use std::os::windows::fs::MetadataExt;
 
-use glob::Pattern;
+use glob::{MatchOptions, Pattern};
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
@@ -590,6 +590,7 @@ pub fn compile_pattern(pattern: &str) -> Result<Pattern, MatchError> {
 struct CompiledRules {
     include_patterns: Vec<Pattern>,
     exclude_patterns: Vec<Pattern>,
+    match_options: MatchOptions,
 }
 
 impl CompiledRules {
@@ -617,9 +618,18 @@ impl CompiledRules {
             .map(|p| compile_pattern(p))
             .collect::<Result<Vec<_>, _>>()?;
 
+        // On Windows, file matching should be case-insensitive to match
+        // the behavior of the native filesystem and tree command.
+        let match_options = MatchOptions {
+            case_sensitive: !cfg!(windows),
+            require_literal_separator: false,
+            require_literal_leading_dot: false,
+        };
+
         Ok(Self {
             include_patterns,
             exclude_patterns,
+            match_options,
         })
     }
 
@@ -634,7 +644,9 @@ impl CompiledRules {
         if self.include_patterns.is_empty() {
             return true;
         }
-        self.include_patterns.iter().any(|p| p.matches(name))
+        self.include_patterns
+            .iter()
+            .any(|p| p.matches_with(name, self.match_options))
     }
 
     /// Checks if a name should be excluded based on exclude patterns.
@@ -642,7 +654,9 @@ impl CompiledRules {
         if self.exclude_patterns.is_empty() {
             return false;
         }
-        self.exclude_patterns.iter().any(|p| p.matches(name))
+        self.exclude_patterns
+            .iter()
+            .any(|p| p.matches_with(name, self.match_options))
     }
 }
 

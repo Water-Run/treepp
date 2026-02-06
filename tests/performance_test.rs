@@ -17,7 +17,7 @@
 //!
 //! File: tests/performance_test.rs
 //! Author: WaterRun
-//! Date: 2026-01-13
+//! Date: 2026-02-06
 
 use std::env;
 use std::fs::{self, File};
@@ -477,7 +477,8 @@ mod feature_tests {
         let baseline = benchmark_treepp(dir.path(), &[], "baseline");
         let with_files = benchmark_treepp(dir.path(), &["/F"], "with /F");
 
-        let change = ((with_files.duration_ms - baseline.duration_ms) / baseline.duration_ms) * 100.0;
+        let change =
+            ((with_files.duration_ms - baseline.duration_ms) / baseline.duration_ms) * 100.0;
         println!(
             "/F flag impact: {:.2} ms -> {:.2} ms ({:+.1}%)",
             baseline.duration_ms, with_files.duration_ms, change
@@ -492,7 +493,8 @@ mod feature_tests {
         let baseline = benchmark_treepp(dir.path(), &["/F"], "baseline /F");
         let with_ascii = benchmark_treepp(dir.path(), &["/F", "/A"], "with /F /A");
 
-        let change = ((with_ascii.duration_ms - baseline.duration_ms) / baseline.duration_ms) * 100.0;
+        let change =
+            ((with_ascii.duration_ms - baseline.duration_ms) / baseline.duration_ms) * 100.0;
         println!(
             "/A flag impact: {:.2} ms -> {:.2} ms ({:+.1}%)",
             baseline.duration_ms, with_ascii.duration_ms, change
@@ -507,7 +509,8 @@ mod feature_tests {
         let baseline = benchmark_treepp(dir.path(), &["/F"], "baseline /F");
         let with_size = benchmark_treepp(dir.path(), &["/F", "/S"], "with /F /S");
 
-        let change = ((with_size.duration_ms - baseline.duration_ms) / baseline.duration_ms) * 100.0;
+        let change =
+            ((with_size.duration_ms - baseline.duration_ms) / baseline.duration_ms) * 100.0;
         println!(
             "/S flag impact: {:.2} ms -> {:.2} ms ({:+.1}%)",
             baseline.duration_ms, with_size.duration_ms, change
@@ -522,7 +525,8 @@ mod feature_tests {
         let baseline = benchmark_treepp(dir.path(), &["/F"], "baseline /F");
         let with_date = benchmark_treepp(dir.path(), &["/F", "/DT"], "with /F /DT");
 
-        let change = ((with_date.duration_ms - baseline.duration_ms) / baseline.duration_ms) * 100.0;
+        let change =
+            ((with_date.duration_ms - baseline.duration_ms) / baseline.duration_ms) * 100.0;
         println!(
             "/DT flag impact: {:.2} ms -> {:.2} ms ({:+.1}%)",
             baseline.duration_ms, with_date.duration_ms, change
@@ -535,7 +539,7 @@ mod feature_tests {
         let dir = create_medium_test_dir();
 
         let baseline = benchmark_treepp(dir.path(), &["/F", "/S"], "baseline /F /S");
-        let with_hr = benchmark_treepp(dir.path(), &["/F", "/S", "/HR"], "with /F /S /HR");
+        let with_hr = benchmark_treepp(dir.path(), &["/F", "/HR"], "with /F /HR");
 
         let change = ((with_hr.duration_ms - baseline.duration_ms) / baseline.duration_ms) * 100.0;
         println!(
@@ -552,7 +556,8 @@ mod feature_tests {
         let baseline = benchmark_treepp(dir.path(), &["/F"], "baseline /F");
         let with_level = benchmark_treepp(dir.path(), &["/F", "/L", "3"], "with /F /L 3");
 
-        let change = ((with_level.duration_ms - baseline.duration_ms) / baseline.duration_ms) * 100.0;
+        let change =
+            ((with_level.duration_ms - baseline.duration_ms) / baseline.duration_ms) * 100.0;
         println!(
             "/L flag impact: {:.2} ms -> {:.2} ms ({:+.1}%)",
             baseline.duration_ms, with_level.duration_ms, change
@@ -564,8 +569,8 @@ mod feature_tests {
     fn benchmark_disk_usage_flag() {
         let dir = create_medium_test_dir();
 
-        let baseline = benchmark_treepp(dir.path(), &["/F"], "baseline /F");
-        let with_du = benchmark_treepp(dir.path(), &["/F", "/DU"], "with /F /DU");
+        let baseline = benchmark_treepp(dir.path(), &["/F", "/B"], "baseline /F /B");
+        let with_du = benchmark_treepp(dir.path(), &["/F", "/B", "/DU"], "with /F /B /DU");
 
         let change = ((with_du.duration_ms - baseline.duration_ms) / baseline.duration_ms) * 100.0;
         println!(
@@ -590,22 +595,18 @@ mod feature_tests {
         );
     }
 
-    /// Tests performance impact of /P (prune) flag.
+    /// Tests performance impact of /AL (show hidden/all) flag.
     #[test]
-    fn benchmark_prune_flag() {
+    fn benchmark_all_flag() {
         let dir = create_medium_test_dir();
 
-        // Add some empty directories
-        fs::create_dir_all(dir.path().join("empty1/nested")).unwrap();
-        fs::create_dir_all(dir.path().join("empty2")).unwrap();
-
         let baseline = benchmark_treepp(dir.path(), &["/F"], "baseline /F");
-        let with_prune = benchmark_treepp(dir.path(), &["/F", "/P"], "with /F /P");
+        let with_all = benchmark_treepp(dir.path(), &["/F", "/AL"], "with /F /AL");
 
-        let change = ((with_prune.duration_ms - baseline.duration_ms) / baseline.duration_ms) * 100.0;
+        let change = ((with_all.duration_ms - baseline.duration_ms) / baseline.duration_ms) * 100.0;
         println!(
-            "/P flag impact: {:.2} ms -> {:.2} ms ({:+.1}%)",
-            baseline.duration_ms, with_prune.duration_ms, change
+            "/AL flag impact: {:.2} ms -> {:.2} ms ({:+.1}%)",
+            baseline.duration_ms, with_all.duration_ms, change
         );
     }
 
@@ -726,7 +727,8 @@ mod feature_tests {
         let baseline = benchmark_treepp(dir.path(), &["/F", "/NB"], "baseline /F /NB");
         let with_batch = benchmark_treepp(dir.path(), &["/F", "/NB", "/B"], "with /F /NB /B");
 
-        let change = ((with_batch.duration_ms - baseline.duration_ms) / baseline.duration_ms) * 100.0;
+        let change =
+            ((with_batch.duration_ms - baseline.duration_ms) / baseline.duration_ms) * 100.0;
         println!(
             "/B flag impact: {:.2} ms -> {:.2} ms ({:+.1}%)",
             baseline.duration_ms, with_batch.duration_ms, change
@@ -750,8 +752,12 @@ mod feature_tests {
                 &["/F", "/NB", "/B", "/T", &threads.to_string()],
                 &format!("/T {}", threads),
             );
-            let change = ((result.duration_ms - baseline.duration_ms) / baseline.duration_ms) * 100.0;
-            println!("  {} threads: {:.2} ms ({:+.1}%)", threads, result.duration_ms, change);
+            let change =
+                ((result.duration_ms - baseline.duration_ms) / baseline.duration_ms) * 100.0;
+            println!(
+                "  {} threads: {:.2} ms ({:+.1}%)",
+                threads, result.duration_ms, change
+            );
         }
     }
 
@@ -767,7 +773,8 @@ mod feature_tests {
             "combined /F /S /DT /HR /RP",
         );
 
-        let change = ((combined.duration_ms - baseline.duration_ms) / baseline.duration_ms) * 100.0;
+        let change =
+            ((combined.duration_ms - baseline.duration_ms) / baseline.duration_ms) * 100.0;
         println!(
             "Combined features impact: {:.2} ms -> {:.2} ms ({:+.1}%)",
             baseline.duration_ms, combined.duration_ms, change
@@ -1133,20 +1140,20 @@ mod full_benchmark {
         baseline_result.baseline_ms = Some(baseline.duration_ms);
         report.add(baseline_result);
 
-        // Test each feature
+        // Test each feature (updated to match current parameter set)
         let features = [
             (&["/F", "/A"][..], "/F /A"),
             (&["/F", "/S"][..], "/F /S"),
             (&["/F", "/DT"][..], "/F /DT"),
-            (&["/F", "/HR", "/S"][..], "/F /S /HR"),
+            (&["/F", "/HR"][..], "/F /HR"),
             (&["/F", "/FP"][..], "/F /FP"),
             (&["/F", "/R"][..], "/F /R"),
-            (&["/F", "/DU"][..], "/F /DU"),
+            (&["/F", "/B", "/DU"][..], "/F /B /DU"),
             (&["/F", "/RP"][..], "/F /RP"),
             (&["/F", "/NI"][..], "/F /NI"),
             (&["/F", "/NB"][..], "/F /NB"),
             (&["/F", "/L", "3"][..], "/F /L 3"),
-            (&["/F", "/P"][..], "/F /P"),
+            (&["/F", "/AL"][..], "/F /AL"),
             (&["/F", "/G"][..], "/F /G"),
             (&["/F", "/X", "*.rs"][..], "/F /X *.rs"),
             (&["/F", "/M", "*.toml"][..], "/F /M *.toml"),
@@ -1182,9 +1189,15 @@ mod full_benchmark {
             (&["/F", "/S", "/DT"][..], "/F /S /DT"),
             (&["/F", "/S", "/DT", "/HR"][..], "/F /S /DT /HR"),
             (&["/F", "/S", "/DT", "/HR", "/RP"][..], "/F /S /DT /HR /RP"),
-            (&["/F", "/S", "/DT", "/HR", "/RP", "/FP"][..], "/F /S /DT /HR /RP /FP"),
+            (
+                &["/F", "/S", "/DT", "/HR", "/RP", "/FP"][..],
+                "/F /S /DT /HR /RP /FP",
+            ),
             (&["/F", "/NB", "/B"][..], "/F /NB /B"),
-            (&["/F", "/NB", "/B", "/S", "/DT"][..], "/F /NB /B /S /DT"),
+            (
+                &["/F", "/NB", "/B", "/S", "/DT"][..],
+                "/F /NB /B /S /DT",
+            ),
         ];
 
         let mut report = BenchmarkReport::new("Combined Features Performance");

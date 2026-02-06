@@ -1,6 +1,6 @@
 [package]
 name = "treepp"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2024"
 authors = ["WaterRun"]
 description = "A better tree command for Windows"
@@ -23,6 +23,7 @@ thiserror = "2.0.17"
 encoding_rs = "0.8"
 dunce = "1.0"
 chrono = "0.4"
+regex = "1.12.2"
 
 [dev-dependencies]
 tempfile = "3.24.0"

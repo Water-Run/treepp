@@ -28,15 +28,6 @@ The `tree` command on Windows has seen virtually no changes since it was release
 
 ## Installation
 
-If you have [Scoop](https://scoop.sh/) installed, you can install it via:
-
-```powershell
-scoop bucket add extras
-scoop install treepp
-```
-
-Or, manual installation:  
-
 Download `tree++.zip` from [Release](https://github.com/Water-Run/treepp/releases), extract it to a suitable directory, and add that directory to your environment variables.
 
 Open Windows Terminal and run:
@@ -48,7 +39,7 @@ treepp /v
 You should see output like:
 
 ```plaintext
-tree++ version 0.3.1
+tree++ version 0.4.0
 
 A Much Better Windows tree Command.
 
